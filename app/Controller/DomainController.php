@@ -18,6 +18,7 @@ use App\Entity\InboundMessage;
 use App\Entity\Campaign;
 use App\Service\CompanyResolver;
 use App\Service\DomainConfig;
+use App\Service\DomainDnsVerifier;
 use App\Service\SmtpCredentialProvisioner;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Http\Message\JsonResponse;
@@ -36,6 +37,7 @@ final class DomainController
         private CompanyResolver   $companyResolver,
         private DomainConfig      $domainConfig,
         private SmtpCredentialProvisioner $smtpProvisioner,
+        private DomainDnsVerifier $domainDnsVerifier,
     ) {}
 
     /**
@@ -177,6 +179,7 @@ final class DomainController
                 'spf_expected'   => $bootstrap['dns']['spf'],
                 'dmarc_expected' => $bootstrap['dns']['dmarc'],
                 'mx_expected'    => $bootstrap['dns']['mx'],
+                'dkim'           => $bootstrap['dns']['dkim'] ?? null,
             ],
             'smtp'       => [
                 'host'     => 'smtp.monkeysmail.com',
@@ -184,7 +187,8 @@ final class DomainController
                 'ports'    => [587, 465],
                 'tls'      => ['starttls' => true, 'implicit' => true],
                 'username' => $creds['username'],
-                'password' => $creds['password'], // null on reuse
+                'password' => $creds['password'],
+                'ip_pool'  => $creds['ip_pool'],
             ],
         ], 201);
     }
@@ -202,73 +206,108 @@ final class DomainController
     {
         // 1) Auth
         $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) {
-            throw new RuntimeException('Unauthorized', 401);
-        }
+        if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
 
-        // 2) Resolve + authorize company
+        // 2) Company
         $hash    = (string)$request->getAttribute('hash');
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (! $company) {
-            throw new RuntimeException('Company not found or access denied', 404);
-        }
+        if (! $company) throw new RuntimeException('Company not found or access denied', 404);
 
-        // 3) Parse domain id
+        // 3) Domain id
         $id = (int)$request->getAttribute('id', 0);
-        if ($id <= 0) {
-            throw new RuntimeException('Invalid domain id', 400);
-        }
+        if ($id <= 0) throw new RuntimeException('Invalid domain id', 400);
 
-        // 4) Load domain and ensure it belongs to the resolved company
+        // 4) Load domain
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
         $domain     = $domainRepo->find($id);
-
         if (! $domain || $domain->getCompany()?->getId() !== $company->getId()) {
-            // Hide existence if not in this company or not found
             throw new RuntimeException('Domain not found', 404);
         }
 
-        // 5) Build response
+        // ---- Build DKIM expected (from active DkimKey) ----
+        $dkimExpected = null;
+        $domainName   = (string)$domain->getDomain();
+
+        $pemToDkimTxt = static function (string $pem): string {
+            // If it's already a DKIM string containing p=..., keep as-is
+            if (preg_match('~\bp=([A-Za-z0-9+/=]+)~', $pem)) {
+                // ensure starts with v=DKIM1 (add if missing)
+                $val = trim($pem);
+                if (stripos($val, 'v=dkim1') !== 0) {
+                    $val = 'v=DKIM1; k=rsa; ' . preg_replace('~^\s*;+~', '', $val);
+                }
+                return $val;
+            }
+            // Else extract base64 from PEM
+            $clean = preg_replace('~-----BEGIN PUBLIC KEY-----|-----END PUBLIC KEY-----|\s+~', '', $pem);
+            return 'v=DKIM1; k=rsa; p=' . $clean;
+        };
+
+        foreach ($domain->getDkimKeys() ?? [] as $k) {
+            if ($k->getActive()) {
+                $host  = sprintf('%s._domainkey.%s', $k->getSelector(), $domainName);
+                $value = null;
+
+                if (method_exists($k, 'getTxt_value') && $k->getTxt_value()) {
+                    $value = trim((string)$k->getTxt_value());
+                    // normalize to include v=DKIM1/k=rsa if missing
+                    if (stripos($value, 'p=') !== false && stripos($value, 'v=dkim1') === false) {
+                        $value = 'v=DKIM1; k=rsa; ' . ltrim($value, '; ');
+                    }
+                } else {
+                    $value = $pemToDkimTxt((string)$k->getPublic_key_pem());
+                }
+
+                $dkimExpected = ['name' => $host, 'value' => $value];
+                break;
+            }
+        }
+
+        // 5) Response
         $out = [
-            'id'           => $domain->getId(),
-            'domain'       => $domain->getDomain(),
-            'status'       => $domain->getStatus(), // "pending" | "active" | "failed"
-            'created_at'   => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
-            'verified_at'  => $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
+            'id'              => $domain->getId(),
+            'domain'          => $domain->getDomain(),
+            'status'          => $domain->getStatus(),
+            'created_at'      => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
+            'verified_at'     => $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
 
-            // Booleans
-            'require_tls'  => $domain->getRequire_tls(),
-            'arc_sign'     => $domain->getArc_sign(),
-            'bimi_enabled' => $domain->getBimi_enabled(),
+            // expose verification metadata for UI
+            'last_checked_at'     => $domain->getLast_checked_at()?->format(\DateTimeInterface::ATOM),
+            'verification_report' => $domain->getVerification_report(),
 
-            // DNS expectations / verification data
-            'txt'          => [
+            // toggles
+            'require_tls'     => $domain->getRequire_tls(),
+            'arc_sign'        => $domain->getArc_sign(),
+            'bimi_enabled'    => $domain->getBimi_enabled(),
+
+            // expectations for setup cards
+            'txt' => [
                 'name'  => $domain->getTxt_name(),
                 'value' => $domain->getTxt_value(),
             ],
-            'records'      => [
+            'records' => [
                 'spf_expected'   => $domain->getSpf_expected(),
                 'dmarc_expected' => $domain->getDmarc_expected(),
                 'mx_expected'    => $domain->getMx_expected(),
+                'dkim_expected'  => $dkimExpected,   // <-- now always publishable when key exists
             ],
 
-            // Useful counts for the detail UI (badges/sections)
-            'counts'       => [
-                'dkimKeys'       => count($domain->getDkimKeys() ?? []),
-                'messages'       => count($domain->getMessages() ?? []),
-                'tlsRptReports'  => count($domain->getTlsRptReports() ?? []),
-                'mtaStsPolicies' => count($domain->getMtaStsPolicies() ?? []),
-                'dmarcAggregates'=> count($domain->getDmarcAggregates() ?? []),
-                'bimiRecords'    => count($domain->getBimiRecords() ?? []),
-                'reputation'     => count($domain->getReputationSamples() ?? []),
-                'inboundRoutes'  => count($domain->getInboundRoutes() ?? []),
-                'inboundMessages'=> count($domain->getInboundMessages() ?? []),
-                'campaigns'      => count($domain->getCampaigns() ?? []),
+            // counts
+            'counts' => [
+                'dkimKeys'        => count($domain->getDkimKeys() ?? []),
+                'messages'        => count($domain->getMessages() ?? []),
+                'tlsRptReports'   => count($domain->getTlsRptReports() ?? []),
+                'mtaStsPolicies'  => count($domain->getMtaStsPolicies() ?? []),
+                'dmarcAggregates' => count($domain->getDmarcAggregates() ?? []),
+                'bimiRecords'     => count($domain->getBimiRecords() ?? []),
+                'reputation'      => count($domain->getReputationSamples() ?? []),
+                'inboundRoutes'   => count($domain->getInboundRoutes() ?? []),
+                'inboundMessages' => count($domain->getInboundMessages() ?? []),
+                'campaigns'       => count($domain->getCampaigns() ?? []),
             ],
 
-            // Company brief for breadcrumbs
-            'company'      => [
+            'company' => [
                 'hash' => $company->getHash(),
                 'name' => $company->getName(),
             ],
@@ -385,6 +424,38 @@ final class DomainController
             $stmt = $pdo->prepare("DELETE FROM {$table} WHERE domain_id = :id");
             $stmt->execute([':id' => $domainId]);
         }
+    }
+
+    #[Route(methods: 'POST', path: '/companies/{hash}/domains/{id}/verify')]
+    public function verifyDomain(ServerRequestInterface $request): JsonResponse
+    {
+        $userId = (int)$request->getAttribute('user_id', 0);
+        if ($userId <= 0) throw new \RuntimeException('Unauthorized', 401);
+
+        $hash    = (string)$request->getAttribute('hash');
+        $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
+        if (!$company) throw new \RuntimeException('Company not found or access denied', 404);
+
+        $id = (int)$request->getAttribute('id', 0);
+        if ($id <= 0) throw new \RuntimeException('Invalid domain id', 400);
+
+        /** @var \App\Repository\DomainRepository $domainRepo */
+        $domainRepo = $this->repos->getRepository(Domain::class);
+        $domain     = $domainRepo->find($id);
+        if (! $domain || $domain->getCompany()?->getId() !== $company->getId()) {
+            throw new \RuntimeException('Domain not found', 404);
+        }
+
+        $report = $this->domainDnsVerifier->verifyAndPersist($domain);
+
+        return new JsonResponse([
+            'id'      => $domain->getId(),
+            'status'  => $domain->getStatus(),
+            'summary' => $report['summary'] ?? [],
+            'records' => $report['records'] ?? [],
+            'checked_at' => $report['checked_at'] ?? null,
+            'verified_at'=> $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
+        ]);
     }
 
 }

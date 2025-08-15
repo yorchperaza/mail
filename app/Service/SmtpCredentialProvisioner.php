@@ -4,45 +4,57 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Entity\Company;
+use App\Entity\IpPool;
 use App\Entity\SmtpCredential;
+use App\Repository\IpPoolRepository;
+use App\Repository\SmtpCredentialRepository;
 use MonkeysLegion\Repository\RepositoryFactory;
 
 final class SmtpCredentialProvisioner
 {
     public function __construct(private RepositoryFactory $repos) {}
 
+    /**
+     * Creates or reuses a single SMTP submission login per company.
+     * Also auto-assigns an IpPool (company best → global default → none).
+     */
+
     public function provisionForCompany(Company $company, string $domain, string $prefix='smtpuser'): array
     {
-        /** @var \MonkeysLegion\Repository\EntityRepository $repo */
-        $repo = $this->repos->getRepository(SmtpCredential::class);
+        /** @var EntityRepository $credRepo */
+        $credRepo = $this->repos->getRepository(SmtpCredential::class);
 
-        // Try to find existing by relation + prefix
-        $existing = $repo->findOneBy([
-            'company_id'         => $company->getId(),
+        // ✅ Use generic findOneBy instead of a custom repo method
+        $existing = $credRepo->findOneBy([
+            // if your base repo already supports entity values for ManyToOne criteria,
+            // you can pass the entity. If not, pass company_id => $company->getId()
+            'company_id'      => $company->getId(),
             'username_prefix' => $prefix,
-        ]);
+        ], /* loadRelations */ false);
 
-        if ($existing instanceof SmtpCredential) {
+        if ($existing) {
             return [
                 'username' => "{$prefix}@{$domain}",
-                'password' => null, // do not re-expose existing secret
+                'password' => null,
             ];
         }
 
-        // Create new credential
         $password = $this->randomPassword(16);
         $hash     = $this->dovecotSha512Crypt($password);
 
-        $cred = new SmtpCredential()
-            ->setCompany($company)
-            ->setUsername_prefix($prefix)
-            ->setPassword_hash($hash)
-            ->setScopes(['submit'])
-            ->setMax_msgs_min(0)
-            ->setMax_rcpt_msg(100)
-            ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
-
-        $repo->save($cred);
+        // If you also auto-assign IpPool here and your generic repo writes FK as ip_pool_id,
+        // be sure your earlier mapping is in place. Else omit and add later when factory mapping is fixed.
+        $credRepo->save((function () use ($company, $prefix, $hash) {
+            $c = new SmtpCredential();
+            $c->setCompany($company);
+            $c->setUsername_prefix($prefix);
+            $c->setPassword_hash($hash);
+            $c->setScopes(['submit']);
+            $c->setMax_msgs_min(0);
+            $c->setMax_rcpt_msg(100);
+            $c->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            return $c;
+        })());
 
         return [
             'username' => "{$prefix}@{$domain}",

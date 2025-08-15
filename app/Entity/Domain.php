@@ -16,15 +16,9 @@ use MonkeysLegion\Entity\Attributes\JoinTable;
 class Domain
 {
     public const STATUS_PENDING = 'pending';
-    public const STATUS_ACTIVE  = 'active';
-    public const STATUS_FAILED  = 'failed';
-
-    private const ALLOWED = [
-        self::STATUS_PENDING,
-        self::STATUS_ACTIVE,
-        self::STATUS_FAILED,
-    ];
-
+    public const STATUS_ACTIVE = 'active';
+    public const STATUS_FAILED = 'failed';
+    private const ALLOWED = [self::STATUS_PENDING, self::STATUS_ACTIVE, self::STATUS_FAILED];
     #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
     public int $id;
 
@@ -90,6 +84,12 @@ class Domain
 
     #[ManyToOne(targetEntity: Company::class, inversedBy: 'domains')]
     public ?Company $company = null;
+    
+    #[Field(type: 'json', nullable: true)]
+    public ?array $verification_report = null;
+
+    #[Field(type: 'datetime', nullable: true)]
+    public ?\DateTimeImmutable $last_checked_at = null;
 
     public function __construct()
     {
@@ -239,7 +239,7 @@ class Domain
     public function setStatus(?string $status): self
     {
         if ($status !== null && !in_array($status, self::ALLOWED, true)) {
-            throw new \InvalidArgumentException("Invalid status '$status'");
+            throw new \InvalidArgumentException("Invalid status '{$status}'");
         }
         $this->status = $status;
         return $this;
@@ -429,6 +429,28 @@ class Domain
     public function removeCompany(): self
     {
         $this->company = null;
+        return $this;
+    }
+
+    public function getVerification_report(): ?array
+    {
+        return $this->verification_report;
+    }
+
+    public function setVerification_report(?array $verification_report): self
+    {
+        $this->verification_report = $verification_report;
+        return $this;
+    }
+
+    public function getLast_checked_at(): ?\DateTimeImmutable
+    {
+        return $this->last_checked_at;
+    }
+
+    public function setLast_checked_at(?\DateTimeImmutable $last_checked_at): self
+    {
+        $this->last_checked_at = $last_checked_at;
         return $this;
     }
 }

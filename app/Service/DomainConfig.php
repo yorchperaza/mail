@@ -19,6 +19,7 @@ final class DomainConfig
         private RepositoryFactory $repos,
         private SmtpCredentialProvisioner $smtpProvisioner,
         private DkimKeyService $dkim,
+        private OpenDkimConfigurator $openDkimConfigurator
     ) {}
 
     /**
@@ -52,10 +53,17 @@ final class DomainConfig
             'v=DMARC1; p=none; rua=mailto:dmarc@%1$s; ruf=mailto:dmarc@%1$s; fo=1; adkim=s; aspf=s',
             $name
         );
-        $mxExpected = [[ 'host' => $name, 'priority' => 10, 'value' => self::SMTP_HOST . '.' ]];
+        $mxExpected = [[
+            'host'     => $name,
+            'priority' => 10,
+            'value'    => self::SMTP_HOST . '.',
+        ]];
 
         // 2) DKIM: file ensure + derive DNS + **persist entity**
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
+
+        $this->openDkimConfigurator->ensureDomain($name, self::DKIM_SELECTOR, $dk['private_path']);
+
         /** @var \App\Repository\DkimKeyRepository|\MonkeysLegion\Repository\EntityRepository $dkRepo */
         $dkRepo = $this->repos->getRepository(DkimKey::class);
 
