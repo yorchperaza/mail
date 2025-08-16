@@ -115,9 +115,8 @@ class User
         return $this->status;
     }
 
-    public function setStatus(?bool $status): self
-    {
-        $this->status = (bool) $status;
+    public function setStatus(?bool $status): self {
+        $this->status = $status === null ? null : (bool) $status;
         return $this;
     }
 
