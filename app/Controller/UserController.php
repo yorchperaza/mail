@@ -57,7 +57,7 @@ final class UserController
         $user = new User();
         $user->setEmail($email)
             ->setPasswordHash($this->hasher->hash($password))
-            ->setStatus(1)
+            ->setStatus(TRUE)
             ->setCreatedAt($now);
 
         $userRepo->save($user);
