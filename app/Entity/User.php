@@ -117,7 +117,7 @@ class User
 
     public function setStatus(?bool $status): self
     {
-        $this->status = $status;
+        $this->status = (bool) $status;
         return $this;
     }
 
