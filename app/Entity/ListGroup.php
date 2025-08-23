@@ -23,20 +23,20 @@ class ListGroup
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;
 
-    #[manyToOne(targetEntity: Company::class, inversedBy: 'listGroups')]
+    #[ManyToOne(targetEntity: Company::class, inversedBy: 'listGroup')]
     public ?Company $company = null;
-    /** @var ListContact[] */
-    #[oneToMany(targetEntity: ListContact::class, mappedBy: 'listGroup')]
-    public array $listContacts = [];
-    
-     /** @var Campaign[] */
-    #[oneToMany(targetEntity: Campaign::class, mappedBy: 'listGroup')]
+    /** @var Campaign[] */
+    #[OneToMany(targetEntity: Campaign::class, mappedBy: 'listGroup')]
     public array $campaigns = [];
+    
+     /** @var ListContact[] */
+    #[OneToMany(targetEntity: ListContact::class, mappedBy: 'listGroup')]
+    public array $listContacts = [];
 
     public function __construct()
     {
-        $this->listContacts = [];
         $this->campaigns = [];
+        $this->listContacts = [];
     }
 
     public function getId(): int
@@ -83,23 +83,6 @@ class ListGroup
         return $this;
     }
 
-    public function addListContact(ListContact $item): self
-    {
-        $this->listContacts[] = $item;
-        return $this;
-    }
-
-    public function removeListContact(ListContact $item): self
-    {
-        $this->listContacts = array_filter($this->listContacts, fn($i) => $i !== $item);
-        return $this;
-    }
-
-    public function getListContacts(): array
-    {
-        return $this->listContacts;
-    }
-
     public function addCampaign(Campaign $item): self
     {
         $this->campaigns[] = $item;
@@ -115,5 +98,22 @@ class ListGroup
     public function getCampaigns(): array
     {
         return $this->campaigns;
+    }
+
+    public function addListContact(ListContact $item): self
+    {
+        $this->listContacts[] = $item;
+        return $this;
+    }
+
+    public function removeListContact(ListContact $item): self
+    {
+        $this->listContacts = array_filter($this->listContacts, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getListContacts(): array
+    {
+        return $this->listContacts;
     }
 }

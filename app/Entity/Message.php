@@ -55,31 +55,31 @@ class Message
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $sent_at = null;
-    #[Field(type: 'enum', nullable: true)]
-    public ?string $final_state = null;
-
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;
-    #[manyToOne(targetEntity: Company::class, inversedBy: 'messages')]
-    public ?Company $company = null;
 
-    #[manyToOne(targetEntity: Domain::class, inversedBy: 'messages')]
+    #[ManyToOne(targetEntity: Company::class, inversedBy: 'messages')]
+    public ?Company $company = null;
+    #[ManyToOne(targetEntity: Domain::class, inversedBy: 'messages')]
     public ?Domain $domain = null;
-    #[manyToOne(targetEntity: IpPool::class, inversedBy: 'messages')]
+
+    #[ManyToOne(targetEntity: IpPool::class, inversedBy: 'messages')]
     public ?IpPool $ipPool = null;
     /** @var MessageRecipient[] */
-    #[oneToMany(targetEntity: MessageRecipient::class, mappedBy: 'message')]
+    #[OneToMany(targetEntity: MessageRecipient::class, mappedBy: 'message')]
     public array $messageRecipients = [];
     /** @var MessageEvent[] */
-    #[oneToMany(targetEntity: MessageEvent::class, mappedBy: 'message')]
+    #[OneToMany(targetEntity: MessageEvent::class, mappedBy: 'message')]
     public array $messageEvents = [];
     /** @var Suppression[] */
-    #[oneToMany(targetEntity: Suppression::class, mappedBy: 'message')]
+    #[OneToMany(targetEntity: Suppression::class, mappedBy: 'message')]
     public array $suppressions = [];
-    
-     /** @var ArcSeal[] */
-    #[oneToMany(targetEntity: ArcSeal::class, mappedBy: 'message')]
+    /** @var ArcSeal[] */
+    #[OneToMany(targetEntity: ArcSeal::class, mappedBy: 'message')]
     public array $arcSeals = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $final_state = null;
 
     public function __construct()
     {
@@ -259,17 +259,6 @@ class Message
         return $this;
     }
 
-    public function getFinal_state(): ?string
-    {
-        return $this->final_state;
-    }
-
-    public function setFinal_state(?string $final_state): self
-    {
-        $this->final_state = $final_state;
-        return $this;
-    }
-
     public function getCreated_at(): ?\DateTimeImmutable
     {
         return $this->created_at;
@@ -398,5 +387,16 @@ class Message
     public function getArcSeals(): array
     {
         return $this->arcSeals;
+    }
+
+    public function getFinal_state(): ?string
+    {
+        return $this->final_state;
+    }
+
+    public function setFinal_state(?string $final_state): self
+    {
+        $this->final_state = $final_state;
+        return $this;
     }
 }

@@ -20,12 +20,11 @@ class ListContact
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $subscribed_at = null;
-    
-    #[manyToOne(targetEntity: ListGroup::class, inversedBy: 'listContacts')]
-    public ?ListGroup $listGroup = null;
-
-    #[manyToOne(targetEntity: Contact::class, inversedBy: 'listContacts')]
+    #[ManyToOne(targetEntity: Contact::class, inversedBy: 'listContacts')]
     public ?Contact $contact = null;
+
+    #[ManyToOne(targetEntity: ListGroup::class, inversedBy: 'listContacts')]
+    public ?ListGroup $listGroup = null;
 
     public function __construct()
     {
@@ -47,23 +46,6 @@ class ListContact
         return $this;
     }
 
-    public function getListGroup(): ?ListGroup
-    {
-        return $this->listGroup;
-    }
-
-    public function setListGroup(?ListGroup $listGroup): self
-    {
-        $this->listGroup = $listGroup;
-        return $this;
-    }
-
-    public function removeListGroup(): self
-    {
-        $this->listGroup = null;
-        return $this;
-    }
-
     public function getContact(): ?Contact
     {
         return $this->contact;
@@ -78,6 +60,23 @@ class ListContact
     public function removeContact(): self
     {
         $this->contact = null;
+        return $this;
+    }
+
+    public function getListGroup(): ?ListGroup
+    {
+        return $this->listGroup;
+    }
+
+    public function setListGroup(?ListGroup $listGroup): self
+    {
+        $this->listGroup = $listGroup;
+        return $this;
+    }
+
+    public function removeListGroup(): self
+    {
+        $this->listGroup = null;
         return $this;
     }
 }

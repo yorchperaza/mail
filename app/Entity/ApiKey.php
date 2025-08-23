@@ -35,9 +35,11 @@ class ApiKey
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;
-    
     #[ManyToOne(targetEntity: Company::class, inversedBy: 'apiKeys')]
     public ?Company $company = null;
+
+    #[ManyToOne(targetEntity: Domain::class, inversedBy: 'apiKeys')]
+    public ?Domain $domain = null;
 
     public function __construct()
     {
@@ -139,6 +141,23 @@ class ApiKey
     public function removeCompany(): self
     {
         $this->company = null;
+        return $this;
+    }
+
+    public function getDomain(): ?Domain
+    {
+        return $this->domain;
+    }
+
+    public function setDomain(?Domain $domain): self
+    {
+        $this->domain = $domain;
+        return $this;
+    }
+
+    public function removeDomain(): self
+    {
+        $this->domain = null;
         return $this;
     }
 }

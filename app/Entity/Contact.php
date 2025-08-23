@@ -30,22 +30,22 @@ class Contact
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $gdpr_consent_at = null;
-    #[Field(type: 'enum', nullable: true)]
-    public ?string $status = null;
-
     #[Field(type: 'json', nullable: true)]
     public ?array $attributes = null;
+
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;
-
-    #[manyToOne(targetEntity: Company::class, inversedBy: 'contacts')]
+    #[ManyToOne(targetEntity: Company::class, inversedBy: 'contacts')]
     public ?Company $company = null;
+
     #[Field(type: 'string', nullable: true)]
     public ?string $consent_source = null;
-    
-     /** @var ListContact[] */
-    #[oneToMany(targetEntity: ListContact::class, mappedBy: 'contact')]
+    /** @var ListContact[] */
+    #[OneToMany(targetEntity: ListContact::class, mappedBy: 'contact')]
     public array $listContacts = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $status = null;
 
     public function __construct()
     {
@@ -109,17 +109,6 @@ class Contact
     public function setGdpr_consent_at(?\DateTimeImmutable $gdpr_consent_at): self
     {
         $this->gdpr_consent_at = $gdpr_consent_at;
-        return $this;
-    }
-
-    public function getStatus(): ?string
-    {
-        return $this->status;
-    }
-
-    public function setStatus(?string $status): self
-    {
-        $this->status = $status;
         return $this;
     }
 
@@ -188,5 +177,16 @@ class Contact
     public function getListContacts(): array
     {
         return $this->listContacts;
+    }
+
+    public function getStatus(): ?string
+    {
+        return $this->status;
+    }
+
+    public function setStatus(?string $status): self
+    {
+        $this->status = $status;
+        return $this;
     }
 }

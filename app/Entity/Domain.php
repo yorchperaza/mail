@@ -84,12 +84,15 @@ class Domain
 
     #[ManyToOne(targetEntity: Company::class, inversedBy: 'domains')]
     public ?Company $company = null;
-    
     #[Field(type: 'json', nullable: true)]
     public ?array $verification_report = null;
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $last_checked_at = null;
+    
+     /** @var ApiKey[] */
+    #[OneToMany(targetEntity: ApiKey::class, mappedBy: 'domain')]
+    public array $apiKeys = [];
 
     public function __construct()
     {
@@ -103,6 +106,7 @@ class Domain
         $this->inboundRoutes = [];
         $this->inboundMessages = [];
         $this->campaigns = [];
+        $this->apiKeys = [];
     }
 
     public function getId(): int
@@ -452,5 +456,22 @@ class Domain
     {
         $this->last_checked_at = $last_checked_at;
         return $this;
+    }
+
+    public function addApiKey(ApiKey $item): self
+    {
+        $this->apiKeys[] = $item;
+        return $this;
+    }
+
+    public function removeApiKey(ApiKey $item): self
+    {
+        $this->apiKeys = array_filter($this->apiKeys, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getApiKeys(): array
+    {
+        return $this->apiKeys;
     }
 }
