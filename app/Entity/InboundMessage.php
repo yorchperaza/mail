@@ -28,12 +28,12 @@ class InboundMessage
     #[Field(type: 'decimal', nullable: true)]
     public ?float $spam_score = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $dkim_result = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $dmarc_result = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $arc_result = null;
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $received_at = null;

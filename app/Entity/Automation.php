@@ -21,13 +21,13 @@ class Automation
     #[Field(type: 'string', nullable: true)]
     public ?string $name = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $trigger = null;
 
     #[Field(type: 'json', nullable: true)]
     public ?array $flow = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'datetime', nullable: true)]

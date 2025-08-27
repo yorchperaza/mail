@@ -20,7 +20,7 @@ class MessageEvent
 
     #[Field(type: 'string', length: 320, nullable: true)]
     public ?string $recipient_email = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $event = null;
 
     #[Field(type: 'datetime', nullable: true)]

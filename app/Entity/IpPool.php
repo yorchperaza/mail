@@ -25,7 +25,7 @@ class IpPool
 
     #[Field(type: 'integer', nullable: true)]
     public ?int $reputation_score = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $warmup_state = null;
 
     #[Field(type: 'datetime', nullable: true)]

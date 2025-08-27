@@ -127,7 +127,7 @@ final class CampaignController
         /** @var \App\Repository\CampaignRepository $repo */
         $repo = $this->repos->getRepository(Campaign::class);
 
-        $c = (new Campaign())
+        $c = new Campaign()
             ->setCompany($co)
             ->setName($name)
             ->setSubject((string)($body['subject'] ?? '') ?: null)
@@ -388,7 +388,7 @@ final class CampaignController
 
             /** @var \App\Repository\ListContactRepository $lcRepo */
             $lcRepo = $this->repos->getRepository(ListContact::class);
-            $rows = $lcRepo->findBy(['list_group_id' => $lg->getId()]);
+            $rows = $lcRepo->findBy(['listGroup_id' => $lg->getId()]);
             $total = count($rows);
             $slice = array_slice($rows, ($page-1)*$perPage, $perPage);
             foreach ($slice as $lc) {

@@ -23,14 +23,14 @@ class Campaign
     #[Field(type: 'string', nullable: true)]
     public ?string $subject = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $send_mode = null;
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $scheduled_at = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $target = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'datetime', nullable: true)]

@@ -21,7 +21,7 @@ class InboundRoute
     #[Field(type: 'string', nullable: true)]
     public ?string $pattern = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $action = null;
 
     #[Field(type: 'json', nullable: true)]

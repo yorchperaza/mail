@@ -24,7 +24,7 @@ class InboundPart
     #[Field(type: 'integer', nullable: true)]
     public ?int $size_bytes = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $disposition = null;
     
     #[Field(type: 'string', nullable: true)]

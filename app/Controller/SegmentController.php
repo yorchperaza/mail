@@ -116,10 +116,12 @@ final class SegmentController
         $uid = $this->auth($r);
         $co  = $this->company((string)$r->getAttribute('hash'), $uid);
         $id  = (int)$r->getAttribute('id');
+        error_log('Fetching segment id=' . $id . ' for company id=' . $co->getId());
 
         /** @var \App\Repository\SegmentRepository $repo */
         $repo = $this->repos->getRepository(Segment::class);
-        $s = $repo->find($id);
+        $s = $repo->findOneBy(['id' => $id]);
+        error_log('Segment found: ' . ($s ? 'yes' : 'no'));
         if (!$s || $s->getCompany()?->getId() !== $co->getId()) throw new RuntimeException('Segment not found', 404);
 
         return new JsonResponse($this->shape($s));
@@ -178,33 +180,70 @@ final class SegmentController
      */
     #[Route(methods: 'POST', path: '/companies/{hash}/segments/{id}/build')]
     public function build(ServerRequestInterface $r): JsonResponse {
-        $uid = $this->auth($r);
-        $co  = $this->company((string)$r->getAttribute('hash'), $uid);
-        $id  = (int)$r->getAttribute('id');
+        try {
+            $uid = $this->auth($r);
+            $co  = $this->company((string)$r->getAttribute('hash'), $uid);
+            $id  = (int)$r->getAttribute('id');
 
-        /** @var \App\Repository\SegmentRepository $repo */
-        $repo = $this->repos->getRepository(Segment::class);
-        $s = $repo->find($id);
-        if (!$s || $s->getCompany()?->getId() !== $co->getId()) throw new RuntimeException('Segment not found', 404);
+            /** @var \App\Repository\SegmentRepository $repo */
+            $repo = $this->repos->getRepository(Segment::class);
+            $s = $repo->find($id);
+            if (!$s || $s->getCompany()?->getId() !== $co->getId()) {
+                throw new RuntimeException('Segment not found', 404);
+            }
 
-        $body = json_decode((string)$r->getBody(), true) ?: [];
-        $dry  = (bool)($body['dryRun'] ?? false);
+            $body = json_decode((string)$r->getBody(), true) ?: [];
+            $dry  = (bool)($body['dryRun'] ?? false);
 
-        // Very simple “engine”: filter contacts by definition rules
-        $def = $s->getDefinition() ?? [];
-        [$matches, $sample] = $this->evaluateDefinition($co->getId(), $def, 20);
+            $t0  = microtime(true);
+            $def = $s->getDefinition() ?? [];
 
-        if (!$dry) {
-            $s->setMaterialized_count($matches)->setLast_built_at($this->now());
-            $repo->save($s);
+            // evaluate
+            $result = $this->evaluateDefinition($co->getId(), $def, 20);
+            error_log('Evaluation result: ' . json_encode($result));
+            // pad to avoid notices if an older version returns fewer elements
+            $result += [0 => 0, 1 => [], 2 => null];
+            [$matches, $sample, $checked] = $result;
+
+            $prevCount = (int)($s->getMaterialized_count() ?? 0);
+            if (!$dry) {
+                $s->setMaterialized_count($matches)->setLast_built_at($this->now());
+                $repo->save($s);
+            }
+            $durationMs = (int) round((microtime(true) - $t0) * 1000);
+
+            $rulesHuman = $this->humanizeDefinition($co->getId(), $def);
+            error_log('Human rules: ' . json_encode($rulesHuman));
+            return new JsonResponse([
+                'segment'   => $this->shape($s),
+                'matches'   => $matches,
+                'sample'    => $sample,
+                'dryRun'    => $dry,
+                'performed' => [
+                    'updated'          => !$dry,
+                    'previous_count'   => $prevCount,
+                    'new_count'        => $matches,
+                    'delta'            => $matches - $prevCount,
+                    'checked_contacts' => $checked,
+                    'duration_ms'      => $durationMs,
+                    'at'               => $this->now()->format(\DateTimeInterface::ATOM),
+                ],
+                'rules_human' => $rulesHuman,
+            ]);
+        } catch (\Throwable $e) {
+            error_log("[segments.build] ERROR: " . $e->getMessage() . " @ " . $e->getFile() . ":" . $e->getLine());
+            // return a structured error rather than a raw 500
+            $code = ($e instanceof RuntimeException && $e->getCode() >= 400 && $e->getCode() < 600)
+                ? $e->getCode()
+                : 500;
+
+            return new JsonResponse([
+                'error'   => $e->getMessage(),
+                'type'    => (new \ReflectionClass($e))->getShortName(),
+                'code'    => $code,
+                'traceId' => bin2hex(random_bytes(6)),
+            ], $code);
         }
-
-        return new JsonResponse([
-            'segment'  => $this->shape($s),
-            'matches'  => $matches,
-            'sample'   => $sample, // up to 20 contacts with id/email/name
-            'dryRun'   => $dry,
-        ]);
     }
 
     /**
@@ -249,70 +288,185 @@ final class SegmentController
      *   - ["not_in_list_ids" => [4]]
      *   - ["gdpr_consent" => true]
      */
-    private function evaluateDefinition(int $companyId, array $def, int $sampleSize=20): array {
-        /** @var \App\Repository\ContactRepository $cRepo */
-        $cRepo = $this->repos->getRepository(Contact::class);
-        $contacts = $cRepo->findBy(['company_id' => $companyId]);
+    private function evaluateDefinition(int $companyId, array $def, int $sampleSize = 20): array {
+        error_log("=== evaluateDefinition start (company=$companyId) ===");
+        error_log("Definition: " . json_encode($def));
 
-        $inListIds      = array_map('intval', $def['in_list_ids'] ?? []);
-        $notInListIds   = array_map('intval', $def['not_in_list_ids'] ?? []);
+        /** @var \App\Repository\ContactRepository $cRepo */
+        $cRepo    = $this->repos->getRepository(Contact::class);
+        $contacts = $cRepo->findBy(['company_id' => $companyId]);
+        $contactsCount = is_countable($contacts) ? count($contacts) : 0;
+        error_log("Loaded {$contactsCount} contacts");
+
+        $checkedTotal = $contactsCount;
+
+        $inListIds      = array_values(array_unique(array_map('intval', $def['in_list_ids'] ?? [])));
+        $notInListIds   = array_values(array_unique(array_map('intval', $def['not_in_list_ids'] ?? [])));
         $statusEq       = isset($def['status']) ? (string)$def['status'] : null;
         $emailContains  = isset($def['email_contains']) ? mb_strtolower((string)$def['email_contains']) : null;
         $gdprConsentReq = array_key_exists('gdpr_consent', $def) ? (bool)$def['gdpr_consent'] : null;
 
-        // Preload memberships only when needed
+        error_log("Filters: status=" . var_export($statusEq, true) .
+            " email_contains=" . var_export($emailContains, true) .
+            " gdpr_consent=" . var_export($gdprConsentReq, true) .
+            " in=" . json_encode($inListIds) .
+            " notIn=" . json_encode($notInListIds));
+
+        // Preload memberships only if lists are part of the definition
         $byContactLists = [];
         if ($inListIds || $notInListIds) {
             /** @var \App\Repository\ListContactRepository $lcRepo */
             $lcRepo = $this->repos->getRepository(ListContact::class);
-            $allLc = $lcRepo->findBy(['company_id' => $companyId]); // if your repo supports this; else fetch all and filter by list->company
+
+            // If your repo can't filter by company, fetch all and filter in PHP.
+            $allLc = method_exists($lcRepo, 'findBy')
+                ? $lcRepo->findBy([])   // conservative: fetch all memberships
+                : (method_exists($lcRepo, 'findAll') ? $lcRepo->findAll() : []);
+
+            $allLcCount = is_countable($allLc) ? count($allLc) : (is_array($allLc) ? count($allLc) : 0);
+            error_log("Loaded {$allLcCount} ListContact rows (pre-filter)");
 
             foreach ($allLc as $lc) {
-                $cid = $lc->getContact()?->getId() ?? null;
-                $lg  = $lc->getListGroup();
-                if (!$cid || !$lg || $lg->getCompany()?->getId() !== $companyId) continue;
-                $byContactLists[$cid] = $byContactLists[$cid] ?? [];
-                $byContactLists[$cid][] = $lg->getId();
+                $contact = $lc->getContact();
+                $list    = $lc->getListGroup();
+
+                if (!$contact) {
+                    error_log("Skipping LC with null contact id=" . ($lc->getId() ?? '??'));
+                    continue;
+                }
+                if (!$list) {
+                    error_log("Skipping LC with null list id=" . ($lc->getId() ?? '??'));
+                    continue;
+                }
+                $listCompany = $list->getCompany();
+                if (!$listCompany) {
+                    error_log("Skipping LC {$lc->getId()} — list has no company");
+                    continue;
+                }
+                if ((int)$listCompany->getId() !== $companyId) {
+                    continue; // skip memberships from other companies
+                }
+
+                $cid = (int)$contact->getId();
+                $lid = (int)$list->getId();
+
+                // IMPORTANT: store as a FLAT LIST of IDs (not a map lid => true)
+                $byContactLists[$cid] ??= [];
+                $byContactLists[$cid][] = $lid;
             }
+
+            error_log("Memberships built for " . count($byContactLists) . " contacts");
         }
 
+        // Evaluate
         $matched = [];
         foreach ($contacts as $c) {
-            $ok = true;
+            $ok  = true;
+            $cid = (int)$c->getId();
 
-            if ($statusEq !== null && (string)$c->getStatus() !== $statusEq) $ok = false;
+            if ($statusEq !== null && (string)$c->getStatus() !== $statusEq) {
+                $ok = false;
+            }
+
             if ($ok && $emailContains !== null) {
                 $em = mb_strtolower((string)$c->getEmail());
-                if ($em === '' || !str_contains($em, $emailContains)) $ok = false;
+                if ($em === '' || !str_contains($em, $emailContains)) {
+                    $ok = false;
+                }
             }
+
             if ($ok && $gdprConsentReq !== null) {
                 $has = $c->getGdpr_consent_at() !== null;
-                if ($gdprConsentReq !== $has) $ok = false;
+                if ($gdprConsentReq !== $has) {
+                    $ok = false;
+                }
             }
+
             if ($ok && ($inListIds || $notInListIds)) {
-                $cid  = $c->getId();
-                $sets = $byContactLists[$cid] ?? [];
-                if ($inListIds && count(array_intersect($inListIds, $sets)) === 0) $ok = false;
-                if ($ok && $notInListIds && count(array_intersect($notInListIds, $sets)) > 0) $ok = false;
+                // ensure $sets is a flat int array
+                $sets = array_values(array_map('intval', $byContactLists[$cid] ?? []));
+
+                // must be in ANY of these
+                if ($inListIds && count(array_intersect($inListIds, $sets)) === 0) {
+                    $ok = false;
+                }
+                // must NOT be in any of these
+                if ($ok && $notInListIds && count(array_intersect($notInListIds, $sets)) > 0) {
+                    $ok = false;
+                }
             }
 
             if ($ok) {
                 $matched[] = [
-                    'id'    => $c->getId(),
-                    'email' => $c->getEmail(),
-                    'name'  => $c->getName(),
-                    'status'=> $c->getStatus(),
+                    'id'     => $c->getId(),
+                    'email'  => $c->getEmail(),
+                    'name'   => $c->getName(),
+                    'status' => $c->getStatus(),
                 ];
             }
         }
 
         $count  = count($matched);
         $sample = array_slice($matched, 0, $sampleSize);
-        return [$count, $sample];
+
+        error_log("Matched $count / $checkedTotal contacts (returning sample size " . count($sample) . ")");
+        error_log("=== evaluateDefinition end ===");
+
+        // Always return 3 elements
+        return [$count, $sample, $checkedTotal];
     }
+
 
     private function evaluateDefinitionFull(int $companyId, array $def): array {
         [$count, $sample] = $this->evaluateDefinition($companyId, $def, PHP_INT_MAX);
         return [$count, $sample]; // “sample” here is actually full list
     }
+
+    private function humanizeDefinition(int $companyId, array $def): array {
+        $out = [];
+
+        if (isset($def['status']) && $def['status'] !== '') {
+            $out[] = "Status is “{$def['status']}”";
+        }
+        if (isset($def['email_contains']) && $def['email_contains'] !== '') {
+            $out[] = "Email contains “{$def['email_contains']}”";
+        }
+        if (array_key_exists('gdpr_consent', $def)) {
+            $out[] = $def['gdpr_consent'] ? 'Has GDPR consent' : 'Does NOT have GDPR consent';
+        }
+
+        // Replace list ids with names when possible
+        $nameMap = $this->listNamesById($companyId, array_merge(
+            $def['in_list_ids'] ?? [],
+            $def['not_in_list_ids'] ?? []
+        ));
+
+        if (!empty($def['in_list_ids'])) {
+            $names = array_map(fn($id) => $nameMap[(int)$id] ?? "#$id", $def['in_list_ids']);
+            $out[] = 'In ANY of lists: ' . implode(', ', $names);
+        }
+        if (!empty($def['not_in_list_ids'])) {
+            $names = array_map(fn($id) => $nameMap[(int)$id] ?? "#$id", $def['not_in_list_ids']);
+            $out[] = 'NOT in lists: ' . implode(', ', $names);
+        }
+
+        if (!$out) $out[] = 'No filters (matches all contacts)';
+
+        return $out;
+    }
+
+    private function listNamesById(int $companyId, array $ids): array {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        if (!$ids) return [];
+        /** @var \App\Repository\ListGroupRepository $lgRepo */
+        $lgRepo = $this->repos->getRepository(ListGroup::class);
+        $rows = $lgRepo->findBy(['id' => $ids]);
+        $map = [];
+        foreach ($rows as $lg) {
+            if ($lg->getCompany()?->getId() !== $companyId) continue;
+            $map[(int)$lg->getId()] = (string)$lg->getName();
+        }
+        return $map;
+    }
+
 }

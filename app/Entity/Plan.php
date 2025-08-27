@@ -21,7 +21,7 @@ class Plan
     #[Field(type: 'string', nullable: true)]
     public ?string $name = null;
     #[Field(type: 'decimal', nullable: true)]
-    public ?int $monthlyPrice = null;
+    public ?float $monthlyPrice = null;
 
     #[Field(type: 'integer', nullable: true)]
     public ?int $includedMessages = null;
@@ -56,7 +56,7 @@ class Plan
         return $this;
     }
 
-    public function getMonthlyPrice(): ?int
+    public function getMonthlyPrice(): ?float
     {
         return $this->monthlyPrice;
     }

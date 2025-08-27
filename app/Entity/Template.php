@@ -20,7 +20,7 @@ class Template
 
     #[Field(type: 'string', nullable: true)]
     public ?string $name = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $engine = null;
 
     #[Field(type: 'integer', nullable: true)]
@@ -33,12 +33,14 @@ class Template
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;
 
-    #[manyToOne(targetEntity: Company::class, inversedBy: 'templates')]
+    #[ManyToOne(targetEntity: Company::class, inversedBy: 'templates')]
     public ?Company $company = null;
-    
-     /** @var Campaign[] */
-    #[oneToMany(targetEntity: Campaign::class, mappedBy: 'template')]
+    /** @var Campaign[] */
+    #[OneToMany(targetEntity: Campaign::class, mappedBy: 'template')]
     public array $campaigns = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $hash = null;
 
     public function __construct()
     {
@@ -148,5 +150,16 @@ class Template
     public function getCampaigns(): array
     {
         return $this->campaigns;
+    }
+
+    public function getHash(): ?string
+    {
+        return $this->hash;
+    }
+
+    public function setHash(?string $hash): self
+    {
+        $this->hash = $hash;
+        return $this;
     }
 }

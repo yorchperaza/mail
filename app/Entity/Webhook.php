@@ -25,7 +25,7 @@ class Webhook
 
     #[Field(type: 'string', nullable: true)]
     public ?string $secret = null;
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'smallInt', nullable: true)]

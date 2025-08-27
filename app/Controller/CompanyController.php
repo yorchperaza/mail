@@ -589,4 +589,78 @@ final class CompanyController
             // Silently ignore if table/column not present or any other issue
         }
     }
+
+    /**
+     * GET /companies/search?q=...
+     * Global company search (no user scoping).
+     * Returns only id and name for lightweight dropdowns/autocomplete.
+     *
+     * Query:
+     *   q      = search term (numeric -> exact ID; otherwise case-insensitive name contains)
+     *   limit  = max results (default 20, max 100)
+     */
+    #[Route(methods: 'GET', path: '/search-companies')]
+    public function search(ServerRequestInterface $request): JsonResponse
+    {
+        // You can still require auth if needed:
+        $uid = (int)$request->getAttribute('user_id', 0);
+        if ($uid <= 0) {
+            throw new RuntimeException('Unauthorized', 401);
+        }
+        // If this should be admin-only, add your role/permission check here.
+
+        // Parse query params
+        parse_str((string)$request->getUri()->getQuery(), $qs);
+        $qRaw  = isset($qs['q']) ? (string)$qs['q'] : '';
+        $q     = trim($qRaw);
+        $limit = max(1, min(100, (int)($qs['limit'] ?? 20)));
+
+        $pdo = $this->qb->pdo();
+        $out = [];
+
+        // No search term: return first N alphabetically
+        if ($q === '') {
+            $stmt = $pdo->prepare("SELECT id, name FROM company ORDER BY name ASC LIMIT :lim");
+            $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+            $stmt->execute();
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+            foreach ($rows as $r) {
+                $out[] = ['id' => (int)$r['id'], 'name' => $r['name']];
+            }
+            return new JsonResponse($out);
+        }
+
+        // Numeric? → exact ID match
+        if (ctype_digit($q)) {
+            $stmt = $pdo->prepare("SELECT id, name FROM company WHERE id = :id LIMIT 1");
+            $stmt->bindValue(':id', (int)$q, \PDO::PARAM_INT);
+            $stmt->execute();
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if ($row) {
+                $out[] = ['id' => (int)$row['id'], 'name' => $row['name']];
+            }
+            return new JsonResponse($out);
+        }
+
+        // Name contains (case-insensitive)
+        // Uses LOWER(name) LIKE LOWER(:needle) for portability.
+        $stmt = $pdo->prepare("
+        SELECT id, name
+        FROM company
+        WHERE LOWER(name) LIKE LOWER(:needle)
+        ORDER BY name ASC
+        LIMIT :lim
+    ");
+        $needle = '%' . $q . '%';
+        $stmt->bindValue(':needle', $needle, \PDO::PARAM_STR);
+        $stmt->bindValue(':lim', $limit, \PDO::PARAM_INT);
+        $stmt->execute();
+        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        foreach ($rows as $r) {
+            $out[] = ['id' => (int)$r['id'], 'name' => $r['name']];
+        }
+
+        return new JsonResponse($out);
+    }
+
 }
