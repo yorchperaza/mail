@@ -427,44 +427,24 @@ final class IpPoolController
         ]);
     }
 
-    #[Route(methods: 'GET', path: '/companies/{companyId}/ippools/brief')]
+    /**
+     * @throws \ReflectionException
+     * @throws \JsonException
+     */
+    #[Route(methods: 'GET', path: '/ippools-brief/companies/{companyId}')]
     public function listBriefByCompany(ServerRequestInterface $r): JsonResponse {
-        $this->auth($r);
-
-        $companyId = (int)$r->getAttribute('companyId');
-        /** @var \App\Repository\CompanyRepository $companyRepo */
-        $companyRepo = $this->repos->getRepository(Company::class);
-        $company = $companyRepo->find($companyId);
-        if (!$company) throw new RuntimeException('Company not found', 404);
+        error_log('IpPoolController::listBriefByCompany called');
+        $uuid = $this->auth($r);
+        $company = $this->company((string)$r->getAttribute('companyId'), $uuid);
 
         /** @var \App\Repository\IpPoolRepository $repo */
         $repo = $this->repos->getRepository(IpPool::class);
-
-        $q = trim((string)($r->getQueryParams()['q'] ?? ''));
-
-        $rows = array_values(array_filter($repo->findBy([]), static function (IpPool $p) use ($companyId) {
-            return $p->getCompany()?->getId() === $companyId;
-        }));
-
-        if ($q !== '') {
-            $needle = mb_strtolower($q);
-            $rows = array_values(array_filter($rows, static function (IpPool $p) use ($needle) {
-                return str_contains(mb_strtolower((string)($p->getName() ?? '')), $needle)
-                    || str_contains((string)$p->getId(), $needle);
-            }));
-        }
-
-        usort($rows, static function (IpPool $a, IpPool $b) {
-            $na = (string)($a->getName() ?? '');
-            $nb = (string)($b->getName() ?? '');
-            $cmp = strcasecmp($na, $nb);
-            return $cmp === 0 ? $a->getId() <=> $b->getId() : $cmp;
-        });
+        $ipPools = $repo->findBy(['company' => $company]);
 
         $items = array_map(static fn(IpPool $p) => [
             'id'   => $p->getId(),
             'name' => $p->getName(),
-        ], $rows);
+        ], $ipPools);
 
         return new JsonResponse($items);
     }

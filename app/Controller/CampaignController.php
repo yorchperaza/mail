@@ -11,6 +11,7 @@ use App\Entity\Domain;
 use App\Entity\Template;
 use App\Entity\Contact;
 use App\Entity\ListContact;
+use App\Service\CampaignDispatchService;
 use App\Service\CompanyResolver;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
@@ -22,9 +23,10 @@ use RuntimeException;
 final class CampaignController
 {
     public function __construct(
-        private RepositoryFactory $repos,
-        private CompanyResolver   $companyResolver,
-        private QueryBuilder      $qb,
+        private RepositoryFactory       $repos,
+        private CompanyResolver         $companyResolver,
+        private QueryBuilder            $qb,
+        private CampaignDispatchService $dispatcher,
     ) {}
 
     /* ---------------------------- helpers ---------------------------- */
@@ -267,6 +269,10 @@ final class CampaignController
     /* ---------------------- lifecycle actions ---------------------- */
 
     // Draft → Scheduled (set schedule) or Draft → Sending (immediate)
+    /**
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/companies/{hash}/campaigns/{id}/schedule')]
     public function schedule(ServerRequestInterface $r): JsonResponse {
         $uid = $this->auth($r);
@@ -276,20 +282,24 @@ final class CampaignController
         /** @var \App\Repository\CampaignRepository $repo */
         $repo = $this->repos->getRepository(Campaign::class);
         $c = $repo->find($id);
-        if (!$c || $c->getCompany()?->getId() !== $co->getId()) throw new RuntimeException('Campaign not found', 404);
+        if (!$c || $c->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Campaign not found', 404);
+        }
 
         $body = json_decode((string)$r->getBody(), true) ?: [];
         if (empty($body['scheduled_at'])) throw new RuntimeException('scheduled_at required', 400);
 
-        $c->setSend_mode('scheduled')
-            ->setScheduled_at(new \DateTimeImmutable((string)$body['scheduled_at']))
-            ->setStatus('scheduled');
+        $when = new \DateTimeImmutable((string)$body['scheduled_at']);
+        $this->dispatcher->scheduleAt($c, $when);
 
-        $repo->save($c);
         return new JsonResponse($this->shape($c));
     }
 
     // Move to sending now
+
+    /**
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/companies/{hash}/campaigns/{id}/send')]
     public function sendNow(ServerRequestInterface $r): JsonResponse {
         $uid = $this->auth($r);
@@ -299,13 +309,23 @@ final class CampaignController
         /** @var \App\Repository\CampaignRepository $repo */
         $repo = $this->repos->getRepository(Campaign::class);
         $c = $repo->find($id);
-        if (!$c || $c->getCompany()?->getId() !== $co->getId()) throw new RuntimeException('Campaign not found', 404);
+        if (!$c || $c->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Campaign not found', 404);
+        }
 
-        $c->setSend_mode('immediate')->setScheduled_at(null)->setStatus('sending');
-        $repo->save($c);
+        // Perform dispatch (should update status/metrics inside the service)
+        $result = $this->dispatcher->sendNow($c);
 
-        // TODO enqueue a job to actually deliver
-        return new JsonResponse($this->shape($c));
+        // Return the campaign shape directly so the UI can setData(...) safely.
+        // Also include dispatch stats under a namespaced key that TS can ignore.
+        $payload = $this->shape($c);
+        $payload['_dispatch'] = [
+            'enqueued' => (int)($result['enqueued'] ?? 0),
+            'skipped'  => (int)($result['skipped']  ?? 0),
+            'total'    => (int)($result['total']    ?? 0),
+        ];
+
+        return new JsonResponse($payload);
     }
 
     #[Route(methods: 'POST', path: '/companies/{hash}/campaigns/{id}/pause')]
@@ -455,5 +475,44 @@ final class CampaignController
             ],
             'status'  => $c->getStatus(),
         ]);
+    }
+
+    #[Route(methods: 'POST', path: '/companies/{hash}/campaigns/{id}/duplicate')]
+    public function duplicate(ServerRequestInterface $r): JsonResponse {
+        $uid = $this->auth($r);
+        $co  = $this->company((string)$r->getAttribute('hash'), $uid);
+        $id  = (int)$r->getAttribute('id');
+
+        /** @var \App\Repository\CampaignRepository $repo */
+        $repo = $this->repos->getRepository(Campaign::class);
+        $orig = $repo->find($id);
+        if (!$orig || $orig->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Campaign not found', 404);
+        }
+
+        // Build a friendly “copy” name
+        $base = trim((string)($orig->getName() ?? 'Untitled'));
+        $copyName = $base === '' ? 'Copy' : $base . ' (copy)';
+
+        // New draft with same config, reset lifecycle/metrics/schedule
+        $c = new Campaign()
+            ->setCompany($co)
+            ->setName($copyName)
+            ->setSubject($orig->getSubject())
+            ->setSend_mode($orig->getSend_mode() ?? 'immediate')
+            ->setTarget($orig->getTarget() ?? 'list')
+            ->setStatus('draft')
+            ->setCreated_at($this->now())
+            ->setScheduled_at(null)
+            // relations
+            ->setTemplate($orig->getTemplate())
+            ->setDomain($orig->getDomain())
+            ->setListGroup($orig->getTarget() === 'list' ? $orig->getListGroup() : null)
+            ->setSegment($orig->getTarget() === 'segment' ? $orig->getSegment() : null)
+            // metrics reset
+            ->setSent(0)->setDelivered(0)->setOpens(0)->setClicks(0)->setBounces(0)->setComplaints(0);
+
+        $repo->save($c);
+        return new JsonResponse($this->shape($c), 201);
     }
 }

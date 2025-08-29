@@ -25,10 +25,10 @@ class SmtpCredential
 
     #[Field(type: 'json', nullable: true)]
     public ?array $scopes = null;
-    #[Field(type: 'integer', nullable: true, default: 0)]
+    #[Field(type: 'integer', nullable: true)]
     public ?int $max_msgs_min = null;
 
-    #[Field(type: 'integer', nullable: true, default: 100)]
+    #[Field(type: 'integer', nullable: true)]
     public ?int $max_rcpt_msg = null;
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $created_at = null;

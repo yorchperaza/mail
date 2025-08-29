@@ -9,6 +9,8 @@ use App\Entity\Company;
 use App\Entity\Domain;
 use App\Entity\Message;
 use App\Entity\User;
+use App\Service\OutboundMailService;
+use App\Service\SendOutcome;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -27,7 +29,8 @@ final class MessageController
 {
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb
+        private QueryBuilder      $qb,
+        private OutboundMailService $mailService,
     ) {}
 
     /* =========================================================================
@@ -61,7 +64,12 @@ final class MessageController
         $belongs = array_filter($company->getUsers() ?? [], fn(User $u) => $u->getId() === $userId);
         if (empty($belongs)) throw new RuntimeException('Forbidden', 403);
 
-        return $this->handleSend($request, $company, $domain);
+        $body = json_decode((string)$request->getBody(), true) ?: [];
+
+        /** @var SendOutcome $outcome */
+        $outcome = $this->mailService->handle($body, $company, $domain);
+
+        return new JsonResponse($outcome->data, $outcome->httpStatus);
     }
 
     /* =========================================================================
@@ -86,7 +94,13 @@ final class MessageController
         $domain = $apiKey->getDomain();
         if (!$domain) throw new RuntimeException('API key not bound to a domain', 403);
 
-        return $this->handleSend($request, $company, $domain);
+
+        $body = json_decode((string)$request->getBody(), true) ?: [];
+
+        /** @var SendOutcome $outcome */
+        $outcome = $this->mailService->handle($body, $company, $domain);
+
+        return new JsonResponse($outcome->data, $outcome->httpStatus);
     }
 
     /* =========================================================================
