@@ -268,4 +268,43 @@ final class SmtpCredentialController
 
         return new JsonResponse(null, 204);
     }
+
+    /**
+     * @throws \ReflectionException
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
+    #[Route(methods: 'POST', path: '/companies/{hash}/smtp-credentials/{id}/rotate')]
+    public function rotate(ServerRequestInterface $r): JsonResponse {
+        $uid = $this->auth($r);
+        $co  = $this->company((string)$r->getAttribute('hash'), $uid);
+        $id  = (int)$r->getAttribute('id');
+
+        /** @var \App\Repository\SmtpCredentialRepository $repo */
+        $repo = $this->repos->getRepository(SmtpCredential::class);
+        $cred = $repo->find($id);
+        if (!$cred || $cred->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Credential not found', 404);
+        }
+
+        // optional: allow custom length in body
+        $body   = json_decode((string)$r->getBody(), true) ?: [];
+        $length = isset($body['length']) && is_numeric($body['length'])
+            ? max(12, min(128, (int)$body['length']))
+            : 16;
+
+        // rotate via provisioner
+        $plaintext = $this->provisioner->rotatePassword($cred, $length);
+
+        // username preview (same logic you already use)
+        $hint = $this->domainHintForPreview($co, $body);
+
+        return new JsonResponse([
+            'credential' => $this->shape($cred, $hint),
+            'password'   => $plaintext, // show ONCE; do not log
+            'rotated_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
+                ->format(\DateTimeInterface::ATOM),
+        ]);
+    }
+
 }

@@ -76,4 +76,37 @@ final class SmtpCredentialProvisioner
         $hash = crypt($password, '$6$rounds=100000$'.$salt.'$');
         return '{SHA512-CRYPT}'.$hash;
     }
+
+    /**
+     * @throws \DateMalformedStringException
+     */
+    public function rotatePassword(SmtpCredential $cred, int $length = 16): string
+    {
+        /** @var SmtpCredentialRepository $credRepo */
+        $credRepo = $this->repos->getRepository(SmtpCredential::class);
+
+        // generate new password + hash using same scheme you already use
+        $password = $this->randomPassword(max(12, min(128, $length)));
+        $hash     = $this->dovecotSha512Crypt($password);
+
+        // store hash
+        if (method_exists($cred, 'setPassword_hash')) {
+            $cred->setPassword_hash($hash);
+        } elseif (method_exists($cred, 'setSecret_hash')) {
+            $cred->setSecret_hash($hash);
+        } else {
+            // last-resort (avoid storing plaintext anywhere)
+            throw new \RuntimeException('Credential entity lacks a hash setter for secrets');
+        }
+
+        // optional timestamps
+        if (method_exists($cred, 'setRotated_at')) {
+            $cred->setRotated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        } elseif (method_exists($cred, 'setUpdated_at')) {
+            $cred->setUpdated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        }
+
+        $credRepo->save($cred);
+        return $password; // plaintext returned ONCE to caller
+    }
 }

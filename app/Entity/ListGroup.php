@@ -28,10 +28,12 @@ class ListGroup
     /** @var Campaign[] */
     #[OneToMany(targetEntity: Campaign::class, mappedBy: 'listGroup')]
     public array $campaigns = [];
-    
-     /** @var ListContact[] */
+    /** @var ListContact[] */
     #[OneToMany(targetEntity: ListContact::class, mappedBy: 'listGroup')]
     public array $listContacts = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $hash = null;
 
     public function __construct()
     {
@@ -115,5 +117,16 @@ class ListGroup
     public function getListContacts(): array
     {
         return $this->listContacts;
+    }
+
+    public function getHash(): ?string
+    {
+        return $this->hash;
+    }
+
+    public function setHash(?string $hash): self
+    {
+        $this->hash = $hash;
+        return $this;
     }
 }

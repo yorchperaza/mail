@@ -30,10 +30,15 @@ class Plan
 
     #[Field(type: 'json', nullable: true)]
     public ?array $features = null;
-    
-     /** @var Company[] */
-    #[oneToMany(targetEntity: Company::class, mappedBy: 'plan')]
+    /** @var Company[] */
+    #[OneToMany(targetEntity: Company::class, mappedBy: 'plan')]
     public array $companies = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $stripe_price_id = null;
+    
+    #[Field(type: 'string', nullable: true)]
+    public ?string $stripe_product_id = null;
 
     public function __construct()
     {
@@ -115,5 +120,27 @@ class Plan
     public function getCompanies(): array
     {
         return $this->companies;
+    }
+
+    public function getStripe_price_id(): ?string
+    {
+        return $this->stripe_price_id;
+    }
+
+    public function setStripe_price_id(?string $stripe_price_id): self
+    {
+        $this->stripe_price_id = $stripe_price_id;
+        return $this;
+    }
+
+    public function getStripe_product_id(): ?string
+    {
+        return $this->stripe_product_id;
+    }
+
+    public function setStripe_product_id(?string $stripe_product_id): self
+    {
+        $this->stripe_product_id = $stripe_product_id;
+        return $this;
     }
 }

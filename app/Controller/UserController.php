@@ -5,6 +5,7 @@ namespace App\Controller;
 
 use App\Entity\Company;
 use App\Entity\Media;
+use App\Entity\Plan;
 use App\Entity\User;
 use DateTimeInterface;
 use MonkeysLegion\Auth\AuthService;
@@ -15,7 +16,10 @@ use MonkeysLegion\Repository\EntityRepository;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
+use Random\RandomException;
 use RuntimeException;
+use Stripe\Exception\ApiErrorException;
+use Stripe\StripeClient;
 
 final class UserController
 {
@@ -28,44 +32,202 @@ final class UserController
         private UploadManager     $uploads,
     ) {}
 
+    private function stripe(): StripeClient
+    {
+        return new StripeClient($_ENV['STRIPE_SECRET_KEY'] ?: '');
+    }
+
     /**
-     * @throws \JsonException
+     * Generate a URL-safe, DB-unique company hash.
+     * Uses base64url over 24 random bytes (≈128 bits). Increase bytes if you want.
+     * @throws RandomException
+     */
+    private function generateUniqueCompanyHash(object $companyRepo, int $maxAttempts = 10): string
+    {
+        for ($i = 0; $i < $maxAttempts; $i++) {
+            // URL-safe: +/ -> -_, no padding
+            $hash = bin2hex(random_bytes(32));
+
+            // Ensure not already taken
+            $exists = $companyRepo->findOneBy(['hash' => $hash]);
+            if (!$exists) {
+                return $hash;
+            }
+        }
+        throw new RuntimeException('Could not allocate a unique company hash', 500);
+    }
+
+    /**
      * @throws \DateMalformedStringException
+     * @throws RandomException
+     * @throws \JsonException
+     * @throws \ReflectionException
+     * @throws ApiErrorException
      */
     #[Route(methods: 'POST', path: '/auth/register')]
     public function register(ServerRequestInterface $request): JsonResponse
     {
-        $data = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
-        $email    = trim($data['email']    ?? '');
-        $password = $data['password'] ?? '';
+        $data     = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
+        $email    = trim((string)($data['email'] ?? ''));
+        $password = (string)($data['password'] ?? '');
 
         if ($email === '' || $password === '') {
             throw new RuntimeException('Email and password are required', 400);
         }
 
-        $userRepo = $this->repos->getRepository(User::class);
+        $userRepo    = $this->repos->getRepository(User::class);
+        $companyRepo = $this->repos->getRepository(Company::class);
+        $planRepo    = $this->repos->getRepository(Plan::class);
 
-        // ── 1) Check for existing user
-        /** @var User|null $existing */
+        // 1) Prevent duplicate user
+        /** @var ?User $existing */
         $existing = $userRepo->findOneBy(['email' => $email]);
         if ($existing) {
             throw new RuntimeException('User with this email already exists', 409);
         }
 
-        // ── 2) Create & save
+        // 2) Optional plan
+        $planId = isset($data['plan_id']) ? (int)$data['plan_id'] : null;
+        /** @var ?Plan $plan */
+        $plan   = $planId ? $planRepo->findOneBy(['id' => $planId]) : null;
+
+        // 3) Build entities
         $now  = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $user = new User();
-        $user->setEmail($email)
+        $user = new User()
+            ->setEmail($email)
+            ->setFullName((string)($data['name'] ?? ''))
             ->setPasswordHash($this->hasher->hash($password))
-            ->setStatus(TRUE)
+            ->setStatus(true)
             ->setCreatedAt($now);
 
-        $userRepo->save($user);
+        $company = new Company()
+            ->setName((string)($data['company'] ?? ''))
+            ->setPlan($plan)
+            ->setStatus(true)
+            ->setCreatedAt($now)
+            ->setHash($this->generateUniqueCompanyHash($companyRepo));
 
-        // ── 3) Return the new record
+        // 4) Persist (retry once if hash collides)
+        $userRepo->save($user);
+        try {
+            $companyRepo->save($company);
+        } catch (\Throwable) {
+            $company->setHash($this->generateUniqueCompanyHash($companyRepo));
+            $companyRepo->save($company);
+        }
+        $companyRepo->attachRelation($company, 'users', $user->getId());
+
+        // 5) Stripe: if paid plan, card is REQUIRED and becomes default
+        $stripeCustomerId   = null;
+        $stripeSubscription = null;
+
+        $monthly = (float)($plan?->getMonthlyPrice() ?? 0.0);
+        if ($plan && $monthly > 0) {
+            $priceId = $plan->getStripe_price_id();
+            if (!$priceId) {
+                throw new RuntimeException('Plan is missing Stripe price id.', 500);
+            }
+
+            $stripe    = $this->stripe();
+            $trialDays = (int)($_ENV['STRIPE_TRIAL_DAYS'] ?? 30);
+
+            // Create customer first (idempotent-ish on email)
+            $customer = $stripe->customers->create(
+                [
+                    'email'    => $email,
+                    'name'     => (string)($data['company'] ?? ''),
+                    'metadata' => [
+                        'company_id' => (string)$company->getId(),
+                        'user_id'    => (string)$user->getId(),
+                        'plan_id'    => (string)$plan->getId(),
+                    ],
+                ],
+                ['idempotency_key' => 'cust:create:email:' . md5($email)]
+            );
+            $stripeCustomerId = $customer->id;
+            $company->setStripe_customer_id($customer->id);
+            $companyRepo->save($company);
+
+            // Did the client already collect a PM?
+            $pmId = trim((string)($data['stripe_payment_method'] ?? ''));
+
+            if ($pmId === '') {
+                // No PM yet → create a SetupIntent tied to this customer and ask client to attach a card now
+                $si = $stripe->setupIntents->create([
+                    'customer'             => $customer->id,
+                    'usage'                => 'off_session',
+                    'payment_method_types' => ['card'],
+                ]);
+
+                $company->setSubscription_status('requires_payment_method');
+                $companyRepo->save($company);
+
+                return new JsonResponse([
+                    'id'           => $user->getId(),
+                    'email'        => $user->getEmail(),
+                    'company_hash' => $company->getHash(),
+                    'stripe'       => [
+                        'customerId'     => $customer->id,
+                        'clientSecret'   => $si->client_secret,
+                        'publishableKey' => $_ENV['STRIPE_PUBLISHABLE_KEY'] ?? '',
+                    ],
+                    'message'    => 'This plan requires a card. Please add a payment method to continue.',
+                    'next_step'  => 'attach_payment_method',
+                ], 402);
+            }
+
+            // Attach PM & set as default on the customer
+            try { $stripe->paymentMethods->attach($pmId, ['customer' => $customer->id]); } catch (\Throwable) {}
+            $stripe->customers->update($customer->id, [
+                'invoice_settings' => ['default_payment_method' => $pmId],
+            ]);
+
+            // Create subscription; store PM as the sub default too
+            $subscription = $stripe->subscriptions->create(
+                [
+                    'customer'               => $customer->id,
+                    'items'                  => [['price' => $priceId]],
+                    'collection_method'      => 'charge_automatically',
+                    'default_payment_method' => $pmId,
+                    'trial_period_days'      => $trialDays,
+                    // Make Stripe save future successful PMs and allow incomplete if initial payment can’t be taken
+                    'payment_behavior'       => 'allow_incomplete',
+                    'payment_settings'       => ['save_default_payment_method' => 'on_subscription'],
+                    'metadata'               => [
+                        'company_id' => (string)$company->getId(),
+                        'user_id'    => (string)$user->getId(),
+                        'plan_id'    => (string)$plan->getId(),
+                    ],
+                ],
+                ['idempotency_key' => 'sub:create:company:' . $company->getId() . ':plan:' . $plan->getId()]
+            );
+            $stripeSubscription = $subscription->id;
+
+            // Persist to Company
+            $company->setStripe_subscription_id($subscription->id);
+            $company->setSubscription_status($subscription->status);
+            $company->setTrial_ends_at(
+                new \DateTimeImmutable('now', new \DateTimeZone('UTC'))->modify("+{$trialDays} days")
+            );
+            $companyRepo->save($company);
+
+            // Finish (paid plan with default PM set)
+            return new JsonResponse([
+                'id'                 => $user->getId(),
+                'email'              => $user->getEmail(),
+                'company_hash'       => $company->getHash(),
+                'stripeCustomerId'   => $stripeCustomerId,
+                'stripeSubscription' => $stripeSubscription,
+            ], 201);
+        }
+
+        // 6) Free plan (no card required)
         return new JsonResponse([
-            'id'        => $user->getId(),
-            'email'     => $user->getEmail(),
+            'id'                 => $user->getId(),
+            'email'              => $user->getEmail(),
+            'company_hash'       => $company->getHash(),
+            'stripeCustomerId'   => $stripeCustomerId,
+            'stripeSubscription' => $stripeSubscription,
         ], 201);
     }
 

@@ -90,10 +90,20 @@ class Company
     /** @var ApiKey[] */
     #[OneToMany(targetEntity: ApiKey::class, mappedBy: 'company')]
     public array $apiKeys = [];
-    
-     /** @var SmtpCredential[] */
+    /** @var SmtpCredential[] */
     #[OneToMany(targetEntity: SmtpCredential::class, mappedBy: 'company')]
     public array $smtpCredentials = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $stripe_customer_id = null;
+    #[Field(type: 'string', nullable: true)]
+    public ?string $stripe_subscription_id = null;
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $subscription_status = null;
+    
+    #[Field(type: 'datetime', nullable: true)]
+    public ?\DateTimeImmutable $trial_ends_at = null;
 
     public function __construct()
     {
@@ -527,5 +537,49 @@ class Company
     public function getApiKeys(): array
     {
         return $this->apiKeys;
+    }
+
+    public function getStripe_customer_id(): ?string
+    {
+        return $this->stripe_customer_id;
+    }
+
+    public function setStripe_customer_id(?string $stripe_customer_id): self
+    {
+        $this->stripe_customer_id = $stripe_customer_id;
+        return $this;
+    }
+
+    public function getStripe_subscription_id(): ?string
+    {
+        return $this->stripe_subscription_id;
+    }
+
+    public function setStripe_subscription_id(?string $stripe_subscription_id): self
+    {
+        $this->stripe_subscription_id = $stripe_subscription_id;
+        return $this;
+    }
+
+    public function getSubscription_status(): ?string
+    {
+        return $this->subscription_status;
+    }
+
+    public function setSubscription_status(?string $subscription_status): self
+    {
+        $this->subscription_status = $subscription_status;
+        return $this;
+    }
+
+    public function getTrial_ends_at(): ?\DateTimeImmutable
+    {
+        return $this->trial_ends_at;
+    }
+
+    public function setTrial_ends_at(?\DateTimeImmutable $trial_ends_at): self
+    {
+        $this->trial_ends_at = $trial_ends_at;
+        return $this;
     }
 }

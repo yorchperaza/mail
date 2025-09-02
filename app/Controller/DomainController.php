@@ -124,6 +124,7 @@ final class DomainController
      * @throws \JsonException
      * @throws \DateMalformedStringException
      * @throws RandomException
+     * @throws \Throwable
      */
     #[Route(methods: 'POST', path: '/companies/{hash}/domains')]
     public function createDomain(ServerRequestInterface $request): JsonResponse
@@ -139,6 +140,39 @@ final class DomainController
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
         if (! $company) {
             throw new RuntimeException('Company not found or access denied', 404);
+        }
+
+        /** @var \App\Repository\DomainRepository $domainRepo */
+        $domainRepo = $this->repos->getRepository(Domain::class);
+
+        // ---- NEW: Enforce domain limits for Starter/Grow/No Plan ----
+        $planName = null;
+        try {
+            $planName = $company->getPlan()?->getName();
+        } catch (\Throwable $ignored) {}
+
+        // Fallback if plan relation isn’t loaded
+        if ($planName === null || $planName === '') {
+            /** @var \App\Repository\CompanyRepository $companyRepo */
+            $companyRepo = $this->repos->getRepository(Company::class);
+            $row = (clone $companyRepo->qb)
+                ->select(['p.name AS name'])
+                ->from('company', 'c')
+                ->leftJoin('plan', 'p', 'p.id', '=', 'c.plan_id')
+                ->where('c.id', '=', (int)$company->getId())
+                ->fetch();
+            $planName = $row?->name ?? null;
+        }
+
+        $planKey = strtoupper((string)$planName);
+        if ($planKey === '' || in_array($planKey, ['STARTER', 'GROW'], true)) {
+            $existing = $domainRepo->count(['company_id' => (int)$company->getId()]);
+            if ($existing >= 1) {
+                throw new RuntimeException(
+                    'Your current plan allows only one domain. Upgrade to add more.',
+                    403
+                );
+            }
         }
 
         // 3) Parse & validate payload
@@ -158,16 +192,12 @@ final class DomainController
             ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
             ->setCompany($company);
 
-        // 5) Persist once (so it has an ID)
-        /** @var \App\Repository\DomainRepository $repo */
-        $repo = $this->repos->getRepository(Domain::class);
-        $repo->save($domain);
-
-        // 6) Initialize DNS/SMTP expectations via the service (and persist updates)
-        $bootstrap = $this->domainConfig->initializeAndSave($domain);
-
+        // 5) Persist
+        $domainRepo->save($domain);
         // one login per company; username shown with this domain
         $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
+        // 6) Initialize DNS/SMTP expectations via the service (and persist updates)
+        $bootstrap = $this->domainConfig->initializeAndSave($domain);
 
         return new JsonResponse([
             'id'         => $domain->getId(),
@@ -192,6 +222,7 @@ final class DomainController
             ],
         ], 201);
     }
+
 
     /**
      * GET /companies/{hash}/domains/{id}

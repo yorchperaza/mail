@@ -28,12 +28,14 @@ class Segment
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $last_built_at = null;
 
-    #[manyToOne(targetEntity: Company::class, inversedBy: 'segments')]
+    #[ManyToOne(targetEntity: Company::class, inversedBy: 'segments')]
     public ?Company $company = null;
-    
-     /** @var Campaign[] */
-    #[oneToMany(targetEntity: Campaign::class, mappedBy: 'segment')]
+    /** @var Campaign[] */
+    #[OneToMany(targetEntity: Campaign::class, mappedBy: 'segment')]
     public array $campaigns = [];
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $hash = null;
 
     public function __construct()
     {
@@ -121,5 +123,16 @@ class Segment
     public function getCampaigns(): array
     {
         return $this->campaigns;
+    }
+
+    public function getHash(): ?string
+    {
+        return $this->hash;
+    }
+
+    public function setHash(?string $hash): self
+    {
+        $this->hash = $hash;
+        return $this;
     }
 }

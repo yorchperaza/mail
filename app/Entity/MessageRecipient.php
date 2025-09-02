@@ -18,7 +18,7 @@ class MessageRecipient
     #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
     public int $id;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $type = null;
     
     #[Field(type: 'string', length: 320, nullable: true)]
@@ -27,7 +27,7 @@ class MessageRecipient
     #[Field(type: 'string', nullable: true)]
     public ?string $name = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'string', nullable: true)]

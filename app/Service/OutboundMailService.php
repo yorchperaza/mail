@@ -6,32 +6,52 @@ namespace App\Service;
 use App\Entity\Company;
 use App\Entity\Domain;
 use App\Entity\Message;
-use App\Repository\MessageRepository;
+use App\Entity\MessageEvent;
+use App\Entity\MessageRecipient;
+use App\Entity\RateLimitCounter;
+use App\Entity\UsageAggregate;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use MonkeysLegion\Repository\RepositoryFactory;
+use Random\RandomException;
 
 final class OutboundMailService
 {
+    /** Use the same naming style as the daily rows. Example: messages:month:2025-09-01 */
+    private const RL_KEY_MONTH_PREFIX = 'messages:month:';
+
     public function __construct(
         private RepositoryFactory $repos,
         private MailQueue         $queue,
         private MailSender        $smtp,
     ) {}
 
-    /** Persist Message as queued/preview and push to Redis when queue=true & not dryRun */
+    /** Persist Message as queued/preview and push to Redis (always queues when not dryRun). */
     public function createAndEnqueue(array $payload, Company $company, Domain $domain): array
     {
-        $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        // Add request tracking to detect duplicate calls
+        $requestId = $payload['request_id'] ?? uniqid('req_', true);
+        static $processedRequests = [];
 
-        $fromEmail = trim((string)($payload['from']['email'] ?? ''));
-        if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
-            throw new \RuntimeException('A valid from.email is required', 422);
+        if (isset($processedRequests[$requestId])) {
+            error_log(sprintf('[Mail][DUPLICATE] Request already processed: %s', $requestId));
+            return $processedRequests[$requestId];
         }
 
+        $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        error_log(sprintf('[Mail] createAndEnqueue start requestId=%s company=%d domain=%d dryRun=%s now=%s',
+            $requestId, $company->getId(), $domain->getId(), json_encode((bool)($payload['dryRun'] ?? false)), $nowUtc->format(DATE_ATOM)));
+
+        // -------- validate / normalize ----------
+        $fromEmail = trim((string)($payload['from']['email'] ?? ''));
+        if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+            error_log('[Mail] invalid from.email');
+            throw new \RuntimeException('A valid from.email is required', 422);
+        }
         $fromName  = isset($payload['from']['name']) ? trim((string)$payload['from']['name']) : null;
         $replyTo   = isset($payload['replyTo']) ? trim((string)$payload['replyTo']) : null;
         if ($replyTo && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
+            error_log('[Mail] invalid replyTo');
             throw new \RuntimeException('replyTo must be a valid email', 422);
         }
 
@@ -43,20 +63,42 @@ final class OutboundMailService
         $cc  = $this->normalizeEmails($payload['cc']  ?? []);
         $bcc = $this->normalizeEmails($payload['bcc'] ?? []);
         if (empty($to) && empty($cc) && empty($bcc)) {
+            error_log('[Mail] no recipients provided');
             throw new \RuntimeException('At least one recipient (to/cc/bcc) is required', 422);
         }
+        $rcptCount = count($to) + count($cc) + count($bcc);
+        error_log(sprintf('[Mail] normalized recipients to=%d cc=%d bcc=%d total=%d',
+            count($to), count($cc), count($bcc), $rcptCount));
 
-        $headers  = isset($payload['headers']) && is_array($payload['headers']) ? $this->sanitizeHeaders($payload['headers']) : null;
-        $tracking = isset($payload['tracking']) && is_array($payload['tracking']) ? $payload['tracking'] : [];
-
+        $headers     = isset($payload['headers']) && is_array($payload['headers']) ? $this->sanitizeHeaders($payload['headers']) : null;
+        $tracking    = isset($payload['tracking']) && is_array($payload['tracking']) ? $payload['tracking'] : [];
         $attachments = $this->normalizeAttachments($payload['attachments'] ?? []);
-
         $dryRun = (bool)($payload['dryRun'] ?? false);
-        $queue  = (bool)($payload['queue']  ?? false);
 
-        /** @var MessageRepository $messageRepo */
+        // ---------- ensure the monthly row ALWAYS exists for visibility ----------
+        if (!$dryRun) {
+            error_log('[RateLimit][CALL] ensureMonthlyCounterRow -> start');
+            $this->ensureMonthlyCounterRow($company, $nowUtc);
+            error_log('[RateLimit][CALL] ensureMonthlyCounterRow -> done');
+        }
+
+        // ---------- enforce quotas (daily + monthly) ----------
+        if (!$dryRun) {
+            try {
+                $this->enforceQuotas($company, $nowUtc, $rcptCount);
+            } catch (\RuntimeException $e) {
+                error_log('[Mail][ERROR] enforceQuotas: '.$e->getMessage());
+                if ($e->getCode() === 429 || str_contains(strtolower($e->getMessage()), 'limit')) {
+                    throw $e;
+                }
+                throw new \RuntimeException('Quota check failed: '.$e->getMessage(), 429);
+            }
+        }
+
+        // ---------- persist Message ----------
+        /** @var \App\Repository\MessageRepository $messageRepo */
         $messageRepo = $this->repos->getRepository(Message::class);
-
+        $hash = bin2hex(random_bytes(64));
         $msg = (new Message())
             ->setCompany($company)
             ->setDomain($domain)
@@ -72,30 +114,47 @@ final class OutboundMailService
             ->setAttachments(!empty($attachments) ? $attachments : null)
             ->setCreated_at($nowUtc)
             ->setQueued_at($nowUtc)
-            ->setFinal_state($dryRun ? 'preview' : ($queue ? 'queued' : 'queued'));
+            ->setMessage_id($hash)
+            ->setFinal_state($dryRun ? 'preview' : 'queued');
 
         $messageRepo->save($msg);
+        error_log(sprintf('[Mail] message saved id=%d state=%s rcpts=%d', $msg->getId(), $msg->getFinal_state(), $rcptCount));
+
+        $this->persistRecipients($msg, $to, $cc, $bcc, $dryRun ? 'preview' : 'queued');
+        error_log(sprintf('[Mail] recipients persisted message_id=%d', $msg->getId()));
+        $this->addMessageEvent($msg, $dryRun ? 'preview' : 'queued');
 
         if ($dryRun) {
-            return [
+            error_log('[Mail] dryRun=true returning preview');
+            $response = [
                 'status'  => 'preview',
                 'message' => $this->shapeMessage($msg),
-                'envelope'=> ['fromEmail'=>$fromEmail,'fromName'=>$fromName,'replyTo'=>$replyTo,'to'=>$to,'cc'=>$cc,'bcc'=>$bcc,'headers'=>$headers],
+                'envelope'=> [
+                    'fromEmail' => $msg->getFrom_email(),
+                    'fromName'  => $msg->getFrom_name(),
+                    'replyTo'   => $msg->getReply_to(),
+                    'to'        => $to, 'cc' => $cc, 'bcc' => $bcc,
+                    'headers'   => $headers
+                ],
             ];
+
+            if (isset($requestId)) {
+                $processedRequests[$requestId] = $response;
+            }
+
+            return $response;
         }
 
-        // Always queue for high-volume path
+        // ---------- enqueue job ----------
         $job = [
             'message_id' => $msg->getId(),
             'company_id' => $company->getId(),
             'domain_id'  => $domain->getId(),
             'envelope'   => [
-                'fromEmail'   => $fromEmail,
-                'fromName'    => $fromName,
-                'replyTo'     => $replyTo,
-                'to'          => $to,
-                'cc'          => $cc,
-                'bcc'         => $bcc,
+                'fromEmail'   => $msg->getFrom_email(),
+                'fromName'    => $msg->getFrom_name(),
+                'replyTo'     => $msg->getReply_to(),
+                'to'          => $to, 'cc' => $cc, 'bcc' => $bcc,
                 'headers'     => $headers ?? [],
                 'attachments' => $attachments,
             ],
@@ -103,32 +162,86 @@ final class OutboundMailService
         ];
 
         $entryId = $this->queue->enqueue($job);
+        error_log(sprintf('[Mail] enqueue result ok=%s entryId=%s', $entryId ? 'true' : 'false', (string)$entryId));
         if (!$entryId) {
             $msg->setFinal_state('queue_failed');
             $messageRepo->save($msg);
-            return ['status' => 'queue_failed', 'message' => $this->shapeMessage($msg)];
+            $this->addMessageEvent($msg, 'queue_failed');
+            $response = ['status' => 'queue_failed', 'message' => $this->shapeMessage($msg)];
+
+            if (isset($requestId)) {
+                $processedRequests[$requestId] = $response;
+            }
+
+            return $response;
         }
 
-        return ['status' => 'queued', 'queue' => $this->queue->getStream(), 'entryId' => $entryId, 'message' => $this->shapeMessage($msg)];
+        // ✅ Increment monthly at enqueue time (per *queued* recipients)
+        $rcptCount = count($to) + count($cc) + count($bcc);
+        error_log(sprintf('[RateLimit][inc][enqueue] will inc monthly by rcpts=%d', $rcptCount));
+        $this->incMonthlyCount($company, $nowUtc, $rcptCount);
+
+        // ✅ FIX: Also increment daily usage at enqueue time (per *queued* recipients)
+        // Using 'sent' field for now since 'queued' might not exist in your DB
+        error_log(sprintf('[Usage][inc][enqueue] will inc daily sent by rcpts=%d', $rcptCount));
+        try {
+            $this->upsertUsage($company, $nowUtc, ['sent' => $rcptCount]);
+            error_log('[Usage][inc][enqueue] daily usage updated successfully');
+        } catch (\Throwable $e) {
+            error_log(sprintf('[Usage][inc][enqueue][ERROR] Failed to update daily usage: %s at %s:%d',
+                $e->getMessage(), $e->getFile(), $e->getLine()));
+            // Don't fail the entire request if usage tracking fails
+            // The message was already saved and queued
+        }
+
+        // Cache the response for duplicate detection
+        $response = [
+            'status'  => 'queued',
+            'queue'   => $this->queue->getStream(),
+            'entryId' => $entryId,
+            'message' => $this->shapeMessage($msg),
+        ];
+
+        if (isset($requestId)) {
+            $processedRequests[$requestId] = $response;
+        }
+
+        return $response;
     }
 
-    /** Worker path: load Message, send via SMTP, update state */
+    /** Worker path: load Message, send via SMTP, update state; update recipients + events. */
     public function processJob(array $job): void
     {
+        error_log('[Mail] processJob start payload='.json_encode($job));
         $id = (int)($job['message_id'] ?? 0);
-        if ($id <= 0) return;
+        if ($id <= 0) { error_log('[Mail] processJob missing message_id'); return; }
 
-        /** @var MessageRepository $repo */
+        /** @var \App\Repository\MessageRepository $repo */
         $repo = $this->repos->getRepository(Message::class);
-        $msg = $repo->find($id);
-        if (!$msg) return;
+        $msg  = $repo->find($id);
+        if (!$msg) { error_log('[Mail] processJob message not found id='.$id); return; }
 
         $res = $this->smtp->send($msg, (array)($job['envelope'] ?? []));
+        error_log('[Mail] smtp->send returned '.json_encode($res));
 
-        $msg->setSent_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $msg->setSent_at($now);
         $msg->setFinal_state($res['ok'] ? 'sent' : 'failed');
         if (!empty($res['message_id'])) $msg->setMessage_id((string)$res['message_id']);
         $repo->save($msg);
+        error_log(sprintf('[Mail] processJob saved final_state=%s message_id=%s', $msg->getFinal_state(), (string)$msg->getMessage_id()));
+
+        if ($res['ok']) {
+            $this->updateRecipientsStatus($msg, 'sent');
+            $this->addMessageEvent($msg, 'sent');
+            // Note: Usage and monthly counters were already incremented at enqueue time
+            // We're not incrementing again to avoid double-counting
+            error_log('[Mail] processJob completed successfully - counters already incremented at enqueue');
+        } else {
+            $this->updateRecipientsStatus($msg, 'failed');
+            $this->addMessageEvent($msg, 'failed');
+            error_log('[Mail] processJob failed - message not sent');
+        }
     }
 
     /* ----------------------- helpers ----------------------- */
@@ -139,7 +252,7 @@ final class OutboundMailService
         foreach ($list as $v) {
             $e = is_array($v) ? ($v['email'] ?? '') : $v;
             $e = trim((string)$e);
-            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL)) $out[] = $e;
+            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL)) $out[] = strtolower($e);
         }
         return array_values(array_unique($out));
     }
@@ -180,4 +293,374 @@ final class OutboundMailService
             'messageId' => $m->getMessage_id(),
         ];
     }
+
+    private function persistRecipients(Message $msg, array $to, array $cc, array $bcc, string $status): void
+    {
+        /** @var \App\Repository\MessageRecipientRepository $rRepo */
+        $rRepo = $this->repos->getRepository(MessageRecipient::class);
+
+        $save = function(string $email, string $type) use ($msg, $status, $rRepo) {
+            $r = new MessageRecipient()
+                ->setMessage($msg)
+                ->setType($type)
+                ->setEmail($email)
+                ->setStatus($status);
+            $rRepo->save($r);
+        };
+
+        foreach ($to as $e)  { $save($e, 'to'); }
+        foreach ($cc as $e)  { $save($e, 'cc'); }
+        foreach ($bcc as $e) { $save($e, 'bcc'); }
+    }
+
+    private function updateRecipientsStatus(Message $msg, string $status): void
+    {
+        /** @var \App\Repository\MessageRecipientRepository $rRepo */
+        $rRepo = $this->repos->getRepository(MessageRecipient::class);
+
+        $rows = $rRepo->findBy(['message_id' => $msg->getId()]) ?: $rRepo->findBy(['message' => $msg]);
+        foreach ($rows as $r) {
+            $r->setStatus($status);
+            $rRepo->save($r);
+        }
+        error_log(sprintf('[Mail] recipients updated status=%s rows=%d', $status, is_array($rows) ? count($rows) : 0));
+    }
+
+    private function addMessageEvent(Message $msg, string $event, ?string $rcpt = null, array $payload = []): void
+    {
+        /** @var \App\Repository\MessageEventRepository $eRepo */
+        $eRepo = $this->repos->getRepository(MessageEvent::class);
+        $eRepo->save(
+            new MessageEvent()
+                ->setMessage($msg)
+                ->setEvent($event)
+                ->setRecipient_email($rcpt)
+                ->setOccurred_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
+                ->setProvider_hint('local')
+                ->setPayload($payload ?: null)
+        );
+        error_log(sprintf('[Mail] event added event=%s message_id=%d', $event, $msg->getId()));
+    }
+
+    /** Upsert daily usage aggregate for the company (sent, delivered, opens, etc). */
+    private function upsertUsage(?Company $company, \DateTimeImmutable $when, array $deltas): void
+    {
+        if (!$company) {
+            error_log('[Usage] upsertUsage called with null company');
+            return;
+        }
+
+        try {
+            /** @var \App\Repository\UsageAggregateRepository $repo */
+            $repo = $this->repos->getRepository(UsageAggregate::class);
+            error_log(sprintf('[Usage] Got repository: %s', get_class($repo)));
+
+            $dayStart = $when->setTime(0, 0, 0);
+            $dateStr = $dayStart->format('Y-m-d H:i:s');
+            error_log(sprintf('[Usage] Looking for usage row: company_id=%d date=%s',
+                $company->getId(), $dateStr));
+
+            // Always use string format for date queries
+            $row = $repo->findOneBy(['company_id' => $company->getId(), 'date' => $dateStr]);
+
+            $created = false;
+            if (!$row) {
+                error_log('[Usage] Creating new usage row');
+                $row = new UsageAggregate()
+                    ->setCompany($company)
+                    ->setDate($dayStart)
+                    ->setCreated_at($when)
+                    ->setSent(0)->setDelivered(0)->setBounced(0)->setComplained(0)->setOpens(0)->setClicks(0);
+                $created = true;
+            } else {
+                error_log(sprintf('[Usage] Found existing row id=%s',
+                    method_exists($row, 'getId') ? $row->getId() : 'N/A'));
+            }
+
+            $before = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
+            $map = ['sent'=>['getSent','setSent'], 'delivered'=>['getDelivered','setDelivered'], 'bounced'=>['getBounced','setBounced'], 'complained'=>['getComplained','setComplained'], 'opens'=>['getOpens','setOpens'], 'clicks'=>['getClicks','setClicks']];
+
+            foreach ($deltas as $field => $inc) {
+                if (!isset($map[$field])) {
+                    error_log(sprintf('[Usage] Skipping unknown field: %s', $field));
+                    continue;
+                }
+                [$g,$s] = $map[$field];
+                $oldVal = (int)($row->{$g}() ?? 0);
+                $newVal = max(0, $oldVal + (int)$inc);
+                $row->{$s}($newVal);
+                error_log(sprintf('[Usage] Updated %s: %d -> %d (delta=%d)', $field, $oldVal, $newVal, $inc));
+            }
+
+            if (!method_exists($repo, 'save')) {
+                error_log('[Usage][FATAL] Repository does not have save method!');
+                return;
+            }
+
+            $repo->save($row);
+
+            $after = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
+            error_log(sprintf('[Usage] %s company=%d day=%s before=%s delta=%s after=%s',
+                $created ? 'created' : 'updated', $company->getId(), $dayStart->format('Y-m-d'), json_encode($before), json_encode($deltas), json_encode($after)));
+
+        } catch (\Throwable $e) {
+            error_log(sprintf('[Usage][EXCEPTION] %s at %s:%d\nTrace: %s',
+                $e->getMessage(), $e->getFile(), $e->getLine(), $e->getTraceAsString()));
+        }
+    }
+
+    /** Sum "sent" between two UTC datetimes (inclusive start, exclusive end). */
+    private function sumSentBetween(int $companyId, \DateTimeImmutable $startUtc, \DateTimeImmutable $endUtc): int
+    {
+        /** @var \App\Repository\UsageAggregateRepository $repo */
+        $repo = $this->repos->getRepository(UsageAggregate::class);
+
+        $sum = 0;
+        $rows = method_exists($repo, 'findBy')
+            ? $repo->findBy(['company_id' => $companyId])
+            : (method_exists($repo, 'findAll') ? $repo->findAll() : []);
+
+        $startDay = $startUtc->setTime(0,0,0);
+        $endDay = $endUtc->setTime(0,0,0);
+
+        foreach ((array)$rows as $ua) {
+            $d = $ua->getDate();
+            if ($d instanceof \DateTimeInterface) {
+                $dayDate = $d instanceof \DateTimeImmutable ? $d : new \DateTimeImmutable($d->format('Y-m-d H:i:s'));
+                $dayDate = $dayDate->setTime(0,0,0);
+                if ($dayDate >= $startDay && $dayDate < $endDay) {
+                    // We're counting 'sent' which now includes messages at enqueue time
+                    $sum += (int)($ua->getSent() ?? 0);
+                }
+            }
+        }
+        error_log(sprintf('[Usage] sumSentBetween company=%d start=%s end=%s sum=%d',
+            $companyId, $startUtc->format('Y-m-d'), $endUtc->format('Y-m-d'), $sum));
+        return $sum;
+    }
+
+    /* =================== QUOTAS (Plan + monthly counter) =================== */
+
+    /** Enforce per-day and per-month quotas from the Company's Plan. Throws 429 on exceed. */
+    private function enforceQuotas(Company $company, \DateTimeImmutable $nowUtc, int $thisMessageRcpts): void
+    {
+        [$dailyLimit, $monthlyLimit] = $this->resolveQuotas($company);
+        error_log(sprintf('[Quota] resolved limits company=%d daily=%d monthly=%d rcptsThisMessage=%d',
+            $company->getId(), $dailyLimit, $monthlyLimit, $thisMessageRcpts));
+
+        if ($dailyLimit <= 0 && $monthlyLimit <= 0) { error_log('[Quota] no limits to enforce'); return; }
+
+        $companyId = (int)$company->getId();
+
+        if ($dailyLimit > 0) {
+            $dayStart  = $nowUtc->setTime(0,0,0);
+            $dayEnd    = $dayStart->modify('+1 day');
+            $sentToday = $this->sumSentBetween($companyId, $dayStart, $dayEnd);
+            error_log(sprintf('[Quota] daily sentToday=%d dailyLimit=%d', $sentToday, $dailyLimit));
+            if (($sentToday + $thisMessageRcpts) > $dailyLimit) {
+                throw new \RuntimeException('Daily sending limit exceeded', 429);
+            }
+        }
+
+        if ($monthlyLimit > 0) {
+            // ensure row exists so admins can see it even before send
+            $this->ensureMonthlyCounterRow($company, $nowUtc);
+
+            $sentThisMonth = $this->getMonthlyCount($company, $nowUtc);
+            error_log(sprintf('[Quota] monthly sentThisMonth=%d monthlyLimit=%d', $sentThisMonth, $monthlyLimit));
+            if (($sentThisMonth + $thisMessageRcpts) > $monthlyLimit) {
+                throw new \RuntimeException('Monthly sending limit exceeded', 429);
+            }
+        }
+    }
+
+    /** Resolve daily / monthly quotas for a company from its Plan (with optional company overrides). */
+    private function resolveQuotas(Company $company): array
+    {
+        $plan     = method_exists($company, 'getPlan') ? $company->getPlan() : null;
+        $features = $plan && method_exists($plan, 'getFeatures') ? ($plan->getFeatures() ?? []) : [];
+        $emailsPerDayFeature   = (int)($features['quotas']['emailsPerDay']   ?? 0);
+        $emailsPerMonthFeature = (int)($features['quotas']['emailsPerMonth'] ?? 0);
+        $includedMessages = $plan && method_exists($plan, 'getIncludedMessages')
+            ? (int)($plan->getIncludedMessages() ?? 0)
+            : 0;
+        $monthlyFromPlan = $emailsPerMonthFeature > 0 ? $emailsPerMonthFeature : $includedMessages;
+
+        $dailyOverride   = method_exists($company, 'getDaily_quota')   ? (int)($company->getDaily_quota()   ?? 0) : 0;
+        $monthlyOverride = method_exists($company, 'getMonthly_quota') ? (int)($company->getMonthly_quota() ?? 0) : 0;
+
+        $dailyLimit   = $dailyOverride   > 0 ? $dailyOverride   : $emailsPerDayFeature;
+        $monthlyLimit = $monthlyOverride > 0 ? $monthlyOverride : $monthlyFromPlan;
+
+        error_log(sprintf('[Quota] plan features: day=%d month=%d included=%d -> resolved daily=%d monthly=%d (overrides: d=%d m=%d)',
+            $emailsPerDayFeature, $emailsPerMonthFeature, $includedMessages, $dailyLimit, $monthlyLimit, $dailyOverride, $monthlyOverride));
+
+        return [$dailyLimit, $monthlyLimit];
+    }
+
+    private function monthAnchor(\DateTimeImmutable $nowUtc): \DateTimeImmutable
+    {
+        $anchor = $nowUtc
+            ->setDate((int)$nowUtc->format('Y'), (int)$nowUtc->format('m'), 1)
+            ->setTime(0, 0, 0, 0)
+            ->setTimezone(new \DateTimeZone('UTC'));
+        error_log('[RateLimit] monthAnchor='.$anchor->format('Y-m-d H:i:s'));
+        return $anchor;
+    }
+
+    /** Build monthly key from the month anchor (first of month). */
+    private function monthlyKey(\DateTimeImmutable $anchor): string
+    {
+        // Example output: messages:month:2025-09-01
+        return self::RL_KEY_MONTH_PREFIX.$anchor->format('Y-m-01');
+    }
+
+    /** Read the monthly count from RateLimitCounter (0 if absent). */
+    private function getMonthlyCount(Company $company, \DateTimeImmutable $nowUtc): int
+    {
+        $window = $this->monthAnchor($nowUtc);
+        $windowStr = $window->format('Y-m-d H:i:s');
+        $key = $this->monthlyKey($window);
+        error_log(sprintf('[RateLimit][get] key=%s company=%d window=%s', $key, $company->getId(), $windowStr));
+
+        try {
+            /** @var \App\Repository\RateLimitCounterRepository $repo */
+            $repo = $this->repos->getRepository(RateLimitCounter::class);
+
+            // 🔧 Search using string window_start
+            $row = method_exists($repo, 'findOneBy')
+                ? $repo->findOneBy(['company_id' => $company->getId(), 'key' => $key, 'window_start' => $windowStr])
+                : null;
+
+            if (!$row) {
+                error_log('[RateLimit][get] row NOT found -> 0');
+                return 0;
+            }
+
+            $count = (int)($row->getCount() ?? 0);
+            error_log(sprintf('[RateLimit][get] row FOUND id=%s count=%d',
+                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL', $count));
+            return $count;
+
+        } catch (\Throwable $t) {
+            error_log('[RateLimit][get][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+            return 0;
+        }
+    }
+
+
+    /** Upsert/increment the monthly counter by $delta. */
+    private function incMonthlyCount(Company $company, \DateTimeImmutable $nowUtc, int $delta): void
+    {
+        if ($delta === 0) { error_log('[RateLimit][inc] skip delta=0'); return; }
+
+        $window = $this->monthAnchor($nowUtc);
+        $windowStr = $window->format('Y-m-d H:i:s');
+        $key = $this->monthlyKey($window);
+        error_log(sprintf('[RateLimit][inc] key=%s company=%d window=%s delta=%d',
+            $key, $company->getId(), $windowStr, $delta));
+
+        try {
+            /** @var \App\Repository\RateLimitCounterRepository $repo */
+            $repo = $this->repos->getRepository(RateLimitCounter::class);
+
+            // 🔧 Search using string window_start
+            $row = method_exists($repo, 'findOneBy')
+                ? $repo->findOneBy(['company_id' => $company->getId(), 'key' => $key, 'window_start' => $windowStr])
+                : null;
+
+            $created = false;
+            if (!$row) {
+                error_log('[RateLimit][inc] creating NEW row');
+                $row = (new RateLimitCounter())
+                    ->setCompany($company)
+                    ->setKey($key)
+                    ->setWindow_start($window)   // keep DateTime on entity
+                    ->setCount(0)
+                    ->setUpdated_at($nowUtc);
+                $created = true;
+            }
+
+            $before = (int)($row->getCount() ?? 0);
+            $row->setCount(max(0, $before + $delta))
+                ->setUpdated_at($nowUtc);
+
+            if (!method_exists($repo, 'save')) {
+                error_log('[RateLimit][inc][FATAL] repository.save not available — cannot persist');
+                return;
+            }
+
+            $repo->save($row);
+            $after = (int)$row->getCount();
+            error_log(sprintf('[RateLimit][inc] %s id=%s before=%d after=%d',
+                $created ? 'CREATED' : 'UPDATED',
+                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL',
+                $before, $after
+            ));
+
+        } catch (\Throwable $t) {
+            error_log('[RateLimit][inc][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+        }
+    }
+
+
+    /** Count message recipients (to+cc+bcc) for incrementing the monthly counter per recipient. */
+    private function countRecipients(Message $msg): int
+    {
+        /** @var \App\Repository\MessageRecipientRepository $rRepo */
+        $rRepo = $this->repos->getRepository(MessageRecipient::class);
+        $rows  = $rRepo->findBy(['message_id' => $msg->getId()]) ?: $rRepo->findBy(['message' => $msg]);
+        $count = is_array($rows) ? count($rows) : 0;
+        error_log(sprintf('[Mail] countRecipients message_id=%d count=%d', $msg->getId(), $count));
+        return $count;
+    }
+
+    /** Ensure the monthly counter row exists (count stays 0 if new). */
+    private function ensureMonthlyCounterRow(Company $company, \DateTimeImmutable $nowUtc): void
+    {
+        $window = $this->monthAnchor($nowUtc);
+        $windowStr = $window->format('Y-m-d H:i:s');
+        $key = $this->monthlyKey($window);
+
+        error_log(sprintf('[RateLimit][ensure] key=%s company=%d window=%s', $key, $company->getId(), $windowStr));
+
+        try {
+            /** @var \App\Repository\RateLimitCounterRepository $repo */
+            $repo = $this->repos->getRepository(RateLimitCounter::class);
+
+            // 🔧 IMPORTANT: always search with string window_start
+            $row = method_exists($repo, 'findOneBy')
+                ? $repo->findOneBy(['company_id' => $company->getId(), 'key' => $key, 'window_start' => $windowStr])
+                : null;
+
+            if ($row) {
+                error_log(sprintf('[RateLimit][ensure] row EXISTS id=%s count=%s',
+                    method_exists($row, 'getId') ? (string)$row->getId() : 'NULL',
+                    (string)($row->getCount() ?? 'NULL')
+                ));
+                return;
+            }
+
+            error_log('[RateLimit][ensure] row NOT found, creating new…');
+            $row = new RateLimitCounter()
+                ->setCompany($company)               // entity relation OK
+                ->setKey($key)
+                ->setWindow_start($window)           // entity can keep DateTime
+                ->setCount(0)
+                ->setUpdated_at($nowUtc);
+
+            if (!method_exists($repo, 'save')) {
+                error_log('[RateLimit][ensure][FATAL] repository.save not available — cannot persist monthly row');
+                return;
+            }
+
+            $repo->save($row);
+            error_log(sprintf('[RateLimit][ensure] row CREATED id=%s window=%s count=0',
+                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL', $windowStr));
+
+        } catch (\Throwable $t) {
+            error_log('[RateLimit][ensure][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+        }
+    }
+
 }

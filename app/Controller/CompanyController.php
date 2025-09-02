@@ -7,13 +7,17 @@ namespace App\Controller;
 use App\Entity\Company;
 use App\Entity\Domain;
 use App\Entity\Message;
+use App\Entity\Plan;
 use App\Entity\User;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
 use Psr\Http\Message\ServerRequestInterface;
+use Random\RandomException;
 use RuntimeException;
+use Stripe\Exception\ApiErrorException;
+use Stripe\StripeClient;
 
 final class CompanyController
 {
@@ -22,6 +26,10 @@ final class CompanyController
         private QueryBuilder      $qb
     ) {}
 
+    private function stripe(): StripeClient
+    {
+        return new StripeClient($_ENV['STRIPE_SECRET_KEY'] ?: '');
+    }
     /**
      * Lists all companies associated with the authenticated user.
      *
@@ -38,19 +46,44 @@ final class CompanyController
             throw new RuntimeException('Unauthorized', 401);
         }
 
+        /** @var \App\Repository\CompanyRepository $companyRepo */
         $companyRepo = $this->repos->getRepository(Company::class);
         $companies   = $companyRepo->findByRelation('users', $userId);
 
-        // --- include hash --------------------------------------------------------
+        // Include id, hash, name, and a relative URL to the dashboard detail page
         $out = array_map(
             fn (Company $c) => [
+                'id'   => $c->getId(),
                 'hash' => $c->getHash(),
                 'name' => $c->getName(),
+                'url'  => '/dashboard/company/' . $c->getHash(),
             ],
             $companies
         );
 
         return new JsonResponse($out);
+    }
+
+    /**
+     * @param int[] $companyIds
+     * @return array<int,int>  // [company_id => user_count]
+     */
+    public function countUsersByCompanyIds(array $companyIds): array
+    {
+        if ($companyIds === []) return [];
+
+        // Join table per your User entity: name=company_user, user_id + company_id
+        $rows = $this->qb
+            ->select(['cu.company_id', 'COUNT(cu.user_id) AS cnt'])
+            ->from('company_user', 'cu')
+            ->whereIn('cu.company_id', $companyIds)
+            ->groupBy('cu.company_id')
+            ->fetchAll();
+        $out = [];
+        foreach ($rows as $r) {
+            $out[(int)$r['company_id']] = (int)$r['cnt'];
+        }
+        return $out;
     }
 
     /**
@@ -74,8 +107,8 @@ final class CompanyController
         $domainRepo  = $this->repos->getRepository(Domain::class);
         /** @var \App\Repository\MessageRepository $messageRepo */
         $messageRepo = $this->repos->getRepository(Message::class);
-        /** @var \App\Repository\UserRepository $userRepo */
-        $userRepo    = $this->repos->getRepository(User::class);
+        /** @var \App\Repository\PlanRepository $planRepo */
+        $planRepo    = $this->repos->getRepository(Plan::class);
 
         // 1) Companies for this user
         $companies = $companyRepo->findByRelation('users', $userId);
@@ -86,10 +119,7 @@ final class CompanyController
         // 2) Gather all IDs for batch counting (avoid N+1 where repos support grouping)
         $companyIds = array_map(fn(Company $c) => $c->getId(), $companies);
 
-        // ---- Domain counts
-        // If your repository offers a grouped count helper, prefer it:
-        // $domainCounts = $domainRepo->countGroupedByCompanyIds($companyIds);
-        // Fallback: simple per-company count (works everywhere; optimize later if needed).
+        // ---- Domain counts (fallback per-company)
         $domainCounts = [];
         foreach ($companies as $c) {
             $domainCounts[$c->getId()] = $domainRepo->count(['company_id' => $c->getId()]);
@@ -101,35 +131,54 @@ final class CompanyController
             $messageCounts[$c->getId()] = $messageRepo->count(['company_id' => $c->getId()]);
         }
 
-        // ---- Users count (collaborators) – count via relation if you don’t hydrate collections by default
-        $userCounts = [];
-        foreach ($companies as $c) {
-            // If you have a join table company_user, implement a repo count using that table.
-            // As a safe fallback, ask the repo to count by relation:
-            // $userCounts[$c->getId()] = $companyRepo->countByRelation('users', $c->getId());
-            // If that's not available, you can do a cheap find and count:
-            $userCounts[$c->getId()] = count($c->getUsers() ?? []);
-        }
+        // ---- Users count (collaborators)
+        $userCounts = $this->countUsersByCompanyIds($companyIds);
 
         // 3) Shape the response for card rendering
-        $out = array_map(function (Company $c) use ($domainCounts, $messageCounts, $userCounts) {
+        //    Workaround: DO NOT call $c->getPlan(). Instead read plan_id directly,
+        //    then load Plan via repository (loadRelations=false).
+        $out = array_map(function (Company $c) use ($domainCounts, $messageCounts, $userCounts, $companyRepo, $planRepo) {
+
             $id = $c->getId();
+            try {
+                $row = (clone $companyRepo->qb)
+                    ->select(['plan_id'])
+                    ->from('company')
+                    ->where('id', '=', $id)
+                    ->fetch();
+                $pid = $row ? (int)($row->plan_id ?? 0) : null;
+            } catch (\Throwable $e) {
+                // Keep going with null plan
+                $pid = null;
+            }
+
+            $plan = null;
+            if ($pid) {
+                try {
+                    /** @var Plan|null $p */
+                    $p = $planRepo->find($pid, false); // loadRelations=false – we just need id/name
+                    if ($p) {
+                        $plan = [
+                            'id'   => $p->getId(),
+                            'name' => $p->getName(),
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    // plan remains null
+                }
+            }
+
             return [
-                'hash'           => $c->getHash(),
-                'name'           => $c->getName(),
-                'status'         => (bool)$c->getStatus(),                                  // boolean
-                'statusText'     => $c->getStatus() ? 'active' : 'inactive',               // handy for badges
-                'createdAt'      => $c->getCreatedAt()?->format(\DateTimeInterface::ATOM),
-                'plan'           => $c->getPlan() ? [
-                    'id'   => $c->getPlan()->id ?? null,                  // adjust if getters exist
-                    'name' => method_exists($c->getPlan(), 'getName')
-                        ? $c->getPlan()->getName()
-                        : null,
-                ] : null,
-                'counts'         => [
-                    'domains'  => $domainCounts[$id]   ?? 0,
-                    'messages' => $messageCounts[$id]  ?? 0,
-                    'users'    => $userCounts[$id]     ?? 0,
+                'hash'       => $c->getHash(),
+                'name'       => $c->getName(),
+                'status'     => (bool)$c->getStatus(),
+                'statusText' => $c->getStatus() ? 'active' : 'inactive',
+                'createdAt'  => $c->getCreatedAt()?->format(\DateTimeInterface::ATOM),
+                'plan'       => $plan, // ['id'=>..., 'name'=>...] or null
+                'counts'     => [
+                    'domains'  => $domainCounts[$id]  ?? 0,
+                    'messages' => $messageCounts[$id] ?? 0,
+                    'users'    => $userCounts[$id]    ?? 0,
                 ],
             ];
         }, $companies);
@@ -137,50 +186,58 @@ final class CompanyController
         return new JsonResponse($out);
     }
 
+
     /**
-     * Creates a new company and associates it with the authenticated user.
+     * Creates a new company and (if a paid plan is selected) creates a fresh Stripe subscription.
      *
-     * @param ServerRequestInterface $request
-     * @return JsonResponse
+     * Body JSON:
+     *   name (required)
+     *   plan_id? (number) — when present and the plan has monthlyPrice > 0, a subscription will be created
+     *   stripe_payment_method? (string) — required WHEN plan is paid; PaymentMethod ID from Payment Element
+     *   phone_number? (string)
+     *   address? { street, city, zip, country }
+     *
      * @throws \JsonException
      * @throws \ReflectionException
      * @throws \DateMalformedStringException
+     * @throws ApiErrorException
+     * @throws RandomException
      */
     #[Route(methods: 'POST', path: '/companies')]
     public function create(ServerRequestInterface $request): JsonResponse
     {
         $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) {
-            throw new RuntimeException('Unauthorized', 401);
-        }
+        if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
 
         $body = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
 
         // 1) Validate name
-        $name = trim($body['name'] ?? '');
-        if ($name === '') {
-            throw new RuntimeException('Company name is required', 400);
-        }
+        $name = trim((string)($body['name'] ?? ''));
+        if ($name === '') throw new RuntimeException('Company name is required', 400);
 
-        // 2) Optional phone
-        $phone = isset($body['phone_number'])
-            ? trim((string)$body['phone_number'])
-            : null;
-
-        // 3) Optional structured address
+        // 2) Optional values
+        $phone = isset($body['phone_number']) ? trim((string)$body['phone_number']) : null;
         $address = $body['address'] ?? null;
         if ($address !== null) {
             foreach (['street','city','zip','country'] as $key) {
-                if (! array_key_exists($key, $address) || trim((string)$address[$key]) === '') {
+                if (!array_key_exists($key, $address) || trim((string)$address[$key]) === '') {
                     throw new RuntimeException("Address must include non-empty “{$key}”", 400);
                 }
                 $address[$key] = trim((string)$address[$key]);
             }
         }
 
+        /** @var \App\Repository\CompanyRepository $companyRepo */
         $companyRepo = $this->repos->getRepository(Company::class);
+        /** @var \App\Repository\PlanRepository $planRepo */
+        $planRepo    = $this->repos->getRepository(Plan::class);
 
-        // 4) Instantiate (constructor already set a random hash)
+        // 3) Optional plan
+        $planId = isset($body['plan_id']) ? (int)$body['plan_id'] : null;
+        /** @var ?Plan $plan */
+        $plan   = $planId ? $planRepo->findOneBy(['id' => $planId]) : null;
+
+        // 4) Instantiate company (constructor created a random hash)
         $company = new Company();
 
         // 5) Ensure no hash collision
@@ -188,24 +245,120 @@ final class CompanyController
             $company->setHash(bin2hex(random_bytes(32)));
         }
 
-        // 6) Fill in the rest of the data
+        // 6) Fill and persist basic data
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $company
             ->setName($name)
             ->setStatus(true)
-            ->setCreatedAt(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            ->setCreatedAt($now)
+            ->setPlan($plan);
 
-        if ($phone) {
-            $company->setPhone_number($phone);
-        }
-        if ($address) {
-            $company->setAddress($address);
-        }
+        if ($phone)   { $company->setPhone_number($phone); }
+        if ($address) { $company->setAddress($address); }
 
-        // 7) Persist and attach the creating user
         $companyRepo->save($company);
         $companyRepo->attachRelation($company, 'users', $userId);
 
-        // 8) Return full payload including the hash
+        // 7) Stripe: if paid plan, require and register a default payment method
+        $stripeCustomerId = null;
+        $stripeSubId      = null;
+
+        $monthly = (float)($plan?->getMonthlyPrice() ?? 0.0);
+        $isPaid  = $plan && $monthly > 0;
+
+        if ($isPaid) {
+            $priceId = $plan?->getStripe_price_id();
+            if (!$priceId) throw new RuntimeException('Plan is missing Stripe price id.', 500);
+
+            $pmId      = trim((string)($body['stripe_payment_method'] ?? '')); // may be empty on first call
+            $trialDays = (int)($_ENV['STRIPE_TRIAL_DAYS'] ?? 30);
+            $stripe    = $this->stripe();
+
+            /** @var \App\Repository\UserRepository $userRepo */
+            $userRepo = $this->repos->getRepository(\App\Entity\User::class);
+            /** @var ?User $user */
+            $user = $userRepo->findOneBy(['id' => $userId]);
+            if (!$user) throw new RuntimeException('Creating user not found', 500);
+
+            // Create Stripe Customer (idempotent on company id)
+            $customer = $stripe->customers->create(
+                [
+                    'name'     => $company->getName() ?: ('Company #'.$company->getId()),
+                    'email'    => $user->getEmail(),
+                    'metadata' => [
+                        'company_id' => (string)$company->getId(),
+                        'user_id'    => (string)$user->getId(),
+                        'plan_id'    => (string)$plan->getId(),
+                    ],
+                ],
+                ['idempotency_key' => 'cust:create:company:'.$company->getId()]
+            );
+            $stripeCustomerId = $customer->id;
+            $company->setStripe_customer_id($customer->id);
+            $companyRepo->save($company);
+
+            if ($pmId === '') {
+                // No PM yet → return a customer-scoped SetupIntent so the UI can collect card now
+                $si = $stripe->setupIntents->create([
+                    'customer'             => $customer->id,
+                    'usage'                => 'off_session',
+                    'payment_method_types' => ['card'],
+                ]);
+
+                // mark local status for clarity
+                $company->setSubscription_status('requires_payment_method');
+                $companyRepo->save($company);
+
+                return new JsonResponse([
+                    'id'           => $company->getId(),
+                    'hash'         => $company->getHash(),
+                    'name'         => $company->getName(),
+                    'stripe'       => [
+                        'customerId'     => $customer->id,
+                        'clientSecret'   => $si->client_secret,
+                        'publishableKey' => $_ENV['STRIPE_PUBLISHABLE_KEY'] ?? '',
+                    ],
+                    'message'   => 'This plan requires a payment method. Please add a card to continue.',
+                    'next_step' => 'attach_payment_method',
+                ], 402);
+            }
+
+            // Attach PaymentMethod and set as DEFAULT on the customer
+            try { $stripe->paymentMethods->attach($pmId, ['customer' => $customer->id]); } catch (\Throwable $e) { /* already attached */ }
+            $stripe->customers->update($customer->id, [
+                'invoice_settings' => ['default_payment_method' => $pmId],
+            ]);
+
+            // Create trialing subscription; also set default_payment_method at the sub level
+            $subscription = $stripe->subscriptions->create(
+                [
+                    'customer'               => $customer->id,
+                    'items'                  => [['price' => $priceId]],
+                    'collection_method'      => 'charge_automatically',
+                    'default_payment_method' => $pmId,
+                    'trial_period_days'      => $trialDays,
+                    // best practices: allow incomplete and let Stripe save future PMs
+                    'payment_behavior'       => 'allow_incomplete',
+                    'payment_settings'       => ['save_default_payment_method' => 'on_subscription'],
+                    'metadata'               => [
+                        'company_id' => (string)$company->getId(),
+                        'plan_id'    => (string)$plan->getId(),
+                    ],
+                ],
+                ['idempotency_key' => 'sub:create:company:'.$company->getId().':plan:'.$plan->getId()]
+            );
+            $stripeSubId = $subscription->id;
+
+            // Persist Stripe state on Company
+            $company->setStripe_subscription_id($subscription->id);
+            $company->setSubscription_status($subscription->status);
+            $company->setTrial_ends_at(
+                new \DateTimeImmutable('now', new \DateTimeZone('UTC'))->modify("+{$trialDays} days")
+            );
+            $companyRepo->save($company);
+        }
+
+        // 8) Response
         return new JsonResponse([
             'id'           => $company->getId(),
             'hash'         => $company->getHash(),
@@ -214,6 +367,11 @@ final class CompanyController
             'address'      => $company->getAddress(),
             'createdAt'    => $company->getCreatedAt()?->format(\DateTimeInterface::ATOM),
             'status'       => $company->getStatus(),
+            'plan'         => $plan ? ['id' => $plan->getId(), 'name' => $plan->getName()] : null,
+            'stripe'       => $isPaid ? [
+                'customerId'     => $stripeCustomerId,
+                'subscriptionId' => $stripeSubId,
+            ] : null,
         ], 201);
     }
 
@@ -260,6 +418,10 @@ final class CompanyController
             'name'         => $company->getName(),
             'address'      => $company->getAddress(),
             'phone_number' => $company->getPhone_number(),
+            'plan'         => $company->getPlan() ? [
+                'id'   => $company->getPlan()?->getId(),
+                'name' => $company->getPlan()?->getName(),
+            ] : null,
             'users' => array_map(fn($u) => [
                 'id'       => $u->getId(),
                 'email'    => $u->getEmail(),
@@ -661,6 +823,76 @@ final class CompanyController
         }
 
         return new JsonResponse($out);
+    }
+
+    /**
+     * GET /companies/{hash}/plan
+     * Returns the company's current plan, or null if none.
+     *
+     * Response (200):
+     *   null
+     *   — or —
+     *   {
+     *     "id": 123,
+     *     "name": "Pro",
+     *     "monthlyPrice": 99,
+     *     "includedMessages": 250000,
+     *     "averagePricePer1K": 0.4,
+     *     "features": {...} // if your Plan exposes it
+     *   }
+     */
+    #[Route(methods: 'GET', path: '/companies-plan/{hash}')]
+    public function getCompanyPlan(ServerRequestInterface $request): JsonResponse
+    {
+        $userId = (int)$request->getAttribute('user_id', 0);
+        if ($userId <= 0) {
+            throw new RuntimeException('Unauthorized', 401);
+        }
+
+        $hash = $request->getAttribute('hash');
+        if (!is_string($hash) || strlen($hash) !== 64) {
+            throw new RuntimeException('Invalid company identifier', 400);
+        }
+
+        /** @var \App\Repository\CompanyRepository $companyRepo */
+        $companyRepo = $this->repos->getRepository(Company::class);
+        /** @var Company|null $company */
+        $company = $companyRepo->findOneBy(['hash' => $hash]);
+        if (!$company) {
+            throw new RuntimeException('Company not found', 404);
+        }
+
+        // Ensure requester belongs to the company
+        $belongs = array_filter($company->getUsers() ?? [], fn(User $u) => $u->getId() === $userId);
+        if (empty($belongs)) {
+            throw new RuntimeException('Forbidden', 403);
+        }
+
+        $plan = $company->getPlan();
+        if (!$plan) {
+            return new JsonResponse(null);
+        }
+
+        // Build a tolerant payload (works whether you have public props or getters)
+        $payload = [
+            'id'   => method_exists($plan, 'getId')   ? $plan->getId()   : ($plan->id   ?? null),
+            'name' => method_exists($plan, 'getName') ? $plan->getName() : ($plan->name ?? null),
+        ];
+
+        if (method_exists($plan, 'getMonthlyPrice')) {
+            $payload['monthlyPrice'] = $plan->getMonthlyPrice();
+        }
+        if (method_exists($plan, 'getIncludedMessages')) {
+            $payload['includedMessages'] = $plan->getIncludedMessages();
+        }
+        if (method_exists($plan, 'getAveragePricePer1K')) {
+            $payload['averagePricePer1K'] = $plan->getAveragePricePer1K();
+        }
+        if (method_exists($plan, 'getFeatures')) {
+            $payload['features'] = $plan->getFeatures();
+        }
+
+        return new JsonResponse($payload);
     }
 
 }

@@ -13,7 +13,9 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Query\QueryBuilder;
 use Psr\Http\Message\ServerRequestInterface;
+use Random\RandomException;
 use RuntimeException;
+use Psr\Http\Message\UploadedFileInterface;
 
 final class ListController
 {
@@ -67,6 +69,7 @@ final class ListController
             'id'         => $g->getId(),
             'name'       => $g->getName(),
             'created_at' => $g->getCreated_at()?->format(\DateTimeInterface::ATOM),
+            'hash'       => $g->getHash() ?? null,
         ];
         if ($withCounts) {
             $out['counts'] = [
@@ -276,6 +279,10 @@ final class ListController
         return new JsonResponse($this->shapeContact($c));
     }
 
+    /**
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
     #[Route(methods: 'PATCH', path: '/companies/{hash}/contacts/{id}')]
     public function updateContact(ServerRequestInterface $request): JsonResponse
     {
@@ -359,7 +366,6 @@ final class ListController
         $perPage = max(1, min(200, (int)($q['perPage'] ?? 25)));
         $search  = trim((string)($q['search'] ?? ''));
         $withCounts = (bool)($q['withCounts'] ?? false);
-        error_log('id: ' . $company->getId());
 
         // Ensure company exists and is accessible
         if (!$company || $company->getId() <= 0) {
@@ -386,6 +392,10 @@ final class ListController
 
     }
 
+    /**
+     * @throws RandomException
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/companies/{hash}/lists')]
     public function createGroup(ServerRequestInterface $request): JsonResponse
     {
@@ -405,9 +415,12 @@ final class ListController
             return new JsonResponse($this->shapeListGroup($existing, true), 200);
         }
 
-        $g = (new ListGroup())
+        $hash = bin2hex(random_bytes(32));
+
+        $g = new ListGroup()
             ->setCompany($company)
             ->setName($name)
+            ->setHash($hash)
             ->setCreated_at($this->now());
 
         $repo->save($g);
@@ -889,6 +902,507 @@ final class ListController
             elseif (method_exists($lcRepo, 'remove')) $lcRepo->remove($lc);
             else $this->qb->delete('listcontact')->where('id', '=', $lc->getId())->execute();
         }
+    }
+
+    /**
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
+    #[Route(methods: 'POST', path: '/companies/{hash}/contacts-import')]
+    public function importContactsCsv(ServerRequestInterface $request): JsonResponse
+    {
+
+        $userId  = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+
+        // ------ read multipart form (robust across PSR-7 impls + PHP superglobals)
+        $rawFiles = $request->getUploadedFiles();
+        $file = null; // UploadedFileInterface|array|null
+
+        // A) PSR-7 first
+        if ($rawFiles instanceof UploadedFileInterface) {
+            $file = $rawFiles;
+        } elseif (is_array($rawFiles)) {
+            $candidate = $rawFiles['file'] ?? (count($rawFiles) ? reset($rawFiles) : null);
+            $file = is_array($candidate) ? ($candidate[0] ?? null) : $candidate;
+        }
+
+        // B) Fallback to $_FILES
+        if (!$file && !empty($_FILES)) {
+            $firstKey = array_key_first($_FILES);
+            $file = $_FILES['file'] ?? ($firstKey !== null ? $_FILES[$firstKey] : null);
+        }
+
+        if (!$file) {
+            error_log('CSV IMPORT: no file found in request');
+            throw new RuntimeException('CSV file is required (multipart/form-data, field "file")', 400);
+        }
+
+        // ------ resolve tmp path + read small files if needed
+        $uploadedName = '(no-name)';
+        $tmpPath = null;
+        $csvRaw = '';
+
+        if ($file instanceof UploadedFileInterface) {
+            if ($file->getError() !== UPLOAD_ERR_OK) {
+                error_log('CSV IMPORT: upload error code='.$file->getError());
+                throw new RuntimeException('Upload failed', 400);
+            }
+            $uploadedName = $file->getClientFilename() ?: '(no-name)';
+            $stream = $file->getStream();
+            $tmpPath = $stream->getMetadata('uri') ?: null;
+
+            if (!$tmpPath || !is_readable($tmpPath)) {
+                if (method_exists($stream, 'isSeekable') && $stream->isSeekable()) $stream->rewind();
+                $csvRaw = (string)$stream->getContents();
+            }
+        } elseif (is_array($file)) {
+            $tmpPath = is_array($file['tmp_name'] ?? null) ? ($file['tmp_name'][0] ?? null) : ($file['tmp_name'] ?? null);
+            $err     = is_array($file['error'] ?? null) ? ($file['error'][0] ?? UPLOAD_ERR_NO_FILE) : ($file['error'] ?? UPLOAD_ERR_NO_FILE);
+            $uploadedName = is_array($file['name'] ?? null) ? ($file['name'][0] ?? '(no-name)') : ($file['name'] ?? '(no-name)');
+
+            if (!$tmpPath || $err !== UPLOAD_ERR_OK) {
+                error_log('CSV IMPORT: missing tmp or err!='.UPLOAD_ERR_OK);
+                throw new RuntimeException('Upload failed', 400);
+            }
+            // stream via tmp path later
+        }
+
+        // Edge-case fallback
+        if (!$tmpPath && $csvRaw === '' && !empty($_FILES['file']['tmp_name'])) {
+            $tmp = $_FILES['file']['tmp_name'];
+            $bytes = @file_get_contents($tmp);
+            if ($bytes !== false) $csvRaw = (string)$bytes;
+        }
+
+        // ------ options (all optional)
+        $body             = $request->getParsedBody() ?? [];
+        $defaultStatus    = isset($body['default_status']) ? (string)$body['default_status'] : null;
+        $defaultName      = isset($body['default_name']) ? (string)$body['default_name'] : null;
+        $defaultLocale    = isset($body['default_locale']) ? (string)$body['default_locale'] : null;
+        $defaultTimezone  = isset($body['default_timezone']) ? (string)$body['default_timezone'] : null;
+        $dryRun           = filter_var($body['dryRun'] ?? false, FILTER_VALIDATE_BOOL);
+        $subscribedAtIso  = isset($body['subscribed_at']) ? (string)$body['subscribed_at'] : '';
+        $subscribedAt     = $subscribedAtIso ? new \DateTimeImmutable($subscribedAtIso) : $this->now();
+
+        // Normalize list ids
+        $listIds = [];
+        if (isset($body['list_id'])) $listIds[] = (int)$body['list_id'];
+        if (isset($body['list_ids'])) {
+            if (is_string($body['list_ids'])) {
+                $decoded = json_decode($body['list_ids'], true);
+                if (is_array($decoded)) foreach ($decoded as $v) $listIds[] = (int)$v;
+            } elseif (is_array($body['list_ids'])) {
+                foreach ($body['list_ids'] as $v) $listIds[] = (int)$v;
+            }
+        }
+        $listIds = array_values(array_unique(array_filter($listIds, fn($n) => $n > 0)));
+
+        // ------ detect header + delimiter, get a streaming iterator for rows
+        [$headers, $delimiter] = $this->detectCsvHeaderAndDelimiter($tmpPath, $csvRaw);
+
+        if (!$headers) {
+            error_log('CSV IMPORT: empty headers');
+            throw new RuntimeException('CSV appears empty', 400);
+        }
+        $rowsIter = $this->streamCsvRows($tmpPath, $csvRaw, $delimiter);
+
+        // Map header aliases once
+        $map = [
+            'email'            => ['email', 'e-mail', 'mail'],
+            'name'             => ['name', 'full_name', 'fullname'],
+            'locale'           => ['locale', 'language'],
+            'timezone'         => ['timezone', 'tz', 'time_zone'],
+            'status'           => ['status', 'state'],
+            'consent_source'   => ['consent_source', 'source'],
+            'gdpr_consent_at'  => ['gdpr_consent_at', 'consent_at', 'gdpr_at'],
+            'attributes'       => ['attributes', 'attrs', 'meta', 'custom'],
+        ];
+        $hidx = $this->buildHeaderIndex($headers, $map);
+
+        /** @var \App\Repository\ContactRepository $cRepo */
+        $cRepo = $this->repos->getRepository(Contact::class);
+        /** @var \App\Repository\ListGroupRepository $lgRepo */
+        $lgRepo = $this->repos->getRepository(ListGroup::class);
+        /** @var \App\Repository\ListContactRepository $lcRepo */
+        $lcRepo = $this->repos->getRepository(ListContact::class);
+
+        // Pre-validate lists
+        $validListIds = [];
+        foreach ($listIds as $lid) {
+            $g = $lgRepo->find($lid);
+            if ($g && $g->getCompany()?->getId() === $company->getId()) {
+                $validListIds[] = $lid;
+            }
+        }
+
+        $now = $this->now();
+        $summary = [
+            'processed' => 0,
+            'created'   => 0,
+            'updated'   => 0,
+            'attached'  => 0,
+            'skipped'   => 0,
+            'errors'    => 0,
+            'dryRun'    => $dryRun,
+        ];
+        $results = [];
+        $seenEmails = [];
+
+        // -------- batch processing
+        $BATCH = 1000;
+        $batch = [];
+        $lineNo = 1; // header line = 1
+
+        $flush = function(array $batch) use (
+            $company, $cRepo, $lcRepo, $lgRepo, $validListIds, $subscribedAt, $now, $dryRun,
+            &$summary, &$results
+        ) {
+            if (!$batch) return;
+
+            try {
+                // 1) existing contacts
+                $emails = array_column($batch, 'email');
+                $emails = array_values(array_unique($emails));
+                $existingByEmail = $this->fetchContactsByEmailsRepo($cRepo, $company->getId(), $emails);
+
+                // 2) upserts
+                $upCreated = 0; $upUpdated = 0;
+                foreach ($batch as $row) {
+                    $email  = $row['email'];
+                    $line   = $row['line'];
+                    $f      = $row['fields'];
+                    $existing = $existingByEmail[$email] ?? null;
+
+                    if ($dryRun) {
+                        $results[] = ['line'=>$line,'status'=>$existing ? 'would_update' : 'would_create','email'=>$email];
+                        continue;
+                    }
+
+                    if ($existing) {
+                        if ($f['name']      !== null && $f['name']      !== '') $existing->setName($f['name']);
+                        if ($f['locale']    !== null && $f['locale']    !== '') $existing->setLocale($f['locale']);
+                        if ($f['timezone']  !== null && $f['timezone']  !== '') $existing->setTimezone($f['timezone']);
+                        if ($f['status']    !== null && $f['status']    !== '') $existing->setStatus($f['status']);
+                        if ($f['consent']   !== null && $f['consent']   !== '') $existing->setConsent_source($f['consent']);
+                        if ($f['gdpr_at']   instanceof \DateTimeImmutable)     $existing->setGdpr_consent_at($f['gdpr_at']);
+                        if (is_array($f['attrs'])) {
+                            $merged = array_merge($existing->getAttributes() ?? [], $f['attrs']);
+                            $existing->setAttributes($merged);
+                        }
+                        $cRepo->save($existing);
+                        $summary['updated']++; $upUpdated++;
+                        $results[] = ['line'=>$line,'status'=>'updated','email'=>$email];
+                    } else {
+                        $c = new Contact()
+                            ->setCompany($row['company'])
+                            ->setEmail($email)
+                            ->setName($f['name'] ?: null)
+                            ->setLocale($f['locale'] ?: null)
+                            ->setTimezone($f['timezone'] ?: null)
+                            ->setStatus($f['status'] ?: null)
+                            ->setConsent_source($f['consent'] ?: null)
+                            ->setAttributes($f['attrs'] ?: null)
+                            ->setCreated_at($row['now']);
+                        if ($f['gdpr_at'] instanceof \DateTimeImmutable) $c->setGdpr_consent_at($f['gdpr_at']);
+
+                        $cRepo->save($c);
+                        $summary['created']++; $upCreated++;
+                        $existingByEmail[$email] = $c;
+                        $results[] = ['line'=>$line,'status'=>'created','email'=>$email,'contact_id'=>$c->getId()];
+                    }
+                }
+
+                // 3) memberships
+                if ($validListIds) {
+                    $contactIds = [];
+                    foreach ($batch as $row) {
+                        $email = $row['email'];
+                        if (isset($existingByEmail[$email])) $contactIds[] = $existingByEmail[$email]->getId();
+                    }
+                    $contactIds = array_values(array_unique(array_filter($contactIds)));
+
+                    if ($contactIds) {
+                        $existingPairs = $this->fetchExistingMembershipPairsRepo($lcRepo, $validListIds, $contactIds);
+                        $addedPairs = 0;
+
+                        foreach ($validListIds as $lid) {
+                            $list = $lgRepo->find($lid);
+                            if (!$list || $list->getCompany()?->getId() !== $company->getId()) continue;
+
+                            foreach ($contactIds as $cid) {
+                                $key = $lid . ':' . $cid;
+                                if (isset($existingPairs[$key])) continue;
+
+                                // resolve entity by id
+                                $contactEntity = null;
+                                foreach ($existingByEmail as $e) {
+                                    if ($e->getId() === $cid) { $contactEntity = $e; break; }
+                                }
+                                if (!$contactEntity) continue;
+
+                                $lc = (new ListContact())
+                                    ->setListGroup($list)
+                                    ->setContact($contactEntity)
+                                    ->setSubscribed_at($subscribedAt);
+
+                                $lcRepo->save($lc);
+                                $summary['attached']++; $addedPairs++;
+                            }
+                        }
+                    }
+                }
+
+            } catch (\Throwable $e) {
+                error_log('CSV IMPORT: FLUSH error: '.$e->getMessage());
+                foreach ($batch as $row) {
+                    $summary['errors']++;
+                    $results[] = [
+                        'line' => $row['line'],
+                        'status' => 'error',
+                        'error' => 'batch: ' . $e->getMessage(),
+                    ];
+                }
+            }
+        };
+
+        // Stream + batch
+        $firstPreview = 0;
+        foreach ($rowsIter as $row) {
+            $lineNo++;
+            $summary['processed']++;
+
+            if ($firstPreview < 3) {
+                error_log('CSV IMPORT: row#'.$lineNo.' sample='.json_encode($row));
+                $firstPreview++;
+            }
+
+            try {
+                $email = $this->extractCsvValue($row, $hidx['email'] ?? null);
+                $email = $email !== null ? trim(strtolower($email)) : '';
+
+                if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    $summary['skipped']++;
+                    $results[] = ['line'=>$lineNo, 'status'=>'skipped', 'reason'=>'invalid_email'];
+                    continue;
+                }
+                if (isset($seenEmails[$email])) {
+                    $summary['skipped']++;
+                    $results[] = ['line'=>$lineNo, 'status'=>'skipped', 'reason'=>'duplicate_in_file', 'email'=>$email];
+                    continue;
+                }
+                $seenEmails[$email] = true;
+
+                $name      = $this->extractCsvValue($row, $hidx['name'] ?? null) ?: $defaultName;
+                $locale    = $this->extractCsvValue($row, $hidx['locale'] ?? null) ?: $defaultLocale;
+                $timezone  = $this->extractCsvValue($row, $hidx['timezone'] ?? null) ?: $defaultTimezone;
+                $status    = $this->extractCsvValue($row, $hidx['status'] ?? null) ?: $defaultStatus;
+                $consent   = $this->extractCsvValue($row, $hidx['consent_source'] ?? null) ?: null;
+                $gdprRaw   = $this->extractCsvValue($row, $hidx['gdpr_consent_at'] ?? null);
+                $gdprAt    = null; if ($gdprRaw) { try { $gdprAt = new \DateTimeImmutable($gdprRaw); } catch (\Throwable) {} }
+
+                // attributes
+                $attrs = null;
+                $attrsRaw = $this->extractCsvValue($row, $hidx['attributes'] ?? null);
+                if ($attrsRaw) {
+                    $attrsRaw = trim($attrsRaw);
+                    if ($this->looksLikeJson($attrsRaw)) {
+                        $tmp = json_decode($attrsRaw, true);
+                        if (json_last_error() === JSON_ERROR_NONE && is_array($tmp)) $attrs = $tmp;
+                    } else {
+                        $tmp = [];
+                        foreach (preg_split('/[;,]\s*/', $attrsRaw) as $pair) {
+                            if ($pair === '') continue;
+                            [$k,$v] = array_pad(explode('=', $pair, 2), 2, null);
+                            $k = trim((string)$k); $v = $v !== null ? trim((string)$v) : null;
+                            if ($k !== '') $tmp[$k] = $v;
+                        }
+                        if ($tmp) $attrs = $tmp;
+                    }
+                }
+
+                $batch[] = [
+                    'line'    => $lineNo,
+                    'email'   => $email,
+                    'company' => $company,
+                    'now'     => $now,
+                    'fields'  => [
+                        'name'=>$name,'locale'=>$locale,'timezone'=>$timezone,'status'=>$status,
+                        'consent'=>$consent,'gdpr_at'=>$gdprAt,'attrs'=>$attrs,
+                    ],
+                ];
+
+                if (count($batch) >= $BATCH) {
+                    $flush($batch);
+                    $batch = [];
+                }
+            } catch (\Throwable $e) {
+                error_log('CSV IMPORT: row error @line '.$lineNo.' : '.$e->getMessage());
+                $summary['errors']++;
+                $results[] = ['line'=>$lineNo, 'status'=>'error', 'error'=>$e->getMessage()];
+            }
+        }
+        // flush tail
+        if ($batch) {
+            $flush($batch);
+        }
+
+        $http = $dryRun ? 200 : 207;
+        return new JsonResponse(['file' => $uploadedName, 'summary' => $summary, 'results' => $results], $http);
+    }
+
+    private function detectCsvHeaderAndDelimiter(?string $path, string $fallbackRaw): array
+    {
+        $firstLine = null;
+
+        if ($path && is_readable($path)) {
+            $fh = fopen($path, 'rb');
+            if ($fh) { $firstLine = fgets($fh); fclose($fh); }
+        }
+        if ($firstLine === null) {
+            $norm = str_replace(["\r\n","\r"], "\n", $fallbackRaw);
+            $firstLine = strtok($norm, "\n");
+        }
+        if ($firstLine === false || $firstLine === null) {
+            error_log('CSV IMPORT: detectHdr firstLine empty');
+            throw new RuntimeException('CSV appears empty', 400);
+        }
+
+        // Strip UTF-8 BOM
+        if (strncmp($firstLine, "\xEF\xBB\xBF", 3) === 0) {
+            $firstLine = substr($firstLine, 3);
+        }
+
+        $delims = [',',';',"\t",'|'];
+        $best = ','; $bestCount = -1;
+        foreach ($delims as $d) {
+            $c = substr_count($firstLine, $d);
+            if ($c > $bestCount) { $bestCount = $c; $best = $d; }
+        }
+
+        $headers = str_getcsv($firstLine, $best, '"', '\\');
+        $headers = array_map(static fn($h) => strtolower(trim((string)$h)), $headers);
+
+        return [$headers, $best];
+    }
+
+    private function streamCsvRows(?string $path, string $fallbackRaw, string $delim): \Generator
+    {
+        if ($path && is_readable($path)) {
+
+            $spl = new \SplFileObject($path, 'r');
+            $spl->setFlags(
+                \SplFileObject::READ_CSV
+                | \SplFileObject::DROP_NEW_LINE
+                | \SplFileObject::SKIP_EMPTY
+            );
+            $spl->setCsvControl($delim, '"', '\\');
+
+            $first = true;
+            foreach ($spl as $row) {
+                if ($row === false || $row === [null]) { continue; }
+                if ($first) { $first = false; continue; } // skip header
+
+                // extra safety: if some driver still yields strings, parse it
+                if (!is_array($row)) {
+                    $row = str_getcsv((string)$row, $delim, '"', '\\');
+                    if ($row === null) { continue; }
+                }
+                yield $row;
+            }
+            return;
+        }
+
+        // Fallback: small file in memory
+        $raw = str_replace(["\r\n","\r"], "\n", $fallbackRaw);
+        $lines = preg_split("/\n/", $raw) ?: [];
+        while ($lines && trim((string)$lines[0])==='') array_shift($lines);
+        while ($lines && trim((string)end($lines))==='') array_pop($lines);
+        array_shift($lines); // drop header
+
+        $i=0;
+        foreach ($lines as $line) {
+            if (trim($line)==='') continue;
+            $i++; if ($i<=3) error_log('CSV IMPORT: mem row sample #'.$i.' len='.strlen($line));
+            yield str_getcsv($line, $delim, '"', '\\');
+        }
+    }
+
+
+    private function buildHeaderIndex(array $headers, array $aliasMap): array
+    {
+        $idx = [];
+        $low = array_map('strtolower', $headers);
+
+        foreach ($aliasMap as $canon => $aliases) {
+            foreach ($aliases as $a) {
+                $pos = array_search(strtolower($a), $low, true);
+                if ($pos !== false) { $idx[$canon] = $pos; break; }
+            }
+        }
+        if (!isset($idx['email'])) {
+            if (isset($headers[0]) && str_contains($headers[0], 'email')) {
+                $idx['email'] = 0;
+            } else {
+                error_log('CSV IMPORT: buildHeaderIndex MISSING email column');
+                throw new RuntimeException('CSV must contain an "email" column', 400);
+            }
+        }
+        return $idx;
+    }
+
+    private function extractCsvValue(array $row, ?int $pos): ?string
+    {
+        return $pos === null ? null : (array_key_exists($pos, $row) ? trim((string)$row[$pos]) : null);
+    }
+
+    private function looksLikeJson(string $s): bool
+    {
+        $s = ltrim($s);
+        return ($s !== '' && ($s[0] === '{' || $s[0] === '['));
+    }
+
+    /**
+     * Fallback: fetch contacts for given emails by looping with findOneBy.
+     * Returns map: strtolower(email) => Contact entity
+     */
+    private function fetchContactsByEmailsRepo($cRepo, int $companyId, array $emails): array
+    {
+        $emails = array_values(array_unique(array_map('strtolower', array_filter($emails))));
+        if (!$emails) return [];
+
+        $out = [];
+        foreach ($emails as $em) {
+            try {
+                $e = $cRepo->findOneBy(['company_id' => $companyId, 'email' => $em]);
+                if ($e) $out[$em] = $e;
+            } catch (\Throwable $err) {
+                error_log('CSV IMPORT: repoFetch contact error for '.$em.' : '.$err->getMessage());
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Fallback: fetch membership pairs by looping with findOneBy.
+     * Returns set keyed by "listId:contactId"
+     */
+    private function fetchExistingMembershipPairsRepo($lcRepo, array $listIds, array $contactIds): array
+    {
+        $set = [];
+        foreach ($listIds as $lid) {
+            foreach ($contactIds as $cid) {
+                try {
+                    $exists = $lcRepo->findOneBy(['listGroup_id' => (int)$lid, 'contact_id' => (int)$cid]);
+                    if ($exists) {
+                        $set[(int)$lid . ':' . (int)$cid] = true;
+                    }
+                } catch (\Throwable $err) {
+                    error_log('CSV IMPORT: repoFetch pair error lid='.$lid.' cid='.$cid.' : '.$err->getMessage());
+                }
+            }
+        }
+        return $set;
     }
 
 }

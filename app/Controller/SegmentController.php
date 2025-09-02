@@ -14,6 +14,7 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Query\QueryBuilder;
 use Psr\Http\Message\ServerRequestInterface;
+use Random\RandomException;
 use RuntimeException;
 
 final class SegmentController
@@ -49,7 +50,8 @@ final class SegmentController
             'definition'          => $s->getDefinition(),
             'materialized_count'  => $s->getMaterialized_count(),
             'last_built_at'       => $s->getLast_built_at()?->format(\DateTimeInterface::ATOM),
-            'created_at'          => null, // add if you later add a field
+            'created_at'          => null,
+            'hash'                => $s->getHash() ?? '',
         ];
         return $withCounts ? $out : $out;
     }
@@ -86,6 +88,10 @@ final class SegmentController
         ]);
     }
 
+    /**
+     * @throws RandomException
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/companies/{hash}/segments')]
     public function create(ServerRequestInterface $r): JsonResponse {
         $uid = $this->auth($r);
@@ -99,11 +105,12 @@ final class SegmentController
 
         /** @var \App\Repository\SegmentRepository $repo */
         $repo = $this->repos->getRepository(Segment::class);
-
-        $s = (new Segment())
+        $hash = bin2hex(random_bytes(32));
+        $s = new Segment()
             ->setCompany($co)
             ->setName($name)
             ->setDefinition($def)
+            ->setHash($hash)
             ->setMaterialized_count(0)
             ->setLast_built_at(null);
 

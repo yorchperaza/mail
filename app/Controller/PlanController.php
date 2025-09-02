@@ -10,6 +10,8 @@ use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Query\QueryBuilder;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
+use Stripe\Exception\ApiErrorException;
+use Stripe\StripeClient;
 
 final class PlanController
 {
@@ -21,10 +23,21 @@ final class PlanController
     /* ---------------------------- helpers ---------------------------- */
 
     private function auth(ServerRequestInterface $r): int {
-        // Keep consistent with your AutomationController
         $uid = (int)$r->getAttribute('user_id', 0);
         if ($uid <= 0) throw new RuntimeException('Unauthorized', 401);
         return $uid;
+    }
+
+    /** Central Stripe client (same pattern as your other controllers) */
+    private function stripe(): StripeClient {
+        $sk = $_ENV['STRIPE_SECRET_KEY'] ?? $_ENV['STRIPE_SK'] ?? '';
+        if ($sk === '') throw new RuntimeException('Stripe secret key missing', 500);
+        return new StripeClient($sk);
+    }
+
+    private function currency(): string {
+        $c = strtolower((string)($_ENV['STRIPE_CURRENCY'] ?? 'usd'));
+        return $c ?: 'usd';
     }
 
     /** Uniform JSON shape for a Plan row */
@@ -36,6 +49,7 @@ final class PlanController
             'includedMessages'   => $p->getIncludedMessages(),
             'averagePricePer1K'  => $p->getAveragePricePer1K(),
             'features'           => $p->getFeatures(),
+            'stripePriceId'      => $p->getStripe_price_id(),
         ];
     }
 
@@ -44,17 +58,15 @@ final class PlanController
         $search   = trim((string)($q['search'] ?? ''));
         $minPrice = (string)($q['minPrice'] ?? '');
         $maxPrice = (string)($q['maxPrice'] ?? '');
-        $hasFeat  = trim((string)($q['hasFeature'] ?? '')); // substring match inside features JSON
+        $hasFeat  = trim((string)($q['hasFeature'] ?? ''));
 
         if ($search !== '') {
             $needle = mb_strtolower($search);
             $rows = array_values(array_filter($rows, function(Plan $p) use ($needle) {
                 if (str_contains(mb_strtolower((string)($p->getName() ?? '')), $needle)) return true;
-                // search numeric fields as strings too
                 if (str_contains(mb_strtolower((string)($p->getMonthlyPrice() ?? '')), $needle)) return true;
                 if (str_contains(mb_strtolower((string)($p->getIncludedMessages() ?? '')), $needle)) return true;
                 if (str_contains(mb_strtolower((string)($p->getAveragePricePer1K() ?? '')), $needle)) return true;
-                // search features JSON
                 $featJson = json_encode($p->getFeatures() ?? [], JSON_UNESCAPED_UNICODE);
                 return $featJson && str_contains(mb_strtolower($featJson), $needle);
             }));
@@ -65,7 +77,6 @@ final class PlanController
             $max = $maxPrice === '' ? null : (float)$maxPrice;
             $rows = array_values(array_filter($rows, function(Plan $p) use ($min, $max) {
                 $price = $p->getMonthlyPrice();
-                // Treat null price as failing the range filter
                 if ($price === null) return false;
                 $f = (float)$price;
                 if ($min !== null && $f < $min) return false;
@@ -88,19 +99,9 @@ final class PlanController
 
     /* -------------------------------- list -------------------------------- */
 
-    /**
-     * Query params:
-     *   search?     - free text (name, numeric fields, features JSON)
-     *   minPrice?   - number (inclusive)
-     *   maxPrice?   - number (inclusive)
-     *   hasFeature? - substring to search within features JSON
-     *   page?       - default 1
-     *   perPage?    - default 25 (max 200)
-     */
     #[Route(methods: 'GET', path: '/plans')]
     public function list(ServerRequestInterface $r): JsonResponse {
         $this->auth($r);
-
         /** @var \App\Repository\PlanRepository $repo */
         $repo = $this->repos->getRepository(Plan::class);
 
@@ -108,9 +109,7 @@ final class PlanController
         $page    = max(1, (int)($q['page'] ?? 1));
         $perPage = max(1, min(200, (int)($q['perPage'] ?? 25)));
 
-        // NOTE: your repository appears to be in-memory for demo; adjust if you support query-level filters.
-        $rows = $repo->findBy([]); // all plans
-
+        $rows = $repo->findBy([]);
         [$filtered, $total] = $this->applyFilters($rows, $q);
         $slice = array_slice($filtered, ($page - 1) * $perPage, $perPage);
 
@@ -134,6 +133,9 @@ final class PlanController
      *   includedMessages? (int)
      *   averagePricePer1K? (number)
      *   features? (array)
+     *
+     * When monthlyPrice > 0, a Stripe Product+Price are created
+     * and stripe_price_id is stored on the plan.
      */
     #[Route(methods: 'POST', path: '/plans')]
     public function create(ServerRequestInterface $r): JsonResponse {
@@ -145,7 +147,6 @@ final class PlanController
         $body = json_decode((string)$r->getBody(), true) ?: [];
 
         $name = trim((string)($body['name'] ?? ''));
-        error_log('name: ' . var_export($name, true));
         if ($name === '') throw new RuntimeException('Name is required', 400);
 
         $monthlyPrice     = $this->toDecimalOrNull($body['monthlyPrice'] ?? null);
@@ -157,14 +158,54 @@ final class PlanController
             throw new RuntimeException('features must be an array', 400);
         }
 
-        $p = new Plan()
-            ->setName($name)
+        // 1) Create the Plan first to get an ID
+        $p = new Plan();
+        $p->setName($name)
             ->setMonthlyPrice($monthlyPrice)
             ->setIncludedMessages($includedMessages)
             ->setAveragePricePer1K($avgPer1K)
             ->setFeatures($features);
+        $repo->save($p); // ID now available
 
-        $repo->save($p);
+        // 2) If paid, create Stripe Product + Price and store price id
+        if ($monthlyPrice !== null && $monthlyPrice > 0) {
+            try {
+                $stripe   = $this->stripe();
+                $currency = $this->currency();
+                $metadata = [
+                    'app_plan_id'          => (string)$p->getId(),
+                    'included_messages'    => $includedMessages !== null ? (string)$includedMessages : '',
+                    'average_price_per_1k' => $avgPer1K !== null ? (string)$avgPer1K : '',
+                ];
+
+                $product = $stripe->products->create([
+                    'name'        => $name,
+                    'active'      => true,
+                    'metadata'    => array_filter($metadata, fn($v) => $v !== ''),
+                    // Optional: 'description' => $features ? substr(json_encode($features), 0, 5000) : null,
+                ]);
+
+                $amount = (int)round($monthlyPrice * 100);
+                if ($amount <= 0) throw new RuntimeException('Price must be > 0 for paid plans', 400);
+
+                $price = $stripe->prices->create([
+                    'product'      => $product->id,
+                    'unit_amount'  => $amount,
+                    'currency'     => $currency,
+                    'recurring'    => ['interval' => 'month'],
+                    'active'       => true,
+                    'metadata'     => ['app_plan_id' => (string)$p->getId()],
+                ]);
+
+                $p->setStripe_price_id($price->id);
+                $repo->save($p);
+            } catch (ApiErrorException $e) {
+                // Rollback Stripe coupling if something went wrong
+                $p->setStripe_price_id(null);
+                $repo->save($p);
+                throw new RuntimeException('Stripe error while creating product/price: ' . $e->getMessage(), 500);
+            }
+        }
 
         return new JsonResponse($this->shape($p), 201);
     }
@@ -175,7 +216,7 @@ final class PlanController
         if (is_string($v)) $v = trim($v);
         if ($v === '' || $v === 'null') return null;
         if (is_numeric($v)) return (float)$v;
-        return null; // or throw if you prefer strict validation
+        return null;
     }
     private function toIntOrNull(mixed $v): ?int {
         if ($v === null) return null;
@@ -187,16 +228,13 @@ final class PlanController
 
     /* --------------------------------- get -------------------------------- */
 
-    #[Route(methods: 'GET', path: '/plans/{id}')]
+    #[Route(methods: 'GET', path: '/plans-id/{id}')]
     public function get(ServerRequestInterface $r): JsonResponse {
-        $this->auth($r);
-        $id = (int)$r->getAttribute('id');
-
         /** @var \App\Repository\PlanRepository $repo */
         $repo = $this->repos->getRepository(Plan::class);
+        $id = (int)$r->getAttribute('id');
         $p = $repo->find($id);
         if (!$p) throw new RuntimeException('Plan not found', 404);
-
         return new JsonResponse($this->shape($p));
     }
 
@@ -204,7 +242,11 @@ final class PlanController
 
     /**
      * Body (all optional):
-     *   name?, monthlyPrice?, includedMessages?, averagePricePer1K?, features?(array|null)
+     *   name?, monthlyPrice?, includedMessages?, averagePricePer1K?, features?(array|null), stripe_price_id?(string|null)
+     *
+     * If monthlyPrice changes and the plan is paid, a NEW Stripe Price is created
+     * (Stripe prices are immutable). Old price is deactivated. Product name is kept
+     * in sync with plan name if a product exists.
      */
     #[Route(methods: 'PATCH', path: '/plans/{id}')]
     public function update(ServerRequestInterface $r): JsonResponse {
@@ -217,6 +259,10 @@ final class PlanController
         if (!$p) throw new RuntimeException('Plan not found', 404);
 
         $body = json_decode((string)$r->getBody(), true) ?: [];
+
+        $oldName        = $p->getName();
+        $oldMonthly     = $p->getMonthlyPrice();
+        $oldStripePrice = $p->getStripe_price_id();
 
         if (array_key_exists('name', $body)) {
             $name = trim((string)$body['name']);
@@ -246,7 +292,81 @@ final class PlanController
             $p->setFeatures($features);
         }
 
+        if (array_key_exists('stripe_price_id', $body)) {
+            $stripePriceId = $body['stripe_price_id'];
+            if ($stripePriceId !== null && !is_string($stripePriceId)) {
+                throw new RuntimeException('stripe_price_id must be a string or null', 400);
+            }
+            $p->setStripe_price_id($stripePriceId);
+        }
+
         $repo->save($p);
+
+        // --- Sync with Stripe if needed ---
+        try {
+            $stripe = $this->stripe();
+            $currency = $this->currency();
+
+            // If the name changed and we have a Stripe product behind this price, update the product's name
+            if ($p->getName() !== $oldName && $p->getStripe_price_id()) {
+                $currentPrice = $stripe->prices->retrieve($p->getStripe_price_id());
+                if (is_string($currentPrice->product) && $currentPrice->product !== '') {
+                    $stripe->products->update($currentPrice->product, ['name' => (string)$p->getName()]);
+                }
+            }
+
+            // Handle monthly price changes
+            $newMonthly = $p->getMonthlyPrice();
+
+            // Case: switch to free/undefined -> deactivate existing price and clear ref
+            if (($newMonthly === null || $newMonthly <= 0) && $oldStripePrice) {
+                $stripe->prices->update($oldStripePrice, ['active' => false]);
+                $p->setStripe_price_id(null);
+                $repo->save($p);
+            }
+
+            // Case: (re)paid plan and amount changed -> ensure product exists, create a new price
+            if ($newMonthly !== null && $newMonthly > 0 && $newMonthly !== $oldMonthly) {
+                $productId = null;
+
+                if ($oldStripePrice) {
+                    $cur = $stripe->prices->retrieve($oldStripePrice);
+                    $productId = is_string($cur->product) ? $cur->product : null;
+                }
+
+                if (!$productId) {
+                    // Create a product if not present
+                    $product = $stripe->products->create([
+                        'name'     => (string)$p->getName(),
+                        'active'   => true,
+                        'metadata' => ['app_plan_id' => (string)$p->getId()],
+                    ]);
+                    $productId = $product->id;
+                }
+
+                $newAmount = (int)round($newMonthly * 100);
+                if ($newAmount <= 0) throw new RuntimeException('Price must be > 0 for paid plans', 400);
+
+                $newPrice = $stripe->prices->create([
+                    'product'     => $productId,
+                    'unit_amount' => $newAmount,
+                    'currency'    => $currency,
+                    'recurring'   => ['interval' => 'month'],
+                    'active'      => true,
+                    'metadata'    => ['app_plan_id' => (string)$p->getId()],
+                ]);
+
+                // Deactivate the old price (if any), point plan to the new one
+                if ($oldStripePrice) {
+                    $stripe->prices->update($oldStripePrice, ['active' => false]);
+                }
+                $p->setStripe_price_id($newPrice->id);
+                $repo->save($p);
+            }
+        } catch (ApiErrorException $e) {
+            // We keep the local change but surface the Stripe problem
+            throw new RuntimeException('Stripe error while syncing plan: ' . $e->getMessage(), 500);
+        }
 
         return new JsonResponse($this->shape($p));
     }
@@ -263,6 +383,22 @@ final class PlanController
         $p = $repo->find($id);
         if (!$p) throw new RuntimeException('Plan not found', 404);
 
+        // Try to archive on Stripe (best-effort)
+        if ($p->getStripe_price_id()) {
+            try {
+                $stripe = $this->stripe();
+                $price  = $stripe->prices->retrieve($p->getStripe_price_id());
+                // Deactivate price
+                $stripe->prices->update($price->id, ['active' => false]);
+                // Archive product if we can resolve it
+                if (is_string($price->product) && $price->product !== '') {
+                    $stripe->products->update($price->product, ['active' => false]);
+                }
+            } catch (ApiErrorException $e) {
+                // swallow; deletion should continue locally
+            }
+        }
+
         if (method_exists($repo, 'delete')) $repo->delete($p);
         elseif (method_exists($repo, 'remove')) $repo->remove($p);
         else $this->qb->delete('plan')->where('id', '=', $id)->execute();
@@ -270,17 +406,11 @@ final class PlanController
         return new JsonResponse(null, 204);
     }
 
-    #[Route(methods: 'GET', path: '/plans/brief')]
+    #[Route(methods: 'GET', path: '/plans-brief')]
     public function listBrief(ServerRequestInterface $r): JsonResponse {
-        $this->auth($r);
-
         /** @var \App\Repository\PlanRepository $repo */
         $repo = $this->repos->getRepository(Plan::class);
-
-        // Load all plans (adjust to use DB-level filtering if your repo supports it)
         $plans = $repo->findBy([]);
-
-        // Return only id + name
         $items = array_map(static fn(Plan $p) => [
             'id'   => $p->getId(),
             'name' => $p->getName(),
@@ -288,5 +418,4 @@ final class PlanController
 
         return new JsonResponse($items);
     }
-
 }

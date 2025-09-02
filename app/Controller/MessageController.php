@@ -9,8 +9,11 @@ use App\Entity\Company;
 use App\Entity\Domain;
 use App\Entity\Message;
 use App\Entity\User;
+use App\Entity\RateLimitCounter;
+use App\Entity\UsageAggregate;
+use App\Entity\MessageRecipient;
+use App\Entity\MessageEvent;
 use App\Service\OutboundMailService;
-use App\Service\SendOutcome;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
@@ -55,22 +58,33 @@ final class MessageController
         $company = $companyRepo->findOneBy(['hash' => $hash]);
         if (!$company) throw new RuntimeException('Company not found', 404);
 
-        $domainId = (int) $request->getAttribute('domain', 0);
+        $domainId  = (int) $request->getAttribute('domain', 0);
         $domainRepo = $this->repos->getRepository(Domain::class);
         /** @var Domain|null $domain */
         $domain = $domainRepo->findOneBy(['id' => $domainId]);
 
-        // Must belong to company
         $belongs = array_filter($company->getUsers() ?? [], fn(User $u) => $u->getId() === $userId);
         if (empty($belongs)) throw new RuntimeException('Forbidden', 403);
 
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        // Count per *message*. For per-recipient counting, parse the body and compute units.
+        $this->enforceAndConsumeMessageQuota($company, $now, 1);
+
         $body = json_decode((string)$request->getBody(), true) ?: [];
 
-        /** @var SendOutcome $outcome */
-        $outcome = $this->mailService->handle($body, $company, $domain);
+        $result = $this->mailService->createAndEnqueue($body, $company, $domain);
+        $status = (string)($result['status'] ?? '');
 
-        return new JsonResponse($outcome->data, $outcome->httpStatus);
+        $http   = match ($status) {
+            'queued'       => 202,
+            'preview'      => 200,
+            'queue_failed' => 503,
+            default        => 200,
+        };
+
+        return new JsonResponse($result, $http);
     }
+
 
     /* =========================================================================
      * API key entrypoint — send server-to-server (Mailgun-like)
@@ -95,12 +109,22 @@ final class MessageController
         if (!$domain) throw new RuntimeException('API key not bound to a domain', 403);
 
 
-        $body = json_decode((string)$request->getBody(), true) ?: [];
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
 
-        /** @var SendOutcome $outcome */
-        $outcome = $this->mailService->handle($body, $company, $domain);
+        $this->enforceAndConsumeMessageQuota($company, $now, 1);
 
-        return new JsonResponse($outcome->data, $outcome->httpStatus);
+        $body   = json_decode((string)$request->getBody(), true) ?: [];
+        $result = $this->mailService->createAndEnqueue($body, $company, $domain);
+
+        $status = (string)($result['status'] ?? '');
+        $http   = match ($status) {
+            'queued'       => 202,
+            'preview'      => 200,
+            'queue_failed' => 503,
+            default        => 200,
+        };
+
+        return new JsonResponse($result, $http);
     }
 
     /* =========================================================================
@@ -1141,6 +1165,92 @@ final class MessageController
                 'queuedAt'  => $m->getQueued_at()?->format(\DateTimeInterface::ATOM),
                 'sentAt'    => $m->getSent_at()?->format(\DateTimeInterface::ATOM),
             ],
+        ];
+    }
+    private function planPolicy(Company $c): array
+    {
+        $plan   = $c->getPlan();
+        $name   = strtolower(trim((string)($plan?->getName() ?? 'starter')));
+        $window = ($name === 'starter') ? 'day' : 'month';
+        $limit  = ($name === 'starter')
+            ? 150
+            : (int)($plan?->getIncludedMessages() ?? 0); // 0/null => unlimited
+
+        return ['window' => $window, 'limit' => ($limit > 0 ? $limit : null)];
+    }
+
+    private function windowStart(\DateTimeImmutable $now, string $window): \DateTimeImmutable
+    {
+        return $window === 'day'
+            ? $now->setTime(0, 0, 0)
+            : $now->setDate((int)$now->format('Y'), (int)$now->format('m'), 1)->setTime(0, 0, 0);
+    }
+
+    private function windowResetAt(\DateTimeImmutable $start, string $window): \DateTimeImmutable
+    {
+        return $window === 'day' ? $start->modify('+1 day') : $start->modify('+1 month');
+    }
+
+    /**
+     * Consume N message units from the current window or throw 429 if over limit.
+     * Returns {window,limit,remaining,resetAt}.
+     */
+    private function enforceAndConsumeMessageQuota(Company $company, \DateTimeImmutable $now, int $units = 1): array
+    {
+        $policy = $this->planPolicy($company);
+        $limit  = $policy['limit'];
+        $window = $policy['window'];
+
+        if ($limit === null) {
+            return ['window'=>$window,'limit'=>null,'remaining'=>null,'resetAt'=>null];
+        }
+        $start   = $this->windowStart($now, $window);
+        $key     = sprintf('messages:%s:%s', $window, $window === 'day' ? $now->format('Y-m-d') : $now->format('Y-m'));
+        $resetAt = $this->windowResetAt($start, $window);
+
+        /** @var \App\Repository\RateLimitCounterRepository $repo */
+        $repo    = $this->repos->getRepository(RateLimitCounter::class);
+
+        // use the FK and not the relation object
+        $counter = $repo->findOneBy([
+            'company_id' => $company->getId(),
+            'key'        => $key,
+        ]);
+        error_log('here4');
+        if (!$counter) {
+            $counter = new RateLimitCounter()
+                ->setCompany($company)
+                ->setKey($key)
+                ->setWindow_start($start)
+                ->setCount(0);
+        } else {
+            // rotate window if stale
+            if (!$counter->getWindow_start() || $counter->getWindow_start() < $start) {
+                $counter->setWindow_start($start)->setCount(0);
+            }
+        }
+
+        $current = (int)($counter->getCount() ?? 0);
+        if ($current + $units > $limit) {
+            $remaining = max(0, $limit - $current);
+            throw new RuntimeException(json_encode([
+                'error'     => 'rate_limited',
+                'reason'    => 'Message quota exceeded for your plan',
+                'window'    => $window,
+                'limit'     => $limit,
+                'remaining' => $remaining,
+                'resetAt'   => $resetAt->format(\DateTimeInterface::ATOM),
+            ], JSON_UNESCAPED_SLASHES), 429);
+        }
+
+        $counter->setCount($current + $units)->setUpdated_at($now);
+        $repo->save($counter);
+
+        return [
+            'window'    => $window,
+            'limit'     => $limit,
+            'remaining' => $limit - ($current + $units),
+            'resetAt'   => $resetAt->format(\DateTimeInterface::ATOM),
         ];
     }
 
