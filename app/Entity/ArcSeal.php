@@ -21,7 +21,7 @@ class ArcSeal
     #[Field(type: 'tinyInt', nullable: true)]
     public ?int $instance = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $cv = null;
 
     #[Field(type: 'string', nullable: true)]

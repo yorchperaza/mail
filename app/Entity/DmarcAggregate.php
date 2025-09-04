@@ -30,16 +30,16 @@ class DmarcAggregate
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $date_end = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $adkim = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $aspf = null;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $p = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $sp = null;
 
     #[Field(type: 'tinyInt', nullable: true)]

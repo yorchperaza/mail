@@ -39,7 +39,7 @@ class Invoice
     #[Field(type: 'decimal', nullable: true, default: 0.00)]
     public ?float $total = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'datetime', nullable: true)]

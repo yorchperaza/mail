@@ -406,25 +406,7 @@ final class UsageController
         }
 
         ksort($out);
-        error_log('[Usage][getDailySeries] Final result: days='.count($out).' with data='.count(array_filter($out)));
         return $out;
-    }
-
-    /**
-     * Helper method to hydrate UsageAggregate entities from query builder results
-     */
-    private function hydrateUsageAggregates($results): array
-    {
-        $aggregates = [];
-        foreach ($results as $row) {
-            // Create a simple object that mimics the entity structure
-            $aggregate = new \stdClass();
-            $aggregate->company_id = $row->company_id ?? null;
-            $aggregate->date = $row->date ?? null;
-            $aggregate->sent = $row->sent ?? 0;
-            $aggregates[] = $aggregate;
-        }
-        return $aggregates;
     }
 
     /* --------- RateLimitCounter (monthly authoritative) --------- */

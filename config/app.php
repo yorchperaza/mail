@@ -8,6 +8,7 @@ use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use App\Service\CampaignDispatchService;
+use App\Service\WebhookDispatcher;                 // ← NEW
 use MonkeysLegion\Repository\RepositoryFactory;
 use Predis\Client as PredisClient;
 
@@ -73,5 +74,12 @@ return [
     CampaignDispatchService::class => fn($c) => new CampaignDispatchService(
         $c->get(RepositoryFactory::class),
         $c->get(MailQueue::class),
+    ),
+
+    /* ---------------------- Webhook Dispatcher -------------------------- */
+    WebhookDispatcher::class => fn($c) => new WebhookDispatcher(
+        $c->get(RepositoryFactory::class),
+        $c->get(PredisClient::class),                        // reuse your Predis connection
+        $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'  // list/stream key to enqueue deliveries
     ),
 ];

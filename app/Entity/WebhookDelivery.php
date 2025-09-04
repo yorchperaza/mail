@@ -21,7 +21,7 @@ class WebhookDelivery
     #[Field(type: 'tinyInt', nullable: true)]
     public ?int $attempt = null;
     
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'smallInt', nullable: true)]

@@ -18,7 +18,7 @@ class Suppression
     #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
     public int $id;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $type = null;
     
     #[Field(type: 'string', length: 320, nullable: true)]

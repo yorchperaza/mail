@@ -1,0 +1,195 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+use App\Entity\Webhook;
+use App\Entity\WebhookDelivery;
+use App\Service\WebhookQueue;
+use App\Service\WebhookSigner;
+use MonkeysLegion\Repository\RepositoryFactory;
+use MonkeysLegion\Query\QueryBuilder;
+
+require __DIR__ . '/../vendor/autoload.php';
+
+// ---- Container-ish bootstrap (adapt to your bootstrap if you have DI)
+$redisUrl = $_ENV['REDIS_URL'] ?? 'redis://127.0.0.1:6379/0';
+$queue    = new WebhookQueue($redisUrl);
+
+$repoFactory = $GLOBALS['container']->get(RepositoryFactory::class);
+$qb          = $GLOBALS['container']->get(QueryBuilder::class);
+
+/** @var \App\Repository\WebhookRepository $webhookRepo */
+$webhookRepo = $repoFactory->getRepository(Webhook::class);
+/** @var \App\Repository\WebhookDeliveryRepository $deliveryRepo */
+$deliveryRepo = $repoFactory->getRepository(WebhookDelivery::class);
+
+function parseBackoff(?string $s): array {
+    // examples:
+    // "fixed:60" => [60,60,60,...]
+    // "exponential:2,60,3600" => factor=2, min=60s, max=3600s
+    if (!$s) return ['mode'=>'exponential','factor'=>2.0,'min'=>60,'max'=>3600];
+    if (str_starts_with($s, 'fixed:')) {
+        $sec = max(1, (int)substr($s, 6));
+        return ['mode'=>'fixed','sec'=>$sec];
+    }
+    if (str_starts_with($s, 'exponential:')) {
+        $rest = substr($s, 12);
+        [$factor,$min,$max] = array_map('floatval', array_pad(explode(',', $rest), 3, null));
+        return ['mode'=>'exponential','factor'=>$factor ?: 2.0,'min'=>(int)($min ?: 60),'max'=>(int)($max ?: 3600)];
+    }
+    return ['mode'=>'exponential','factor'=>2.0,'min'=>60,'max'=>3600];
+}
+
+function nextRetryAt(Webhook $wh, int $attempt): \DateTimeImmutable {
+    $cfg = parseBackoff($wh->getRetry_backoff());
+    $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+    if ($cfg['mode'] === 'fixed') {
+        $sec = (int)$cfg['sec'];
+        return $now->modify("+{$sec} seconds");
+    }
+    $factor = (float)$cfg['factor'];
+    $min    = (int)$cfg['min'];
+    $max    = (int)$cfg['max'];
+    $delay  = (int)min($max, $min * ($attempt > 0 ? pow($factor, $attempt - 1) : 1));
+    return $now->modify("+{$delay} seconds");
+}
+
+/** Perform HTTP post using curl to keep deps minimal. Returns [status, ms, body] */
+function httpPost(string $url, array $headers, string $body): array {
+    $ch = curl_init($url);
+    $hdrs = [];
+    foreach ($headers as $k=>$v) { $hdrs[] = $k.': '.$v; }
+    $hdrs[] = 'Content-Type: application/json';
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST            => true,
+        CURLOPT_HTTPHEADER      => $hdrs,
+        CURLOPT_POSTFIELDS      => $body,
+        CURLOPT_RETURNTRANSFER  => true,
+        CURLOPT_FOLLOWLOCATION  => false,
+        CURLOPT_CONNECTTIMEOUT  => 5,
+        CURLOPT_TIMEOUT         => 10,
+    ]);
+    $start = microtime(true);
+    $resp  = curl_exec($ch);
+    $code  = curl_getinfo($ch, CURLINFO_RESPONSE_CODE) ?: 0;
+    $err   = curl_error($ch);
+    curl_close($ch);
+    $ms = (int)round((microtime(true) - $start) * 1000);
+
+    if ($resp === false && $err) $resp = $err;
+    return [$code, $ms, (string)$resp];
+}
+
+echo "[worker] webhook worker started\n";
+
+while (true) {
+    $job = $queue->pop(5);
+    if (!$job) continue;
+
+    // job shape:
+    // {
+    //   "webhook_id": int,
+    //   "event": {"id": int, "type": string, "company_id": int, "payload": array, "created_at": iso},
+    //   "attempt": int,
+    //   "delivery_id": int|null
+    // }
+    try {
+        $webhookId = (int)($job['webhook_id'] ?? 0);
+        $attempt   = max(1, (int)($job['attempt'] ?? 1));
+        $event     = $job['event'] ?? null;
+
+        if ($webhookId <= 0 || !is_array($event)) {
+            throw new \RuntimeException('Invalid webhook job');
+        }
+
+        /** @var Webhook|null $wh */
+        $wh = $webhookRepo->find($webhookId);
+        if (!$wh || $wh->getStatus() !== 'active' || !filter_var($wh->getUrl() ?? '', FILTER_VALIDATE_URL)) {
+            // nothing to do (deleted/disabled)
+            continue;
+        }
+
+        // body
+        $body = json_encode([
+            'id'        => $event['id'],
+            'type'      => $event['type'],
+            'createdAt' => $event['created_at'] ?? (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DateTimeInterface::ATOM),
+            'data'      => $event['payload'] ?? new \stdClass(),
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        // signer
+        $sigHeaders = WebhookSigner::signHeaders($wh->getId(), $wh->getSecret() ?? '', $body);
+
+        // create or load a delivery row
+        $delivery = null;
+        if (!empty($job['delivery_id'])) {
+            /** @var WebhookDelivery|null $delivery */
+            $delivery = $deliveryRepo->find((int)$job['delivery_id']);
+        }
+        if (!$delivery) {
+            $delivery = new WebhookDelivery();
+            $delivery
+                ->setWebhook($wh)
+                ->setAttempt($attempt)
+                ->setStatus('pending')
+                ->setPayload_snapshot([
+                    'url'     => $wh->getUrl(),
+                    'headers' => $sigHeaders,
+                    'body'    => json_decode($body, true),
+                ])
+                ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $deliveryRepo->save($delivery);
+            $job['delivery_id'] = $delivery->getId();
+        }
+
+        // POST
+        [$code, $ms, $_] = httpPost($wh->getUrl() ?? '', $sigHeaders, $body);
+        $delivery
+            ->setResponse_code($code)
+            ->setResponse_time_ms($ms);
+
+        $ok = $code >= 200 && $code < 300;
+        if ($ok) {
+            $delivery->setStatus('delivered');
+            $deliveryRepo->save($delivery);
+            continue;
+        }
+
+        // retry?
+        $maxRetries = (int)($wh->getMax_retries() ?? 5);
+        if ($attempt >= max(0, $maxRetries)) {
+            $delivery->setStatus('failed');
+            $deliveryRepo->save($delivery);
+            continue;
+        }
+
+        // schedule retry
+        $next = nextRetryAt($wh, $attempt + 1);
+        $delivery
+            ->setStatus('retrying')
+            ->setAttempt($attempt + 1)
+            ->setNext_retry_at($next);
+        $deliveryRepo->save($delivery);
+
+        // re-enqueue with a small delay by pushing into a delayed list (simple approach)
+        // You can run a separate cron that moves due-delayed into main queue; here we push back immediately
+        // and let the worker skip until due. Simpler: just push; the worker doesn’t time-check. For proper
+        // delays, add a "delayed set" mover. To keep it simple here, we approximate with sleep().
+        $queue->push([
+            'webhook_id'  => $wh->getId(),
+            'event'       => $event,
+            'attempt'     => $attempt + 1,
+            'delivery_id' => $delivery->getId(),
+        ]);
+
+        // naive respect next_retry_at (sleep locally up to 5s)
+        $sleep = max(0, min(5, $next->getTimestamp() - time()));
+        if ($sleep > 0) sleep($sleep);
+
+    } catch (\Throwable $e) {
+        // swallow and continue to next job
+        error_log('[webhook-worker] error: '.$e->getMessage());
+    }
+}

@@ -18,7 +18,7 @@ class MtaStsPolicy
     #[Field(type: 'INT', autoIncrement: true, primaryKey: true)]
     public int $id;
 
-    #[Field(type: 'enum', nullable: true)]
+    #[Field(type: 'string', nullable: true)]
     public ?string $mode = null;
     
     #[Field(type: 'json', nullable: true)]
