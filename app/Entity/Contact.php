@@ -46,10 +46,15 @@ class Contact
 
     #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
+    
+     /** @var SegmentMembers[] */
+    #[OneToMany(targetEntity: SegmentMembers::class, mappedBy: 'contact')]
+    public array $segmentMembers = [];
 
     public function __construct()
     {
         $this->listContacts = [];
+        $this->segmentMembers = [];
     }
 
     public function getId(): int
@@ -188,5 +193,22 @@ class Contact
     {
         $this->status = $status;
         return $this;
+    }
+
+    public function addSegmentMembers(SegmentMembers $item): self
+    {
+        $this->segmentMembers[] = $item;
+        return $this;
+    }
+
+    public function removeSegmentMembers(SegmentMembers $item): self
+    {
+        $this->segmentMembers = array_filter($this->segmentMembers, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getSegmentMembers(): array
+    {
+        return $this->segmentMembers;
     }
 }

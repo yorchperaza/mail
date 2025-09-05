@@ -268,7 +268,7 @@ final class ApiSendController
     /* =========================================================================
      * 3) Send to a SEGMENT (recipients resolved server-side)
      * ========================================================================= */
-    #[Route(methods: 'POST', path: '/messages/send/segment/{segmentId}')]
+    #[Route(methods: 'POST', path: '/messages/send/segment')]
     public function sendSegmentWithApiKey(ServerRequestInterface $request): JsonResponse
     {
         try {
@@ -293,23 +293,23 @@ final class ApiSendController
 
             $domain = $apiKey->getDomain();
             if (!$domain) return $this->jsonError(403, 'forbidden', 'API key not bound to a domain');
+            $body = $this->decodeJsonBody($request);
 
             // --- Params + Body
-            $segmentId = (int)$request->getAttribute('segmentId', 0);
-            if ($segmentId <= 0) {
-                return $this->jsonError(400, 'invalid_request', 'Invalid segment id', ['field' => 'segmentId']);
+            $segmentHash = (string)($body['segmentHash'] ?? '');
+            if (!preg_match('/^[a-f0-9]{64}$/', $segmentHash)) {
+                return $this->jsonError(400, 'invalid_request', 'Invalid segment hash', ['field' => 'segmentHash']);
             }
 
             $now  = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-            $body = $this->decodeJsonBody($request);
 
             // --- Resolve recipients
-            [$emails, $total] = $this->resolveRecipientsForSegment((int)$company->getId(), $segmentId);
+            [$emails, $total] = $this->resolveRecipientsForSegment((int)$company->getId(), $segmentHash);
             if ($total === 0) {
                 return new JsonResponse([
                     'status'     => 'queued',
                     'recipients' => 0,
-                    'target'     => ['type' => 'segment', 'id' => $segmentId],
+                    'target'     => ['type' => 'segment', 'hash' => $segmentHash],
                     'message'    => 'No recipients in segment',
                 ], 202);
             }
@@ -393,16 +393,22 @@ final class ApiSendController
     }
 
     /**
-     * Resolve recipients for a segment (dedup + only valid, subscribed, not bounced).
+     * Resolve recipients for a segment by HASH (dedup + only valid/subscribed/not-bounced).
+     * Tables used (your naming):
+     *   - segment (id, hash, company_id, ...)
+     *   - contact_segments (contact_id, segment_id)
+     *   - contacts (id, company_id, email, unsubscribed_at, bounced_at, ...)
      */
-    private function resolveRecipientsForSegment(int $companyId, int $segmentId): array
+    private function resolveRecipientsForSegmentHash(int $companyId, string $segmentHash): array
     {
         $qb = $this->qb->duplicate();
 
         $rows = $qb->select(['LOWER(c.email) AS email'])
             ->from('contact_segments', 'cs')
+            ->innerJoin('segment',  's', 's.id', '=', 'cs.segment_id')
             ->innerJoin('contacts', 'c', 'c.id', '=', 'cs.contact_id')
-            ->where('cs.segment_id', '=', $segmentId)
+            ->where('s.hash', '=', $segmentHash)
+            ->andWhere('s.company_id', '=', $companyId)
             ->andWhere('c.company_id', '=', $companyId)
             ->andWhere('c.email', 'IS NOT', null)
             ->andWhere('c.unsubscribed_at', 'IS', null)
@@ -412,7 +418,9 @@ final class ApiSendController
         $emails = [];
         foreach ($rows as $r) {
             $e = trim((string)$r['email']);
-            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL)) $emails[$e] = true;
+            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL)) {
+                $emails[$e] = true;
+            }
         }
         return [array_keys($emails), count($emails)];
     }

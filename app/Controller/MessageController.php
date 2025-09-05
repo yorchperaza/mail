@@ -255,15 +255,11 @@ final class MessageController
     /* =========================================================================
      * SMTP (PHPMailer) sender
      * ========================================================================= */
+
     /**
-     * @param array{
-     *   fromEmail:string, fromName:?string, replyTo:?string,
-     *   to:array, cc:array, bcc:array,
-     *   subject:?string, text:?string, html:?string,
-     *   headers:array<string,string>,
-     *   attachments:array<int,array{filename:string,contentType:string,content:string}>
-     * } $data
-     * @return array{ok:bool,message_id?:string,error?:string}
+     * @param Message $msg
+     * @param array $data
+     * @return array{ok: bool, message_id?: string, error?: string}
      */
     private function smtpSend(Message $msg, array $data): array
     {
@@ -860,7 +856,6 @@ final class MessageController
             'state'      => $state !== null ? (string)$state : null,
             'messageId'  => $msgId !== null ? (string)$msgId : null,
             'domainName' => $domainNm !== null ? (string)$domainNm : null,
-            // if recipients already attached upstream, keep them
             'recipients' => $row['recipients'] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]],
         ];
     }

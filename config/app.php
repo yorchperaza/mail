@@ -8,8 +8,11 @@ use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use App\Service\CampaignDispatchService;
-use App\Service\WebhookDispatcher;                 // ← NEW
+use App\Service\WebhookDispatcher;
+use App\Service\SegmentBuildService;
+use App\Service\SegmentBuildOrchestrator;
 use MonkeysLegion\Repository\RepositoryFactory;
+use MonkeysLegion\Query\QueryBuilder;
 use Predis\Client as PredisClient;
 
 return [
@@ -81,5 +84,19 @@ return [
         $c->get(RepositoryFactory::class),
         $c->get(PredisClient::class),                        // reuse your Predis connection
         $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'  // list/stream key to enqueue deliveries
+    ),
+
+    /* --------------------- Segment Build Services ----------------------- */
+    SegmentBuildService::class => fn($c) => new SegmentBuildService(
+        $c->get(RepositoryFactory::class),
+        $c->get(QueryBuilder::class),
+    ),
+
+    SegmentBuildOrchestrator::class => fn($c) => new SegmentBuildOrchestrator(
+        $c->get(RepositoryFactory::class),
+        $c->get(QueryBuilder::class),
+        $c->get(PredisClient::class),
+        stream: $_ENV['SEGMENT_STREAM'] ?? 'seg:builds',
+        group:  $_ENV['SEGMENT_GROUP']  ?? 'seg_builders',
     ),
 ];

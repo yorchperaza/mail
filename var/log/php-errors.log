@@ -2289,3 +2289,1097 @@ Stack trace:
 [05-Sep-2025 05:14:02 UTC] 02 recipents
 [05-Sep-2025 05:14:02 UTC] [2025-09-05T05:14:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (26.83ms)
 [05-Sep-2025 05:14:02 UTC] [2025-09-05T05:14:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (23.43ms)
+[05-Sep-2025 05:17:21 UTC] 01 recipents
+[05-Sep-2025 05:17:21 UTC] 02 recipents
+[05-Sep-2025 05:17:21 UTC] [2025-09-05T05:17:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=2&perPage=25&sort=created_at&order=desc – 200 (46.32ms)
+[05-Sep-2025 05:17:40 UTC] Message lookup (company=2) raw='19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5' normalized='<19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5>'
+[05-Sep-2025 05:17:40 UTC] 01 recipents
+[05-Sep-2025 05:17:40 UTC] 02 recipents
+[05-Sep-2025 05:17:40 UTC] [2025-09-05T05:17:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages/message-id/19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5 – 200 (55.92ms)
+[05-Sep-2025 05:17:40 UTC] Message lookup (company=2) raw='19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5' normalized='<19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5>'
+[05-Sep-2025 05:17:40 UTC] 01 recipents
+[05-Sep-2025 05:17:40 UTC] 02 recipents
+[05-Sep-2025 05:17:40 UTC] [2025-09-05T05:17:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages/message-id/19d628bda7e9c2d15f46d24b6cdf7de40d401f007844a548f5ea33d19d928a6e84b82d67020fe8b6f36882c6f1c33b0841f440fd48f546eaced435b94d6fafd5 – 200 (31.22ms)
+[05-Sep-2025 05:20:35 UTC] [2025-09-05T05:20:35+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (29.02ms)
+[05-Sep-2025 05:20:35 UTC] [2025-09-05T05:20:35+00:00] GET http://127.0.0.1:8000/plans-id/7 – 200 (7.61ms)
+[05-Sep-2025 05:20:36 UTC] [2025-09-05T05:20:36+00:00] GET http://127.0.0.1:8000/plans-id/8 – 200 (185.29ms)
+[05-Sep-2025 05:20:36 UTC] [2025-09-05T05:20:36+00:00] GET http://127.0.0.1:8000/plans-id/9 – 200 (7.82ms)
+[05-Sep-2025 05:20:36 UTC] [2025-09-05T05:20:36+00:00] GET http://127.0.0.1:8000/plans-id/10 – 200 (64.12ms)
+[05-Sep-2025 05:20:36 UTC] ErrorException: Undefined array key "STRIPE_SECRET_KEY" in /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php:25
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(25): MonkeysLegion\Http\Error\ErrorHandler->handleError(2, 'Undefined array...', '/Volumes/Yorch/...', 25)
+#1 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(42): App\Controller\BillingController->stripe()
+#2 [internal function]: App\Controller\BillingController->createSetupIntent(Object(MonkeysLegion\Http\Message\ServerRequest))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-router/src/Router.php(95): call_user_func_array(Array, Array)
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/RouteRequestHandler.php(22): MonkeysLegion\Router\Router->dispatch(Object(MonkeysLegion\Http\Message\ServerRequest))
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/AuthorizationMiddleware.php(86): MonkeysLegion\Http\RouteRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\AuthorizationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\RouteRequestHandler))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtUserMiddleware.php(76): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtUserMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtAuthMiddleware.php(34): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#10 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtAuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/OpenApi/OpenApiMiddleware.php(62): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#12 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\OpenApi\OpenApiMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#13 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-validation/src/Middleware/ValidationMiddleware.php(41): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#14 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Validation\Middleware\ValidationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#15 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ContentNegotiationMiddleware.php(33): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#16 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ContentNegotiationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#17 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/LoggingMiddleware.php(17): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#18 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\LoggingMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#19 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/AuthMiddleware.php(31): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#20 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\AuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#21 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/RateLimitMiddleware.php(57): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#22 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\RateLimitMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#23 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ErrorHandlerMiddleware.php(18): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#24 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ErrorHandlerMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#25 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Middleware/CorsMiddleware.php(100): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#26 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Core\Middleware\CorsMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#27 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(67): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#28 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(168): MonkeysLegion\Http\CoreRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#29 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(120): MonkeysLegion\Framework\HttpBootstrap::defaultPipeline(Object(MonkeysLegion\DI\Container), Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\Factory\HttpFactory))
+#30 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#31 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#32 {main}
+[05-Sep-2025 05:20:45 UTC] [2025-09-05T05:20:45+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (25.15ms)
+[05-Sep-2025 05:20:45 UTC] [2025-09-05T05:20:45+00:00] GET http://127.0.0.1:8000/plans-id/7 – 200 (39.42ms)
+[05-Sep-2025 05:20:45 UTC] [2025-09-05T05:20:45+00:00] GET http://127.0.0.1:8000/plans-id/8 – 200 (15.08ms)
+[05-Sep-2025 05:20:45 UTC] [2025-09-05T05:20:45+00:00] GET http://127.0.0.1:8000/plans-id/9 – 200 (5.12ms)
+[05-Sep-2025 05:20:45 UTC] [2025-09-05T05:20:45+00:00] GET http://127.0.0.1:8000/plans-id/10 – 200 (4.53ms)
+[05-Sep-2025 05:20:45 UTC] ErrorException: Undefined array key "STRIPE_SECRET_KEY" in /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php:25
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(25): MonkeysLegion\Http\Error\ErrorHandler->handleError(2, 'Undefined array...', '/Volumes/Yorch/...', 25)
+#1 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(42): App\Controller\BillingController->stripe()
+#2 [internal function]: App\Controller\BillingController->createSetupIntent(Object(MonkeysLegion\Http\Message\ServerRequest))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-router/src/Router.php(95): call_user_func_array(Array, Array)
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/RouteRequestHandler.php(22): MonkeysLegion\Router\Router->dispatch(Object(MonkeysLegion\Http\Message\ServerRequest))
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/AuthorizationMiddleware.php(86): MonkeysLegion\Http\RouteRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\AuthorizationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\RouteRequestHandler))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtUserMiddleware.php(76): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtUserMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtAuthMiddleware.php(34): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#10 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtAuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/OpenApi/OpenApiMiddleware.php(62): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#12 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\OpenApi\OpenApiMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#13 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-validation/src/Middleware/ValidationMiddleware.php(41): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#14 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Validation\Middleware\ValidationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#15 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ContentNegotiationMiddleware.php(33): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#16 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ContentNegotiationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#17 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/LoggingMiddleware.php(17): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#18 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\LoggingMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#19 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/AuthMiddleware.php(31): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#20 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\AuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#21 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/RateLimitMiddleware.php(57): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#22 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\RateLimitMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#23 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ErrorHandlerMiddleware.php(18): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#24 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ErrorHandlerMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#25 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Middleware/CorsMiddleware.php(100): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#26 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Core\Middleware\CorsMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#27 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(67): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#28 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(168): MonkeysLegion\Http\CoreRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#29 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(120): MonkeysLegion\Framework\HttpBootstrap::defaultPipeline(Object(MonkeysLegion\DI\Container), Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\Factory\HttpFactory))
+#30 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#31 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#32 {main}
+[05-Sep-2025 05:20:52 UTC] ErrorException: Undefined array key "STRIPE_SECRET_KEY" in /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php:25
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(25): MonkeysLegion\Http\Error\ErrorHandler->handleError(2, 'Undefined array...', '/Volumes/Yorch/...', 25)
+#1 /Volumes/Yorch/Dev/mail/app/Controller/BillingController.php(42): App\Controller\BillingController->stripe()
+#2 [internal function]: App\Controller\BillingController->createSetupIntent(Object(MonkeysLegion\Http\Message\ServerRequest))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-router/src/Router.php(95): call_user_func_array(Array, Array)
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/RouteRequestHandler.php(22): MonkeysLegion\Router\Router->dispatch(Object(MonkeysLegion\Http\Message\ServerRequest))
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/AuthorizationMiddleware.php(86): MonkeysLegion\Http\RouteRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\AuthorizationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\RouteRequestHandler))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtUserMiddleware.php(76): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtUserMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-auth/src/Middleware/JwtAuthMiddleware.php(34): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#10 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Auth\Middleware\JwtAuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/OpenApi/OpenApiMiddleware.php(62): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#12 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\OpenApi\OpenApiMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#13 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-validation/src/Middleware/ValidationMiddleware.php(41): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#14 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Validation\Middleware\ValidationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#15 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ContentNegotiationMiddleware.php(33): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#16 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ContentNegotiationMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#17 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/LoggingMiddleware.php(17): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#18 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\LoggingMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#19 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/AuthMiddleware.php(31): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#20 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\AuthMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#21 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/RateLimitMiddleware.php(57): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#22 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\RateLimitMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#23 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/Middleware/ErrorHandlerMiddleware.php(18): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#24 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Http\Middleware\ErrorHandlerMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#25 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Middleware/CorsMiddleware.php(100): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#26 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(59): MonkeysLegion\Core\Middleware\CorsMiddleware->process(Object(MonkeysLegion\Http\Message\ServerRequest), Object(Psr\Http\Server\RequestHandlerInterface@anonymous))
+#27 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-http/src/CoreRequestHandler.php(67): Psr\Http\Server\RequestHandlerInterface@anonymous->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#28 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(168): MonkeysLegion\Http\CoreRequestHandler->handle(Object(MonkeysLegion\Http\Message\ServerRequest))
+#29 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(120): MonkeysLegion\Framework\HttpBootstrap::defaultPipeline(Object(MonkeysLegion\DI\Container), Object(MonkeysLegion\Http\Message\ServerRequest), Object(MonkeysLegion\Http\Factory\HttpFactory))
+#30 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#31 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#32 {main}
+[05-Sep-2025 05:20:56 UTC] [2025-09-05T05:20:56+00:00] GET http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 404 (0.67ms)
+[05-Sep-2025 05:21:51 UTC] [2025-09-05T05:21:51+00:00] GET http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 404 (0.55ms)
+[05-Sep-2025 05:21:53 UTC] [2025-09-05T05:21:53+00:00] GET http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 404 (0.18ms)
+[05-Sep-2025 05:21:58 UTC] [2025-09-05T05:21:58+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (12.70ms)
+[05-Sep-2025 05:21:58 UTC] [2025-09-05T05:21:58+00:00] GET http://127.0.0.1:8000/plans-id/7 – 200 (6.33ms)
+[05-Sep-2025 05:21:58 UTC] [2025-09-05T05:21:58+00:00] GET http://127.0.0.1:8000/plans-id/8 – 200 (6.16ms)
+[05-Sep-2025 05:21:58 UTC] [2025-09-05T05:21:58+00:00] GET http://127.0.0.1:8000/plans-id/9 – 200 (8.93ms)
+[05-Sep-2025 05:21:58 UTC] [2025-09-05T05:21:58+00:00] GET http://127.0.0.1:8000/plans-id/10 – 200 (3.80ms)
+[05-Sep-2025 05:21:59 UTC] [2025-09-05T05:21:59+00:00] POST http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 200 (549.63ms)
+[05-Sep-2025 05:22:43 UTC] [2025-09-05T05:22:43+00:00] GET http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 404 (0.97ms)
+[05-Sep-2025 05:22:47 UTC] [2025-09-05T05:22:47+00:00] GET http://127.0.0.1:8000/billing/create-setup-intent – 404 (0.18ms)
+[05-Sep-2025 05:22:53 UTC] [2025-09-05T05:22:53+00:00] POST http://127.0.0.1:8000/billing/create-setup-intent?plan_id=8 – 200 (495.11ms)
+[05-Sep-2025 05:28:39 UTC] [2025-09-05T05:28:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/apikeys – 200 (77.51ms)
+[05-Sep-2025 05:28:39 UTC] [2025-09-05T05:28:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.47ms)
+[05-Sep-2025 05:28:39 UTC] [2025-09-05T05:28:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/apikeys – 200 (30.30ms)
+[05-Sep-2025 05:28:40 UTC] [2025-09-05T05:28:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (59.88ms)
+[05-Sep-2025 05:29:53 UTC] [2025-09-05T05:29:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (44.03ms)
+[05-Sep-2025 05:29:53 UTC] [2025-09-05T05:29:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (24.50ms)
+[05-Sep-2025 05:30:08 UTC] [2025-09-05T05:30:08+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 201 (112.50ms)
+[05-Sep-2025 05:30:45 UTC] [2025-09-05T05:30:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/apikeys – 200 (51.66ms)
+[05-Sep-2025 05:30:45 UTC] [2025-09-05T05:30:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.98ms)
+[05-Sep-2025 05:30:45 UTC] [2025-09-05T05:30:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/apikeys – 200 (44.86ms)
+[05-Sep-2025 05:30:45 UTC] [2025-09-05T05:30:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (29.77ms)
+[05-Sep-2025 05:33:40 UTC] [2025-09-05T05:33:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (18.45ms)
+[05-Sep-2025 05:33:40 UTC] [2025-09-05T05:33:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (16.05ms)
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:34:29 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:34:29 UTC] [2025-09-05T05:34:29+00:00] POST http://127.0.0.1:8000/messages/send/segment – 400 (38.26ms)
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:35:35 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:35:35 UTC] [2025-09-05T05:35:35+00:00] POST http://127.0.0.1:8000/messages/send/segment – 400 (25.18ms)
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:36:06 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:36:06 UTC] [2025-09-05T05:36:06+00:00] POST http://127.0.0.1:8000/messages/send/segment – 400 (22.28ms)
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:37:51 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:37:51 UTC] [2025-09-05T05:37:51+00:00] POST http://127.0.0.1:8000/messages/send/segment – 400 (22.34ms)
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:39:08 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:39:08 UTC] [2025-09-05T05:39:08+00:00] POST http://127.0.0.1:8000/messages/send/segment – 400 (24.74ms)
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:39:55 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:39:55 UTC] sendSegmentWithApiKey: unexpected error: App\Controller\ApiSendController::resolveRecipientsForSegment(): Argument #2 ($segmentId) must be of type int, string given, called in /Volumes/Yorch/Dev/mail/app/Controller/ApiSendController.php on line 307
+[05-Sep-2025 05:39:55 UTC] [2025-09-05T05:39:55+00:00] POST http://127.0.0.1:8000/messages/send/segment – 500 (23.60ms)
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:40:59 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:40:59 UTC] sendSegmentWithApiKey: unexpected error: Call to undefined method App\Controller\ApiSendController::resolveRecipientsForSegment()
+[05-Sep-2025 05:40:59 UTC] [2025-09-05T05:40:59+00:00] POST http://127.0.0.1:8000/messages/send/segment – 500 (26.07ms)
+[05-Sep-2025 05:42:19 UTC] 01 recipents
+[05-Sep-2025 05:42:19 UTC] 02 recipents
+[05-Sep-2025 05:42:19 UTC] [2025-09-05T05:42:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (53.06ms)
+[05-Sep-2025 05:42:19 UTC] [2025-09-05T05:42:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (29.12ms)
+[05-Sep-2025 05:42:19 UTC] 01 recipents
+[05-Sep-2025 05:42:19 UTC] 02 recipents
+[05-Sep-2025 05:42:19 UTC] [2025-09-05T05:42:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (37.73ms)
+[05-Sep-2025 05:42:20 UTC] [2025-09-05T05:42:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (39.53ms)
+[05-Sep-2025 05:42:29 UTC] Message lookup (company=2) raw='5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61' normalized='<5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61>'
+[05-Sep-2025 05:42:29 UTC] 01 recipents
+[05-Sep-2025 05:42:29 UTC] 02 recipents
+[05-Sep-2025 05:42:29 UTC] [2025-09-05T05:42:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages/message-id/5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61 – 200 (53.57ms)
+[05-Sep-2025 05:42:30 UTC] Message lookup (company=2) raw='5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61' normalized='<5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61>'
+[05-Sep-2025 05:42:30 UTC] 01 recipents
+[05-Sep-2025 05:42:30 UTC] 02 recipents
+[05-Sep-2025 05:42:30 UTC] [2025-09-05T05:42:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages/message-id/5bebc8c12e2f777922bd49d51020a8c7bbcedb2f77d961a18cb5b7b9ff9b3293f5614928b709bd65f860a8e8532288b9cdca5c6736d794d28a04c320886d8a61 – 200 (271.13ms)
+[05-Sep-2025 05:42:34 UTC] 01 recipents
+[05-Sep-2025 05:42:34 UTC] 02 recipents
+[05-Sep-2025 05:42:34 UTC] [2025-09-05T05:42:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (45.38ms)
+[05-Sep-2025 05:42:34 UTC] [2025-09-05T05:42:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (39.38ms)
+[05-Sep-2025 05:42:35 UTC] 01 recipents
+[05-Sep-2025 05:42:35 UTC] 02 recipents
+[05-Sep-2025 05:42:35 UTC] [2025-09-05T05:42:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (51.95ms)
+[05-Sep-2025 05:42:35 UTC] [2025-09-05T05:42:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (32.51ms)
+[05-Sep-2025 05:42:52 UTC] 01 recipents
+[05-Sep-2025 05:42:52 UTC] 02 recipents
+[05-Sep-2025 05:42:52 UTC] [2025-09-05T05:42:52+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc&date_from=2025-09-05&date_to=2025-09-05 – 200 (59.79ms)
+[05-Sep-2025 05:42:56 UTC] 01 recipents
+[05-Sep-2025 05:42:56 UTC] 02 recipents
+[05-Sep-2025 05:42:56 UTC] [2025-09-05T05:42:56+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc&date_from=2025-08-30&date_to=2025-09-05 – 200 (40.58ms)
+[05-Sep-2025 05:43:00 UTC] 01 recipents
+[05-Sep-2025 05:43:00 UTC] 02 recipents
+[05-Sep-2025 05:43:00 UTC] [2025-09-05T05:43:00+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc&date_from=2025-09-05&date_to=2025-09-05 – 200 (31.99ms)
+[05-Sep-2025 05:43:04 UTC] 01 recipents
+[05-Sep-2025 05:43:04 UTC] 02 recipents
+[05-Sep-2025 05:43:04 UTC] [2025-09-05T05:43:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (35.62ms)
+[05-Sep-2025 05:43:17 UTC] 01 recipents
+[05-Sep-2025 05:43:17 UTC] 02 recipents
+[05-Sep-2025 05:43:17 UTC] [2025-09-05T05:43:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc&has_clicks=1 – 200 (56.83ms)
+[05-Sep-2025 05:43:21 UTC] 01 recipents
+[05-Sep-2025 05:43:21 UTC] 02 recipents
+[05-Sep-2025 05:43:21 UTC] [2025-09-05T05:43:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (61.40ms)
+[05-Sep-2025 05:43:36 UTC] [2025-09-05T05:43:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (21.58ms)
+[05-Sep-2025 05:43:36 UTC] [2025-09-05T05:43:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (14.84ms)
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: start, required scope=mail:send:segment
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: raw scopes=array (
+  0 => 'mail:send',
+  1 => 'mail:send:list',
+  2 => 'mail:send:segment',
+  3 => 'mail:read',
+  4 => 'domains:list',
+  5 => 'users:manage',
+)
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: raw is array -> ["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: flattened array scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: normalized scopes=["mail:send","mail:send:list","mail:send:segment","mail:read","domains:list","users:manage"]
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: candidate alt scopes=["mail:send:segment","mail.send.segment","messages:send:segment","messages.send.segment"]
+[05-Sep-2025 05:46:16 UTC] assertApiKeyAllowed: matched alt scope='mail:send:segment'
+[05-Sep-2025 05:46:16 UTC] sendSegmentWithApiKey: unexpected error: Call to undefined method App\Controller\ApiSendController::resolveRecipientsForSegment()
+[05-Sep-2025 05:46:16 UTC] [2025-09-05T05:46:16+00:00] POST http://127.0.0.1:8000/messages/send/segment – 500 (19.09ms)
+[05-Sep-2025 06:07:28 UTC] Login attempt
+[05-Sep-2025 06:07:28 UTC] [2025-09-05T06:07:28+00:00] POST http://127.0.0.1:8000/auth/login – 200 (382.56ms)
+[05-Sep-2025 06:07:29 UTC] [2025-09-05T06:07:29+00:00] GET http://127.0.0.1:8000/auth/me – 200 (36.33ms)
+[05-Sep-2025 06:07:29 UTC] [2025-09-05T06:07:29+00:00] GET http://127.0.0.1:8000/auth/me – 200 (119.69ms)
+[05-Sep-2025 06:07:30 UTC] [2025-09-05T06:07:30+00:00] GET http://127.0.0.1:8000/auth/me – 200 (22.52ms)
+[05-Sep-2025 06:07:30 UTC] [2025-09-05T06:07:30+00:00] GET http://127.0.0.1:8000/auth/me – 200 (19.78ms)
+[05-Sep-2025 06:07:30 UTC] [2025-09-05T06:07:30+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (16.59ms)
+[05-Sep-2025 06:07:30 UTC] [2025-09-05T06:07:30+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (16.60ms)
+[05-Sep-2025 06:07:32 UTC] [2025-09-05T06:07:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (48.05ms)
+[05-Sep-2025 06:07:32 UTC] [2025-09-05T06:07:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (54.22ms)
+[05-Sep-2025 06:07:32 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 06:07:32 UTC] [2025-09-05T06:07:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (29.06ms)
+[05-Sep-2025 06:07:32 UTC] [2025-09-05T06:07:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (28.34ms)
+[05-Sep-2025 06:07:32 UTC] [2025-09-05T06:07:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (69.13ms)
+[05-Sep-2025 06:07:35 UTC] [2025-09-05T06:07:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (62.06ms)
+[05-Sep-2025 06:07:35 UTC] [2025-09-05T06:07:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (35.32ms)
+[05-Sep-2025 06:08:12 UTC] [2025-09-05T06:08:12+00:00] GET http://127.0.0.1:8000/companies/contacts/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lookup?email=yorch.peraza%40gmail.com – 200 (75.64ms)
+[05-Sep-2025 06:08:12 UTC] [2025-09-05T06:08:12+00:00] GET http://127.0.0.1:8000/companies/contacts/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lookup?email=yorch.peraza%40gmail.com – 200 (15.95ms)
+[05-Sep-2025 06:10:29 UTC] [2025-09-05T06:10:29+00:00] GET http://127.0.0.1:8000/auth/me – 200 (379.26ms)
+[05-Sep-2025 06:10:30 UTC] [2025-09-05T06:10:30+00:00] GET http://127.0.0.1:8000/companies/contacts/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lookup?email=yorch.peraza%40gmail.com – 200 (54.46ms)
+[05-Sep-2025 06:10:30 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 06:10:30 UTC] [2025-09-05T06:10:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (46.13ms)
+[05-Sep-2025 06:10:30 UTC] [2025-09-05T06:10:30+00:00] GET http://127.0.0.1:8000/companies/contacts/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lookup?email=yorch.peraza%40gmail.com – 200 (25.45ms)
+[05-Sep-2025 06:10:41 UTC] [2025-09-05T06:10:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (198.07ms)
+[05-Sep-2025 06:10:41 UTC] [2025-09-05T06:10:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (264.36ms)
+[05-Sep-2025 06:11:25 UTC] [2025-09-05T06:11:25+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=100 – 200 (105.31ms)
+[05-Sep-2025 06:12:42 UTC] [2025-09-05T06:12:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (42.15ms)
+[05-Sep-2025 06:12:42 UTC] [2025-09-05T06:12:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (34.08ms)
+[05-Sep-2025 06:12:42 UTC] [2025-09-05T06:12:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (23.49ms)
+[05-Sep-2025 06:12:42 UTC] [2025-09-05T06:12:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (30.07ms)
+[05-Sep-2025 06:13:31 UTC] [2025-09-05T06:13:31+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (90.38ms)
+[05-Sep-2025 06:13:31 UTC] [2025-09-05T06:13:31+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (29.53ms)
+[05-Sep-2025 06:13:58 UTC] [2025-09-05T06:13:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25&search=jorge – 200 (101.54ms)
+[05-Sep-2025 06:14:04 UTC] [2025-09-05T06:14:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (54.39ms)
+[05-Sep-2025 06:14:33 UTC] [2025-09-05T06:14:33+00:00] GET http://127.0.0.1:8000/auth/me – 200 (16.65ms)
+[05-Sep-2025 06:14:33 UTC] [2025-09-05T06:14:33+00:00] GET http://127.0.0.1:8000/auth/me – 200 (10.52ms)
+[05-Sep-2025 06:14:34 UTC] [2025-09-05T06:14:34+00:00] GET http://127.0.0.1:8000/auth/me – 200 (11.01ms)
+[05-Sep-2025 06:14:34 UTC] [2025-09-05T06:14:34+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (13.93ms)
+[05-Sep-2025 06:14:34 UTC] [2025-09-05T06:14:34+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (14.82ms)
+[05-Sep-2025 06:16:18 UTC] [2025-09-05T06:16:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (46.51ms)
+[05-Sep-2025 06:16:18 UTC] [2025-09-05T06:16:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (37.94ms)
+[05-Sep-2025 06:16:18 UTC] [2025-09-05T06:16:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (30.11ms)
+[05-Sep-2025 06:16:18 UTC] [2025-09-05T06:16:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (32.78ms)
+[05-Sep-2025 06:16:43 UTC] [2025-09-05T06:16:43+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/users?page=1&per_page=25 – 200 (123.94ms)
+[05-Sep-2025 06:16:43 UTC] [2025-09-05T06:16:43+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/users?page=1&per_page=25 – 200 (36.79ms)
+[05-Sep-2025 06:16:50 UTC] [2025-09-05T06:16:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/users?page=1&per_page=25 – 200 (103.82ms)
+[05-Sep-2025 06:16:50 UTC] [2025-09-05T06:16:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/users?page=1&per_page=25 – 200 (146.55ms)
+[05-Sep-2025 06:16:53 UTC] [2025-09-05T06:16:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (59.53ms)
+[05-Sep-2025 06:16:53 UTC] [2025-09-05T06:16:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (35.04ms)
+[05-Sep-2025 06:16:53 UTC] [2025-09-05T06:16:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (25.37ms)
+[05-Sep-2025 06:16:53 UTC] [2025-09-05T06:16:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (30.29ms)
+[05-Sep-2025 06:16:55 UTC] [2025-09-05T06:16:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (44.65ms)
+[05-Sep-2025 06:16:55 UTC] [2025-09-05T06:16:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (125.81ms)
+[05-Sep-2025 06:16:57 UTC] [2025-09-05T06:16:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (149.68ms)
+[05-Sep-2025 06:16:57 UTC] [2025-09-05T06:16:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (35.20ms)
+[05-Sep-2025 06:16:58 UTC] [2025-09-05T06:16:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (83.66ms)
+[05-Sep-2025 06:16:58 UTC] [2025-09-05T06:16:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.81ms)
+[05-Sep-2025 06:21:55 UTC] [2025-09-05T06:21:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (28.42ms)
+[05-Sep-2025 06:21:55 UTC] [2025-09-05T06:21:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (13.06ms)
+[05-Sep-2025 06:21:55 UTC] [2025-09-05T06:21:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (10.92ms)
+[05-Sep-2025 06:21:55 UTC] [2025-09-05T06:21:55+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (14.52ms)
+[05-Sep-2025 06:21:55 UTC] [2025-09-05T06:21:55+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (12.74ms)
+[05-Sep-2025 06:22:45 UTC] [2025-09-05T06:22:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (95.53ms)
+[05-Sep-2025 06:22:45 UTC] [2025-09-05T06:22:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (89.49ms)
+[05-Sep-2025 06:23:05 UTC] [2025-09-05T06:23:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (93.34ms)
+[05-Sep-2025 06:23:05 UTC] [2025-09-05T06:23:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.58ms)
+[05-Sep-2025 06:23:15 UTC] [2025-09-05T06:23:15+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (112.60ms)
+[05-Sep-2025 06:23:16 UTC] [2025-09-05T06:23:16+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (75.02ms)
+[05-Sep-2025 06:23:29 UTC] [2025-09-05T06:23:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (61.91ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/companies-plan/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (29.99ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (6.93ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (24.91ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/companies-plan/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (27.52ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (8.16ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (6.05ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-id/7 – 200 (5.23ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-id/8 – 200 (21.65ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-id/9 – 200 (3.71ms)
+[05-Sep-2025 06:23:30 UTC] [2025-09-05T06:23:30+00:00] GET http://127.0.0.1:8000/plans-id/10 – 200 (4.35ms)
+[05-Sep-2025 06:23:31 UTC] [2025-09-05T06:23:31+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (105.58ms)
+[05-Sep-2025 06:23:32 UTC] [2025-09-05T06:23:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (64.31ms)
+[05-Sep-2025 06:23:32 UTC] [2025-09-05T06:23:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (77.23ms)
+[05-Sep-2025 06:23:32 UTC] [2025-09-05T06:23:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (89.99ms)
+[05-Sep-2025 06:23:37 UTC] [2025-09-05T06:23:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (117.29ms)
+[05-Sep-2025 06:23:37 UTC] 01 recipents
+[05-Sep-2025 06:23:37 UTC] 02 recipents
+[05-Sep-2025 06:23:37 UTC] [2025-09-05T06:23:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (45.30ms)
+[05-Sep-2025 06:23:37 UTC] [2025-09-05T06:23:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (30.32ms)
+[05-Sep-2025 06:23:37 UTC] 01 recipents
+[05-Sep-2025 06:23:37 UTC] 02 recipents
+[05-Sep-2025 06:23:37 UTC] [2025-09-05T06:23:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (37.50ms)
+[05-Sep-2025 06:23:39 UTC] [2025-09-05T06:23:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (32.63ms)
+[05-Sep-2025 06:23:39 UTC] [2025-09-05T06:23:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (37.05ms)
+[05-Sep-2025 06:23:39 UTC] [2025-09-05T06:23:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (26.64ms)
+[05-Sep-2025 06:23:40 UTC] [2025-09-05T06:23:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (34.84ms)
+[05-Sep-2025 06:23:45 UTC] [2025-09-05T06:23:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (31.08ms)
+[05-Sep-2025 06:23:45 UTC] [2025-09-05T06:23:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.62ms)
+[05-Sep-2025 06:23:45 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 06:23:45 UTC] [2025-09-05T06:23:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (20.63ms)
+[05-Sep-2025 06:23:45 UTC] [2025-09-05T06:23:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (35.41ms)
+[05-Sep-2025 06:23:45 UTC] [2025-09-05T06:23:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (35.76ms)
+[05-Sep-2025 06:23:58 UTC] [2025-09-05T06:23:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (38.93ms)
+[05-Sep-2025 06:23:58 UTC] [2025-09-05T06:23:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (23.09ms)
+[05-Sep-2025 06:24:01 UTC] [2025-09-05T06:24:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (120.49ms)
+[05-Sep-2025 06:24:01 UTC] [2025-09-05T06:24:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (57.15ms)
+[05-Sep-2025 06:24:01 UTC] [2025-09-05T06:24:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (36.31ms)
+[05-Sep-2025 06:24:01 UTC] [2025-09-05T06:24:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (62.51ms)
+[05-Sep-2025 06:24:02 UTC] [2025-09-05T06:24:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (94.48ms)
+[05-Sep-2025 06:24:02 UTC] [2025-09-05T06:24:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (49.13ms)
+[05-Sep-2025 06:24:04 UTC] [2025-09-05T06:24:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (23.54ms)
+[05-Sep-2025 06:24:04 UTC] [2025-09-05T06:24:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (52.29ms)
+[05-Sep-2025 06:24:04 UTC] [2025-09-05T06:24:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (25.57ms)
+[05-Sep-2025 06:24:05 UTC] [2025-09-05T06:24:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (45.02ms)
+[05-Sep-2025 06:24:07 UTC] [2025-09-05T06:24:07+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (40.53ms)
+[05-Sep-2025 06:24:07 UTC] 01 recipents
+[05-Sep-2025 06:24:07 UTC] 02 recipents
+[05-Sep-2025 06:24:07 UTC] [2025-09-05T06:24:07+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (42.19ms)
+[05-Sep-2025 06:24:08 UTC] [2025-09-05T06:24:08+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (32.26ms)
+[05-Sep-2025 06:24:08 UTC] 01 recipents
+[05-Sep-2025 06:24:08 UTC] 02 recipents
+[05-Sep-2025 06:24:08 UTC] [2025-09-05T06:24:08+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (39.03ms)
+[05-Sep-2025 06:24:09 UTC] [2025-09-05T06:24:09+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (38.73ms)
+[05-Sep-2025 06:24:09 UTC] [2025-09-05T06:24:09+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (26.96ms)
+[05-Sep-2025 06:24:09 UTC] [2025-09-05T06:24:09+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (29.79ms)
+[05-Sep-2025 06:24:09 UTC] [2025-09-05T06:24:09+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (29.87ms)
+[05-Sep-2025 06:24:11 UTC] [2025-09-05T06:24:11+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (59.84ms)
+[05-Sep-2025 06:24:11 UTC] [2025-09-05T06:24:11+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (104.14ms)
+[05-Sep-2025 06:24:13 UTC] [2025-09-05T06:24:13+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (55.63ms)
+[05-Sep-2025 06:24:13 UTC] [2025-09-05T06:24:13+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (23.83ms)
+[05-Sep-2025 06:24:13 UTC] [2025-09-05T06:24:13+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (21.86ms)
+[05-Sep-2025 06:24:13 UTC] [2025-09-05T06:24:13+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (22.36ms)
+[05-Sep-2025 06:27:36 UTC] [2025-09-05T06:27:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (60.94ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/companies-plan/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (48.70ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (5.48ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (27.10ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/companies-plan/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (26.10ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (7.06ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-brief – 200 (4.60ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-id/7 – 200 (5.60ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-id/8 – 200 (5.67ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-id/9 – 200 (5.62ms)
+[05-Sep-2025 06:27:37 UTC] [2025-09-05T06:27:37+00:00] GET http://127.0.0.1:8000/plans-id/10 – 200 (5.18ms)
+[05-Sep-2025 06:27:45 UTC] [2025-09-05T06:27:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (33.59ms)
+[05-Sep-2025 06:27:45 UTC] [2025-09-05T06:27:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (30.02ms)
+[05-Sep-2025 06:27:45 UTC] [2025-09-05T06:27:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (23.22ms)
+[05-Sep-2025 06:27:45 UTC] [2025-09-05T06:27:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (79.78ms)
+[05-Sep-2025 06:36:28 UTC] [2025-09-05T06:36:28+00:00] GET http://127.0.0.1:8000/auth/me – 200 (63.82ms)
+[05-Sep-2025 06:36:29 UTC] [2025-09-05T06:36:29+00:00] GET http://127.0.0.1:8000/auth/me – 200 (11.46ms)
+[05-Sep-2025 06:36:29 UTC] [2025-09-05T06:36:29+00:00] GET http://127.0.0.1:8000/auth/me – 200 (11.31ms)
+[05-Sep-2025 06:36:29 UTC] [2025-09-05T06:36:29+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (17.24ms)
+[05-Sep-2025 06:36:29 UTC] [2025-09-05T06:36:29+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (13.72ms)
+[05-Sep-2025 06:39:16 UTC] [2025-09-05T06:39:16+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (95.84ms)
+[05-Sep-2025 06:39:16 UTC] [2025-09-05T06:39:16+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (17.52ms)
+[05-Sep-2025 06:39:19 UTC] [2025-09-05T06:39:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (399.89ms)
+[05-Sep-2025 06:39:20 UTC] [2025-09-05T06:39:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (119.60ms)
+[05-Sep-2025 06:55:40 UTC] MonkeysLegion\DI\ServiceResolveException: Cannot resolve constructor parameter $queue (App\Service\Ports\SegmentBuildQueue) for App\Service\SegmentBuildOrchestrator in /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php:196
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(184): MonkeysLegion\DI\Container->fail('App\\Service\\Seg...', Object(ReflectionParameter))
+#1 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Service\\Seg...', Object(ReflectionParameter))
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Service\\Seg...', Object(ReflectionParameter))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Service\\Seg...')
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 06:56:17 UTC] MonkeysLegion\DI\ServiceResolveException: Cannot resolve constructor parameter $queue (App\Service\Ports\SegmentBuildQueue) for App\Service\SegmentBuildOrchestrator in /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php:196
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(184): MonkeysLegion\DI\Container->fail('App\\Service\\Seg...', Object(ReflectionParameter))
+#1 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Service\\Seg...', Object(ReflectionParameter))
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Service\\Seg...', Object(ReflectionParameter))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Service\\Seg...')
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 06:56:18 UTC] MonkeysLegion\DI\ServiceResolveException: Cannot resolve constructor parameter $queue (App\Service\Ports\SegmentBuildQueue) for App\Service\SegmentBuildOrchestrator in /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php:196
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(184): MonkeysLegion\DI\Container->fail('App\\Service\\Seg...', Object(ReflectionParameter))
+#1 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Service\\Seg...', Object(ReflectionParameter))
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Service\\Seg...', Object(ReflectionParameter))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Service\\Seg...')
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 06:56:21 UTC] MonkeysLegion\DI\ServiceResolveException: Cannot resolve constructor parameter $queue (App\Service\Ports\SegmentBuildQueue) for App\Service\SegmentBuildOrchestrator in /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php:196
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(184): MonkeysLegion\DI\Container->fail('App\\Service\\Seg...', Object(ReflectionParameter))
+#1 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Service\\Seg...', Object(ReflectionParameter))
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Service\\Seg...', Object(ReflectionParameter))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Service\\Seg...')
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 07:02:59 UTC] TypeError: App\Service\SegmentBuildOrchestrator::__construct(): Argument #3 ($redis) must be of type Redis, Predis\Client given, called in /Volumes/Yorch/Dev/mail/config/app.php on line 95 and defined in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:15
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/config/app.php(95): App\Service\SegmentBuildOrchestrator->__construct(Object(MonkeysLegion\Repository\RepositoryFactory), Object(MonkeysLegion\Query\QueryBuilder), Object(Predis\Client), 'seg:builds', 'seg_builders')
+#1 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#9 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#10 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#11 {main}
+[05-Sep-2025 07:06:48 UTC] ParseError: syntax error, unexpected token "..." in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:157
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/composer/ClassLoader.php(427): {closure:Composer\Autoload\ClassLoader::initializeIncludeClosure():575}('/Volumes/Yorch/...')
+#1 /Volumes/Yorch/Dev/mail/config/app.php(95): Composer\Autoload\ClassLoader->loadClass('App\\Service\\Seg...')
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 07:07:04 UTC] ParseError: syntax error, unexpected token "..." in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:156
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/composer/ClassLoader.php(427): {closure:Composer\Autoload\ClassLoader::initializeIncludeClosure():575}('/Volumes/Yorch/...')
+#1 /Volumes/Yorch/Dev/mail/config/app.php(95): Composer\Autoload\ClassLoader->loadClass('App\\Service\\Seg...')
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 07:07:47 UTC] ParseError: syntax error, unexpected token "..." in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:156
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/composer/ClassLoader.php(427): {closure:Composer\Autoload\ClassLoader::initializeIncludeClosure():575}('/Volumes/Yorch/...')
+#1 /Volumes/Yorch/Dev/mail/config/app.php(95): Composer\Autoload\ClassLoader->loadClass('App\\Service\\Seg...')
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 19:32:21 UTC] ParseError: syntax error, unexpected token "..." in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:156
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/composer/ClassLoader.php(427): {closure:Composer\Autoload\ClassLoader::initializeIncludeClosure():575}('/Volumes/Yorch/...')
+#1 /Volumes/Yorch/Dev/mail/config/app.php(95): Composer\Autoload\ClassLoader->loadClass('App\\Service\\Seg...')
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 19:32:23 UTC] ParseError: syntax error, unexpected token "..." in /Volumes/Yorch/Dev/mail/app/Service/SegmentBuildOrchestrator.php:156
+Stack trace:
+#0 /Volumes/Yorch/Dev/mail/vendor/composer/ClassLoader.php(427): {closure:Composer\Autoload\ClassLoader::initializeIncludeClosure():575}('/Volumes/Yorch/...')
+#1 /Volumes/Yorch/Dev/mail/config/app.php(95): Composer\Autoload\ClassLoader->loadClass('App\\Service\\Seg...')
+#2 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(94): MonkeysLegion\Framework\HttpBootstrap::{closure:/Volumes/Yorch/Dev/mail/config/app.php:95}(Object(MonkeysLegion\DI\Container))
+#3 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(73): MonkeysLegion\DI\Container->resolveDefinition('App\\Service\\Seg...', Object(Closure))
+#4 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(177): MonkeysLegion\DI\Container->get('App\\Service\\Seg...')
+#5 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(138): MonkeysLegion\DI\Container->resolveNamed(Object(ReflectionNamedType), 'App\\Controller\\...', Object(ReflectionParameter))
+#6 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(122): MonkeysLegion\DI\Container->resolveParameter('App\\Controller\\...', Object(ReflectionParameter))
+#7 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-di/src/Container.php(77): MonkeysLegion\DI\Container->autoWire('App\\Controller\\...')
+#8 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-core/src/Routing/RouteLoader.php(55): MonkeysLegion\DI\Container->get('App\\Controller\\...')
+#9 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion/src/Framework/HttpBootstrap.php(110): MonkeysLegion\Core\Routing\RouteLoader->loadControllers()
+#10 /Volumes/Yorch/Dev/mail/public/index.php(9): MonkeysLegion\Framework\HttpBootstrap::run('/Volumes/Yorch/...')
+#11 /Volumes/Yorch/Dev/mail/vendor/monkeyscloud/monkeyslegion-dev-server/bin/dev-router.php(23): require('/Volumes/Yorch/...')
+#12 {main}
+[05-Sep-2025 19:36:32 UTC] [2025-09-05T19:36:32+00:00] GET http://127.0.0.1:8000/ – 200 (2.93ms)
+[05-Sep-2025 19:36:32 UTC] [2025-09-05T19:36:32+00:00] GET http://127.0.0.1:8000/assets/css/app.css – 404 (7.15ms)
+[05-Sep-2025 19:36:32 UTC] [2025-09-05T19:36:32+00:00] GET http://127.0.0.1:8000/assets/js/app.js – 404 (0.24ms)
+[05-Sep-2025 19:36:36 UTC] Login attempt
+[05-Sep-2025 19:36:36 UTC] [2025-09-05T19:36:36+00:00] POST http://127.0.0.1:8000/auth/login – 200 (450.19ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/auth/me – 200 (28.18ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/auth/me – 200 (14.20ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/auth/me – 200 (16.54ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/auth/me – 200 (141.38ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (88.22ms)
+[05-Sep-2025 19:36:37 UTC] [2025-09-05T19:36:37+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (24.45ms)
+[05-Sep-2025 19:36:39 UTC] [2025-09-05T19:36:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (428.58ms)
+[05-Sep-2025 19:36:39 UTC] [2025-09-05T19:36:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (41.87ms)
+[05-Sep-2025 19:36:39 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 19:36:39 UTC] [2025-09-05T19:36:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (38.09ms)
+[05-Sep-2025 19:36:39 UTC] [2025-09-05T19:36:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (31.24ms)
+[05-Sep-2025 19:36:39 UTC] [2025-09-05T19:36:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (31.06ms)
+[05-Sep-2025 19:36:42 UTC] [2025-09-05T19:36:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (96.73ms)
+[05-Sep-2025 19:36:42 UTC] [2025-09-05T19:36:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (28.37ms)
+[05-Sep-2025 19:43:19 UTC] [2025-09-05T19:43:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (37.70ms)
+[05-Sep-2025 19:43:19 UTC] [2025-09-05T19:43:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (24.88ms)
+[05-Sep-2025 19:43:22 UTC] [2025-09-05T19:43:22+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (55.03ms)
+[05-Sep-2025 19:43:22 UTC] [2025-09-05T19:43:22+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (28.39ms)
+[05-Sep-2025 19:43:25 UTC] [2025-09-05T19:43:25+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (39.51ms)
+[05-Sep-2025 19:43:26 UTC] [2025-09-05T19:43:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (21.33ms)
+[05-Sep-2025 19:43:27 UTC] [2025-09-05T19:43:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (271.38ms)
+[05-Sep-2025 19:43:27 UTC] [2025-09-05T19:43:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (38.35ms)
+[05-Sep-2025 19:43:31 UTC] 01 recipents
+[05-Sep-2025 19:43:31 UTC] 02 recipents
+[05-Sep-2025 19:43:31 UTC] [2025-09-05T19:43:31+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (530.50ms)
+[05-Sep-2025 19:43:32 UTC] [2025-09-05T19:43:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (190.97ms)
+[05-Sep-2025 19:43:32 UTC] 01 recipents
+[05-Sep-2025 19:43:32 UTC] 02 recipents
+[05-Sep-2025 19:43:32 UTC] [2025-09-05T19:43:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/messages?page=1&perPage=25&sort=created_at&order=desc – 200 (396.49ms)
+[05-Sep-2025 19:43:32 UTC] [2025-09-05T19:43:32+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (251.25ms)
+[05-Sep-2025 20:16:21 UTC] [2025-09-05T20:16:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (131.03ms)
+[05-Sep-2025 20:16:21 UTC] [2025-09-05T20:16:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (27.71ms)
+[05-Sep-2025 20:16:21 UTC] [2025-09-05T20:16:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (36.91ms)
+[05-Sep-2025 20:16:21 UTC] [2025-09-05T20:16:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (30.88ms)
+[05-Sep-2025 20:16:25 UTC] [2025-09-05T20:16:25+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (49.03ms)
+[05-Sep-2025 20:16:25 UTC] [2025-09-05T20:16:25+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (42.76ms)
+[05-Sep-2025 20:16:26 UTC] [2025-09-05T20:16:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (29.82ms)
+[05-Sep-2025 20:16:26 UTC] [2025-09-05T20:16:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (27.98ms)
+[05-Sep-2025 20:20:39 UTC] [2025-09-05T20:20:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (190.12ms)
+[05-Sep-2025 20:20:39 UTC] [2025-09-05T20:20:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (52.23ms)
+[05-Sep-2025 20:20:39 UTC] [2025-09-05T20:20:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (30.29ms)
+[05-Sep-2025 20:20:39 UTC] [2025-09-05T20:20:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (44.73ms)
+[05-Sep-2025 20:20:42 UTC] [2025-09-05T20:20:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (25.05ms)
+[05-Sep-2025 20:20:42 UTC] [2025-09-05T20:20:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (35.63ms)
+[05-Sep-2025 20:20:42 UTC] [2025-09-05T20:20:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (41.58ms)
+[05-Sep-2025 20:20:42 UTC] [2025-09-05T20:20:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (28.65ms)
+[05-Sep-2025 20:20:43 UTC] [2025-09-05T20:20:43+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.86ms)
+[05-Sep-2025 20:20:43 UTC] [2025-09-05T20:20:43+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.76ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (111.35ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (29.48ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (59.00ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (20.96ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (49.52ms)
+[05-Sep-2025 20:21:50 UTC] [2025-09-05T20:21:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (17.14ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (80.42ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (76.73ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (52.53ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.58ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (46.28ms)
+[05-Sep-2025 20:23:17 UTC] [2025-09-05T20:23:17+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (16.29ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (127.63ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (18.33ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (44.06ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (25.64ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (39.64ms)
+[05-Sep-2025 20:23:20 UTC] [2025-09-05T20:23:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (40.82ms)
+[05-Sep-2025 20:32:32 UTC] [2025-09-05T20:32:32+00:00] GET http://127.0.0.1:8000/ – 200 (3.22ms)
+[05-Sep-2025 20:32:32 UTC] [2025-09-05T20:32:32+00:00] GET http://127.0.0.1:8000/assets/css/app.css – 404 (1.48ms)
+[05-Sep-2025 20:32:32 UTC] [2025-09-05T20:32:32+00:00] GET http://127.0.0.1:8000/assets/js/app.js – 404 (0.15ms)
+[05-Sep-2025 20:32:39 UTC] [2025-09-05T20:32:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (151.44ms)
+[05-Sep-2025 20:32:40 UTC] [2025-09-05T20:32:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.58ms)
+[05-Sep-2025 20:32:40 UTC] [2025-09-05T20:32:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (49.25ms)
+[05-Sep-2025 20:32:40 UTC] [2025-09-05T20:32:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (59.60ms)
+[05-Sep-2025 20:32:40 UTC] [2025-09-05T20:32:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (54.51ms)
+[05-Sep-2025 20:32:40 UTC] [2025-09-05T20:32:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.32ms)
+[05-Sep-2025 20:35:26 UTC] [2025-09-05T20:35:26+00:00] GET http://127.0.0.1:8000/ – 200 (1.05ms)
+[05-Sep-2025 20:35:26 UTC] [2025-09-05T20:35:26+00:00] GET http://127.0.0.1:8000/assets/css/app.css – 404 (0.61ms)
+[05-Sep-2025 20:35:26 UTC] [2025-09-05T20:35:26+00:00] GET http://127.0.0.1:8000/assets/js/app.js – 404 (0.17ms)
+[05-Sep-2025 20:35:45 UTC] [2025-09-05T20:35:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (22.11ms)
+[05-Sep-2025 20:35:46 UTC] [2025-09-05T20:35:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (11.15ms)
+[05-Sep-2025 20:35:54 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:35:54 UTC] Segment found: yes
+[05-Sep-2025 20:35:54 UTC] [2025-09-05T20:35:54+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (21.05ms)
+[05-Sep-2025 20:35:54 UTC] [2025-09-05T20:35:54+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (30.78ms)
+[05-Sep-2025 20:35:54 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:35:54 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:35:54 UTC] Loaded 30 contacts
+[05-Sep-2025 20:35:54 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:35:54 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:35:54 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:35:54 UTC] [2025-09-05T20:35:54+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (119.24ms)
+[05-Sep-2025 20:35:55 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:35:55 UTC] Segment found: yes
+[05-Sep-2025 20:35:55 UTC] [2025-09-05T20:35:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (12.16ms)
+[05-Sep-2025 20:35:55 UTC] [2025-09-05T20:35:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (38.15ms)
+[05-Sep-2025 20:35:55 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:35:55 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:35:55 UTC] Loaded 30 contacts
+[05-Sep-2025 20:35:55 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:35:55 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:35:55 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:35:55 UTC] [2025-09-05T20:35:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (52.83ms)
+[05-Sep-2025 20:35:57 UTC] [2025-09-05T20:35:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (16.08ms)
+[05-Sep-2025 20:35:57 UTC] [2025-09-05T20:35:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (16.50ms)
+[05-Sep-2025 20:36:01 UTC] [2025-09-05T20:36:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (124.64ms)
+[05-Sep-2025 20:36:01 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:36:01 UTC] Segment found: yes
+[05-Sep-2025 20:36:01 UTC] [2025-09-05T20:36:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (38.35ms)
+[05-Sep-2025 20:36:01 UTC] [2025-09-05T20:36:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (29.06ms)
+[05-Sep-2025 20:36:01 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:36:01 UTC] Segment found: yes
+[05-Sep-2025 20:36:01 UTC] [2025-09-05T20:36:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (12.47ms)
+[05-Sep-2025 20:36:05 UTC] [2025-09-05T20:36:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (267.24ms)
+[05-Sep-2025 20:36:05 UTC] [2025-09-05T20:36:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (119.75ms)
+[05-Sep-2025 20:39:55 UTC] Login attempt
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] POST http://127.0.0.1:8000/auth/login – 200 (274.80ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (17.97ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (14.18ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (9.12ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/auth/me – 200 (10.94ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (19.02ms)
+[05-Sep-2025 20:39:55 UTC] [2025-09-05T20:39:55+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (15.46ms)
+[05-Sep-2025 20:39:57 UTC] [2025-09-05T20:39:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (76.09ms)
+[05-Sep-2025 20:39:57 UTC] [2025-09-05T20:39:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (31.33ms)
+[05-Sep-2025 20:39:57 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:39:57 UTC] [2025-09-05T20:39:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (29.51ms)
+[05-Sep-2025 20:39:57 UTC] [2025-09-05T20:39:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (21.95ms)
+[05-Sep-2025 20:39:57 UTC] [2025-09-05T20:39:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (26.01ms)
+[05-Sep-2025 20:40:03 UTC] [2025-09-05T20:40:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (20.30ms)
+[05-Sep-2025 20:40:03 UTC] [2025-09-05T20:40:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (20.98ms)
+[05-Sep-2025 20:40:05 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:40:05 UTC] Segment found: yes
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (17.30ms)
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (19.46ms)
+[05-Sep-2025 20:40:05 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:40:05 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:40:05 UTC] Loaded 30 contacts
+[05-Sep-2025 20:40:05 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:40:05 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:40:05 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (92.57ms)
+[05-Sep-2025 20:40:05 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:40:05 UTC] Segment found: yes
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (18.09ms)
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (57.99ms)
+[05-Sep-2025 20:40:05 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:40:05 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:40:05 UTC] Loaded 30 contacts
+[05-Sep-2025 20:40:05 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:40:05 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:40:05 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:40:05 UTC] [2025-09-05T20:40:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (49.42ms)
+[05-Sep-2025 20:40:09 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:40:09 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:40:09 UTC] Loaded 30 contacts
+[05-Sep-2025 20:40:09 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:40:09 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:40:09 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:40:09 UTC] Evaluation result: [5,[{"id":7,"email":"emma.thompson42@example.com","name":"Test Name","status":null},{"id":10,"email":"oliver.johnson23@example.com","name":"Test Name","status":null},{"id":13,"email":"mia.clark56@example.com","name":"Test Name","status":null},{"id":16,"email":"james.lewis65@example.com","name":"Test Name","status":null},{"id":17,"email":"alice@example.com","name":"Alice Smith","status":"active"}],30]
+[05-Sep-2025 20:40:09 UTC] Human rules: ["Email contains \u201c@example.com\u201d"]
+[05-Sep-2025 20:40:09 UTC] [2025-09-05T20:40:09+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/build – 200 (57.43ms)
+[05-Sep-2025 20:41:18 UTC] [2025-09-05T20:41:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (36.09ms)
+[05-Sep-2025 20:41:18 UTC] [2025-09-05T20:41:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (50.68ms)
+[05-Sep-2025 20:41:21 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:41:21 UTC] Segment found: yes
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (28.00ms)
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (43.49ms)
+[05-Sep-2025 20:41:21 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:41:21 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:41:21 UTC] Loaded 30 contacts
+[05-Sep-2025 20:41:21 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:41:21 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:41:21 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (108.43ms)
+[05-Sep-2025 20:41:21 UTC] Fetching segment id=3 for company id=2
+[05-Sep-2025 20:41:21 UTC] Segment found: yes
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3 – 200 (8.21ms)
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?perPage=200 – 200 (18.28ms)
+[05-Sep-2025 20:41:21 UTC] === evaluateDefinition start (company=2) ===
+[05-Sep-2025 20:41:21 UTC] Definition: {"email_contains":"@example.com"}
+[05-Sep-2025 20:41:21 UTC] Loaded 30 contacts
+[05-Sep-2025 20:41:21 UTC] Filters: status=NULL email_contains='@example.com' gdpr_consent=NULL in=[] notIn=[]
+[05-Sep-2025 20:41:21 UTC] Matched 5 / 30 contacts (returning sample size 5)
+[05-Sep-2025 20:41:21 UTC] === evaluateDefinition end ===
+[05-Sep-2025 20:41:21 UTC] [2025-09-05T20:41:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/preview?page=1&perPage=25 – 200 (51.14ms)
+[05-Sep-2025 20:41:24 UTC] [2025-09-05T20:41:24+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (12.69ms)
+[05-Sep-2025 20:41:24 UTC] [2025-09-05T20:41:24+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (10.89ms)
+[05-Sep-2025 20:41:27 UTC] [2025-09-05T20:41:27+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (14.41ms)
+[05-Sep-2025 20:45:42 UTC] [2025-09-05T20:45:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (536.92ms)
+[05-Sep-2025 20:45:47 UTC] [2025-09-05T20:45:47+00:00] GET http://127.0.0.1:8000/auth/me – 200 (36.72ms)
+[05-Sep-2025 20:45:48 UTC] [2025-09-05T20:45:48+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (59.93ms)
+[05-Sep-2025 20:45:48 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:45:48 UTC] [2025-09-05T20:45:48+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (88.38ms)
+[05-Sep-2025 20:45:48 UTC] [2025-09-05T20:45:48+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (28.68ms)
+[05-Sep-2025 20:45:49 UTC] [2025-09-05T20:45:49+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (15.37ms)
+[05-Sep-2025 20:45:52 UTC] [2025-09-05T20:45:52+00:00] GET http://127.0.0.1:8000/auth/me – 200 (12.13ms)
+[05-Sep-2025 20:45:52 UTC] [2025-09-05T20:45:52+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (14.92ms)
+[05-Sep-2025 20:45:52 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:45:52 UTC] [2025-09-05T20:45:52+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (25.30ms)
+[05-Sep-2025 20:45:52 UTC] [2025-09-05T20:45:52+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (14.36ms)
+[05-Sep-2025 20:46:31 UTC] [2025-09-05T20:46:31+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (20.16ms)
+[05-Sep-2025 20:46:45 UTC] [2025-09-05T20:46:45+00:00] GET http://127.0.0.1:8000/auth/me – 200 (14.53ms)
+[05-Sep-2025 20:46:45 UTC] [2025-09-05T20:46:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (14.53ms)
+[05-Sep-2025 20:46:46 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:46:46 UTC] [2025-09-05T20:46:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (27.07ms)
+[05-Sep-2025 20:46:46 UTC] [2025-09-05T20:46:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (11.14ms)
+[05-Sep-2025 20:47:49 UTC] [2025-09-05T20:47:49+00:00] GET http://127.0.0.1:8000/auth/me – 200 (25.91ms)
+[05-Sep-2025 20:47:49 UTC] [2025-09-05T20:47:49+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (13.34ms)
+[05-Sep-2025 20:47:49 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:47:49 UTC] [2025-09-05T20:47:49+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (35.00ms)
+[05-Sep-2025 20:47:49 UTC] [2025-09-05T20:47:49+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (12.55ms)
+[05-Sep-2025 20:48:35 UTC] [2025-09-05T20:48:35+00:00] GET http://127.0.0.1:8000/auth/me – 200 (28.91ms)
+[05-Sep-2025 20:48:36 UTC] [2025-09-05T20:48:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (18.82ms)
+[05-Sep-2025 20:48:36 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:48:36 UTC] [2025-09-05T20:48:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (29.15ms)
+[05-Sep-2025 20:48:36 UTC] [2025-09-05T20:48:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (12.40ms)
+[05-Sep-2025 20:48:37 UTC] [2025-09-05T20:48:37+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (14.12ms)
+[05-Sep-2025 20:48:40 UTC] [2025-09-05T20:48:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.63ms)
+[05-Sep-2025 20:48:42 UTC] [2025-09-05T20:48:42+00:00] GET http://127.0.0.1:8000/auth/me – 200 (15.81ms)
+[05-Sep-2025 20:48:42 UTC] [2025-09-05T20:48:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (12.34ms)
+[05-Sep-2025 20:48:42 UTC] [2025-09-05T20:48:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (12.90ms)
+[05-Sep-2025 20:48:42 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 20:48:42 UTC] [2025-09-05T20:48:42+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (42.70ms)
+[05-Sep-2025 20:49:43 UTC] [2025-09-05T20:49:43+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (39.39ms)
+[05-Sep-2025 20:49:45 UTC] [2025-09-05T20:49:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (11.78ms)
+[05-Sep-2025 20:49:48 UTC] [2025-09-05T20:49:48+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.12ms)
+[05-Sep-2025 20:49:50 UTC] [2025-09-05T20:49:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.36ms)
+[05-Sep-2025 20:49:53 UTC] [2025-09-05T20:49:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.22ms)
+[05-Sep-2025 20:49:55 UTC] [2025-09-05T20:49:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.28ms)
+[05-Sep-2025 20:49:58 UTC] [2025-09-05T20:49:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (11.44ms)
+[05-Sep-2025 20:50:00 UTC] [2025-09-05T20:50:00+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (12.00ms)
+[05-Sep-2025 20:50:03 UTC] [2025-09-05T20:50:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.85ms)
+[05-Sep-2025 20:50:05 UTC] [2025-09-05T20:50:05+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.05ms)
+[05-Sep-2025 20:50:08 UTC] [2025-09-05T20:50:08+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.49ms)
+[05-Sep-2025 20:50:10 UTC] [2025-09-05T20:50:10+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.52ms)
+[05-Sep-2025 20:50:13 UTC] [2025-09-05T20:50:13+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.55ms)
+[05-Sep-2025 20:50:15 UTC] [2025-09-05T20:50:15+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.95ms)
+[05-Sep-2025 20:50:18 UTC] [2025-09-05T20:50:18+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.09ms)
+[05-Sep-2025 20:50:20 UTC] [2025-09-05T20:50:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (53.04ms)
+[05-Sep-2025 20:50:23 UTC] [2025-09-05T20:50:23+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (19.02ms)
+[05-Sep-2025 20:50:25 UTC] [2025-09-05T20:50:25+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (83.32ms)
+[05-Sep-2025 20:50:28 UTC] [2025-09-05T20:50:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (14.82ms)
+[05-Sep-2025 20:50:30 UTC] [2025-09-05T20:50:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.54ms)
+[05-Sep-2025 20:50:33 UTC] [2025-09-05T20:50:33+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.32ms)
+[05-Sep-2025 20:50:35 UTC] [2025-09-05T20:50:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.76ms)
+[05-Sep-2025 20:50:38 UTC] [2025-09-05T20:50:38+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.83ms)
+[05-Sep-2025 20:50:40 UTC] [2025-09-05T20:50:40+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.14ms)
+[05-Sep-2025 20:50:43 UTC] [2025-09-05T20:50:43+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.87ms)
+[05-Sep-2025 20:50:45 UTC] [2025-09-05T20:50:45+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.93ms)
+[05-Sep-2025 20:50:48 UTC] [2025-09-05T20:50:48+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.05ms)
+[05-Sep-2025 20:50:50 UTC] [2025-09-05T20:50:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.61ms)
+[05-Sep-2025 20:50:53 UTC] [2025-09-05T20:50:53+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.83ms)
+[05-Sep-2025 20:50:56 UTC] [2025-09-05T20:50:56+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.89ms)
+[05-Sep-2025 20:50:59 UTC] [2025-09-05T20:50:59+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (12.33ms)
+[05-Sep-2025 20:51:01 UTC] [2025-09-05T20:51:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (12.98ms)
+[05-Sep-2025 20:51:04 UTC] [2025-09-05T20:51:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.11ms)
+[05-Sep-2025 20:51:06 UTC] [2025-09-05T20:51:06+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.29ms)
+[05-Sep-2025 20:51:09 UTC] [2025-09-05T20:51:09+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.64ms)
+[05-Sep-2025 20:51:11 UTC] [2025-09-05T20:51:11+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.72ms)
+[05-Sep-2025 20:51:14 UTC] [2025-09-05T20:51:14+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (14.82ms)
+[05-Sep-2025 20:51:16 UTC] [2025-09-05T20:51:16+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.64ms)
+[05-Sep-2025 20:51:19 UTC] [2025-09-05T20:51:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.42ms)
+[05-Sep-2025 20:51:21 UTC] [2025-09-05T20:51:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.19ms)
+[05-Sep-2025 20:51:24 UTC] [2025-09-05T20:51:24+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.70ms)
+[05-Sep-2025 20:51:26 UTC] [2025-09-05T20:51:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.81ms)
+[05-Sep-2025 20:51:29 UTC] [2025-09-05T20:51:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.23ms)
+[05-Sep-2025 20:51:31 UTC] [2025-09-05T20:51:31+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.36ms)
+[05-Sep-2025 20:51:34 UTC] [2025-09-05T20:51:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.80ms)
+[05-Sep-2025 20:51:36 UTC] [2025-09-05T20:51:36+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.53ms)
+[05-Sep-2025 20:51:39 UTC] [2025-09-05T20:51:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.64ms)
+[05-Sep-2025 20:51:41 UTC] [2025-09-05T20:51:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.47ms)
+[05-Sep-2025 20:51:44 UTC] [2025-09-05T20:51:44+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (12.78ms)
+[05-Sep-2025 20:51:46 UTC] [2025-09-05T20:51:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.01ms)
+[05-Sep-2025 20:51:49 UTC] [2025-09-05T20:51:49+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.98ms)
+[05-Sep-2025 20:51:51 UTC] [2025-09-05T20:51:51+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (25.88ms)
+[05-Sep-2025 20:51:54 UTC] [2025-09-05T20:51:54+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.72ms)
+[05-Sep-2025 20:52:28 UTC] [2025-09-05T20:52:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (19.22ms)
+[05-Sep-2025 20:53:28 UTC] [2025-09-05T20:53:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.53ms)
+[05-Sep-2025 20:54:29 UTC] [2025-09-05T20:54:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.69ms)
+[05-Sep-2025 20:55:29 UTC] [2025-09-05T20:55:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (27.32ms)
+[05-Sep-2025 20:56:29 UTC] [2025-09-05T20:56:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (19.45ms)
+[05-Sep-2025 20:57:29 UTC] [2025-09-05T20:57:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (19.16ms)
+[05-Sep-2025 20:58:29 UTC] [2025-09-05T20:58:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (26.03ms)
+[05-Sep-2025 20:59:29 UTC] [2025-09-05T20:59:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.06ms)
+[05-Sep-2025 21:00:29 UTC] [2025-09-05T21:00:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.91ms)
+[05-Sep-2025 21:01:29 UTC] [2025-09-05T21:01:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (25.01ms)
+[05-Sep-2025 21:02:29 UTC] [2025-09-05T21:02:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.96ms)
+[05-Sep-2025 21:03:28 UTC] [2025-09-05T21:03:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (28.96ms)
+[05-Sep-2025 21:04:29 UTC] [2025-09-05T21:04:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (24.76ms)
+[05-Sep-2025 21:05:29 UTC] [2025-09-05T21:05:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.26ms)
+[05-Sep-2025 21:06:29 UTC] [2025-09-05T21:06:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.41ms)
+[05-Sep-2025 21:07:29 UTC] [2025-09-05T21:07:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (19.03ms)
+[05-Sep-2025 21:08:28 UTC] [2025-09-05T21:08:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.74ms)
+[05-Sep-2025 21:09:29 UTC] [2025-09-05T21:09:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (24.70ms)
+[05-Sep-2025 21:10:28 UTC] [2025-09-05T21:10:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (23.27ms)
+[05-Sep-2025 21:11:29 UTC] [2025-09-05T21:11:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.27ms)
+[05-Sep-2025 21:12:28 UTC] [2025-09-05T21:12:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (29.42ms)
+[05-Sep-2025 21:13:29 UTC] [2025-09-05T21:13:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (14.93ms)
+[05-Sep-2025 21:14:28 UTC] [2025-09-05T21:14:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.79ms)
+[05-Sep-2025 21:15:29 UTC] [2025-09-05T21:15:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.24ms)
+[05-Sep-2025 21:16:28 UTC] [2025-09-05T21:16:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (31.22ms)
+[05-Sep-2025 21:17:29 UTC] [2025-09-05T21:17:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.01ms)
+[05-Sep-2025 21:18:28 UTC] [2025-09-05T21:18:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (23.65ms)
+[05-Sep-2025 21:19:29 UTC] [2025-09-05T21:19:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (35.07ms)
+[05-Sep-2025 21:20:28 UTC] [2025-09-05T21:20:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.81ms)
+[05-Sep-2025 21:21:29 UTC] [2025-09-05T21:21:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.86ms)
+[05-Sep-2025 21:22:28 UTC] [2025-09-05T21:22:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (27.20ms)
+[05-Sep-2025 21:23:29 UTC] [2025-09-05T21:23:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.24ms)
+[05-Sep-2025 21:24:28 UTC] [2025-09-05T21:24:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.44ms)
+[05-Sep-2025 21:25:29 UTC] [2025-09-05T21:25:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (31.83ms)
+[05-Sep-2025 21:26:28 UTC] [2025-09-05T21:26:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (26.88ms)
+[05-Sep-2025 21:27:29 UTC] [2025-09-05T21:27:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.89ms)
+[05-Sep-2025 21:28:28 UTC] [2025-09-05T21:28:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.18ms)
+[05-Sep-2025 21:29:29 UTC] [2025-09-05T21:29:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (23.48ms)
+[05-Sep-2025 21:30:28 UTC] [2025-09-05T21:30:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.56ms)
+[05-Sep-2025 21:31:29 UTC] [2025-09-05T21:31:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (18.84ms)
+[05-Sep-2025 21:32:28 UTC] [2025-09-05T21:32:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.18ms)
+[05-Sep-2025 21:33:29 UTC] [2025-09-05T21:33:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (15.08ms)
+[05-Sep-2025 21:34:28 UTC] [2025-09-05T21:34:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.13ms)
+[05-Sep-2025 21:35:29 UTC] [2025-09-05T21:35:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.35ms)
+[05-Sep-2025 21:36:28 UTC] [2025-09-05T21:36:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (22.16ms)
+[05-Sep-2025 21:37:29 UTC] [2025-09-05T21:37:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (16.79ms)
+[05-Sep-2025 21:38:28 UTC] [2025-09-05T21:38:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (20.66ms)
+[05-Sep-2025 21:39:29 UTC] [2025-09-05T21:39:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (21.01ms)
+[05-Sep-2025 23:02:19 UTC] Login attempt
+[05-Sep-2025 23:02:19 UTC] [2025-09-05T23:02:19+00:00] POST http://127.0.0.1:8000/auth/login – 200 (429.98ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/auth/me – 200 (10.32ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/auth/me – 200 (12.70ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/auth/me – 200 (15.70ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/auth/me – 200 (25.05ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (19.29ms)
+[05-Sep-2025 23:02:20 UTC] [2025-09-05T23:02:20+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (18.56ms)
+[05-Sep-2025 23:02:27 UTC] [2025-09-05T23:02:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (854.30ms)
+[05-Sep-2025 23:02:27 UTC] [2025-09-05T23:02:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (125.94ms)
+[05-Sep-2025 23:02:28 UTC] [2025-09-05T23:02:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (162.95ms)
+[05-Sep-2025 23:02:28 UTC] [2025-09-05T23:02:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (167.77ms)
+[05-Sep-2025 23:02:37 UTC] [2025-09-05T23:02:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (265.30ms)
+[05-Sep-2025 23:02:38 UTC] [2025-09-05T23:02:38+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (50.43ms)
+[05-Sep-2025 23:02:39 UTC] [2025-09-05T23:02:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (167.17ms)
+[05-Sep-2025 23:02:39 UTC] [2025-09-05T23:02:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (62.94ms)
+[05-Sep-2025 23:03:26 UTC] [2025-09-05T23:03:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (732.83ms)
+[05-Sep-2025 23:03:26 UTC] [2025-09-05T23:03:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (132.48ms)
+[05-Sep-2025 23:03:26 UTC] [2025-09-05T23:03:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (183.54ms)
+[05-Sep-2025 23:03:27 UTC] [2025-09-05T23:03:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (156.70ms)
+[05-Sep-2025 23:03:27 UTC] [2025-09-05T23:03:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (92.74ms)
+[05-Sep-2025 23:03:27 UTC] [2025-09-05T23:03:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (25.09ms)
+[05-Sep-2025 23:03:36 UTC] [2025-09-05T23:03:36+00:00] GET http://127.0.0.1:8000/auth/me – 200 (66.38ms)
+[05-Sep-2025 23:03:37 UTC] [2025-09-05T23:03:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (144.17ms)
+[05-Sep-2025 23:03:37 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:03:37 UTC] [2025-09-05T23:03:37+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (253.66ms)
+[05-Sep-2025 23:03:38 UTC] [2025-09-05T23:03:38+00:00] GET http://127.0.0.1:8000/auth/me – 200 (78.54ms)
+[05-Sep-2025 23:03:38 UTC] [2025-09-05T23:03:38+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (193.51ms)
+[05-Sep-2025 23:03:38 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:03:38 UTC] [2025-09-05T23:03:38+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (52.60ms)
+[05-Sep-2025 23:03:38 UTC] [2025-09-05T23:03:38+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (35.96ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (48.09ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (59.80ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (25.32ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (51.29ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.69ms)
+[05-Sep-2025 23:03:39 UTC] [2025-09-05T23:03:39+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (37.92ms)
+[05-Sep-2025 23:03:54 UTC] [2025-09-05T23:03:54+00:00] GET http://127.0.0.1:8000/auth/me – 200 (41.81ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (31.64ms)
+[05-Sep-2025 23:03:55 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (54.87ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (24.36ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (43.22ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (58.30ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (27.83ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (46.30ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.01ms)
+[05-Sep-2025 23:03:55 UTC] [2025-09-05T23:03:55+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (40.25ms)
+[05-Sep-2025 23:04:26 UTC] [2025-09-05T23:04:26+00:00] GET http://127.0.0.1:8000/auth/me – 200 (53.11ms)
+[05-Sep-2025 23:04:26 UTC] [2025-09-05T23:04:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (37.43ms)
+[05-Sep-2025 23:04:26 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:04:26 UTC] [2025-09-05T23:04:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (29.57ms)
+[05-Sep-2025 23:04:26 UTC] [2025-09-05T23:04:26+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (26.13ms)
+[05-Sep-2025 23:04:27 UTC] [2025-09-05T23:04:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.85ms)
+[05-Sep-2025 23:04:27 UTC] [2025-09-05T23:04:27+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (18.25ms)
+[05-Sep-2025 23:06:10 UTC] [2025-09-05T23:06:10+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/verify – 200 (763.54ms)
+[05-Sep-2025 23:06:10 UTC] [2025-09-05T23:06:10+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.28ms)
+[05-Sep-2025 23:06:57 UTC] [2025-09-05T23:06:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (471.54ms)
+[05-Sep-2025 23:06:57 UTC] [2025-09-05T23:06:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (29.15ms)
+[05-Sep-2025 23:06:57 UTC] [2025-09-05T23:06:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (56.98ms)
+[05-Sep-2025 23:06:57 UTC] [2025-09-05T23:06:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (18.24ms)
+[05-Sep-2025 23:06:58 UTC] [2025-09-05T23:06:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (53.20ms)
+[05-Sep-2025 23:06:58 UTC] [2025-09-05T23:06:58+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (18.98ms)
+[05-Sep-2025 23:13:50 UTC] [2025-09-05T23:13:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (66.69ms)
+[05-Sep-2025 23:13:50 UTC] [2025-09-05T23:13:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.95ms)
+[05-Sep-2025 23:13:50 UTC] [2025-09-05T23:13:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (46.76ms)
+[05-Sep-2025 23:13:50 UTC] [2025-09-05T23:13:50+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (17.19ms)
+[05-Sep-2025 23:13:51 UTC] [2025-09-05T23:13:51+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/apikeys – 200 (49.37ms)
+[05-Sep-2025 23:13:51 UTC] [2025-09-05T23:13:51+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (19.80ms)
+[05-Sep-2025 23:16:46 UTC] [2025-09-05T23:16:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (81.56ms)
+[05-Sep-2025 23:16:46 UTC] [2025-09-05T23:16:46+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (20.40ms)
+[05-Sep-2025 23:17:08 UTC] [2025-09-05T23:17:08+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (128.13ms)
+[05-Sep-2025 23:17:08 UTC] [2025-09-05T23:17:08+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (222.46ms)
+[05-Sep-2025 23:17:10 UTC] [2025-09-05T23:17:10+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (146.96ms)
+[05-Sep-2025 23:17:11 UTC] [2025-09-05T23:17:11+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (135.57ms)
+[05-Sep-2025 23:17:29 UTC] [2025-09-05T23:17:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (64.08ms)
+[05-Sep-2025 23:17:29 UTC] [2025-09-05T23:17:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (82.46ms)
+[05-Sep-2025 23:17:29 UTC] [2025-09-05T23:17:29+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (44.29ms)
+[05-Sep-2025 23:17:30 UTC] [2025-09-05T23:17:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (48.67ms)
+[05-Sep-2025 23:17:34 UTC] [2025-09-05T23:17:34+00:00] GET http://127.0.0.1:8000/auth/me – 200 (134.53ms)
+[05-Sep-2025 23:17:35 UTC] [2025-09-05T23:17:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (40.66ms)
+[05-Sep-2025 23:17:35 UTC] [2025-09-05T23:17:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (39.12ms)
+[05-Sep-2025 23:17:35 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:17:35 UTC] [2025-09-05T23:17:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (220.66ms)
+[05-Sep-2025 23:17:35 UTC] [2025-09-05T23:17:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (23.85ms)
+[05-Sep-2025 23:17:35 UTC] [2025-09-05T23:17:35+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (22.29ms)
+[05-Sep-2025 23:17:41 UTC] [2025-09-05T23:17:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (50.75ms)
+[05-Sep-2025 23:17:41 UTC] [2025-09-05T23:17:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (50.20ms)
+[05-Sep-2025 23:18:19 UTC] [2025-09-05T23:18:19+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/verify – 200 (164.58ms)
+[05-Sep-2025 23:18:19 UTC] [2025-09-05T23:18:19+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.90ms)
+[05-Sep-2025 23:18:20 UTC] [2025-09-05T23:18:20+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30/verify – 200 (39.56ms)
+[05-Sep-2025 23:18:21 UTC] [2025-09-05T23:18:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains/30 – 200 (22.64ms)
+[05-Sep-2025 23:24:41 UTC] [2025-09-05T23:24:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (51.30ms)
+[05-Sep-2025 23:24:41 UTC] [2025-09-05T23:24:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (47.12ms)
+[05-Sep-2025 23:24:41 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:24:41 UTC] [2025-09-05T23:24:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (21.46ms)
+[05-Sep-2025 23:24:41 UTC] [2025-09-05T23:24:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (22.44ms)
+[05-Sep-2025 23:24:41 UTC] [2025-09-05T23:24:41+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (24.10ms)
+[05-Sep-2025 23:26:08 UTC] [2025-09-05T23:26:08+00:00] GET http://127.0.0.1:8000/auth/me – 200 (18.28ms)
+[05-Sep-2025 23:26:08 UTC] [2025-09-05T23:26:08+00:00] GET http://127.0.0.1:8000/auth/me – 200 (10.34ms)
+[05-Sep-2025 23:26:08 UTC] [2025-09-05T23:26:08+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (16.55ms)
+[05-Sep-2025 23:26:08 UTC] [2025-09-05T23:26:08+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (12.32ms)
+[05-Sep-2025 23:26:10 UTC] [2025-09-05T23:26:10+00:00] GET http://127.0.0.1:8000/auth/me – 200 (41.28ms)
+[05-Sep-2025 23:26:11 UTC] [2025-09-05T23:26:11+00:00] GET http://127.0.0.1:8000/auth/me – 200 (28.45ms)
+[05-Sep-2025 23:26:11 UTC] [2025-09-05T23:26:11+00:00] GET http://127.0.0.1:8000/auth/me – 200 (14.45ms)
+[05-Sep-2025 23:26:11 UTC] [2025-09-05T23:26:11+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (31.52ms)
+[05-Sep-2025 23:26:11 UTC] [2025-09-05T23:26:11+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (45.79ms)
+[05-Sep-2025 23:26:35 UTC] [2025-09-05T23:26:35+00:00] GET http://127.0.0.1:8000/auth/me – 200 (24.55ms)
+[05-Sep-2025 23:26:35 UTC] [2025-09-05T23:26:35+00:00] GET http://127.0.0.1:8000/auth/me – 200 (12.40ms)
+[05-Sep-2025 23:26:35 UTC] [2025-09-05T23:26:35+00:00] GET http://127.0.0.1:8000/auth/me – 200 (12.70ms)
+[05-Sep-2025 23:26:36 UTC] [2025-09-05T23:26:36+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (14.11ms)
+[05-Sep-2025 23:26:36 UTC] [2025-09-05T23:26:36+00:00] GET http://127.0.0.1:8000/companies/list-full – 200 (12.53ms)
+[05-Sep-2025 23:27:02 UTC] [2025-09-05T23:27:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (53.18ms)
+[05-Sep-2025 23:27:02 UTC] [2025-09-05T23:27:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (65.85ms)
+[05-Sep-2025 23:27:02 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:27:02 UTC] [2025-09-05T23:27:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (24.78ms)
+[05-Sep-2025 23:27:02 UTC] [2025-09-05T23:27:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e – 200 (23.09ms)
+[05-Sep-2025 23:27:02 UTC] [2025-09-05T23:27:02+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/domains – 200 (22.95ms)
+[05-Sep-2025 23:27:20 UTC] [2025-09-05T23:27:20+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (31.50ms)
+[05-Sep-2025 23:27:21 UTC] [2025-09-05T23:27:21+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (18.85ms)
+[05-Sep-2025 23:27:25 UTC] [2025-09-05T23:27:25+00:00] POST http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds – 202 (21.70ms)
+[05-Sep-2025 23:27:28 UTC] [2025-09-05T23:27:28+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (13.28ms)
+[05-Sep-2025 23:27:30 UTC] [2025-09-05T23:27:30+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments/3/builds/status – 200 (17.24ms)
+[05-Sep-2025 23:27:33 UTC] [2025-09-05T23:27:33+00:00] GET http://127.0.0.1:8000/auth/me – 200 (15.38ms)
+[05-Sep-2025 23:27:34 UTC] [2025-09-05T23:27:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (15.67ms)
+[05-Sep-2025 23:27:34 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:27:34 UTC] [2025-09-05T23:27:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (50.48ms)
+[05-Sep-2025 23:27:34 UTC] [2025-09-05T23:27:34+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/segments?page=1&perPage=25 – 200 (16.93ms)
+[05-Sep-2025 23:27:57 UTC] [2025-09-05T23:27:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (29.06ms)
+[05-Sep-2025 23:27:57 UTC] [2025-09-05T23:27:57+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (27.43ms)
+[05-Sep-2025 23:28:00 UTC] [2025-09-05T23:28:00+00:00] GET http://127.0.0.1:8000/auth/me – 200 (92.57ms)
+[05-Sep-2025 23:28:01 UTC] [2025-09-05T23:28:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (46.23ms)
+[05-Sep-2025 23:28:01 UTC] [2025-09-05T23:28:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (34.29ms)
+[05-Sep-2025 23:28:01 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:28:01 UTC] [2025-09-05T23:28:01+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (38.62ms)
+[05-Sep-2025 23:28:02 UTC] [2025-09-05T23:28:02+00:00] GET http://127.0.0.1:8000/auth/me – 200 (25.80ms)
+[05-Sep-2025 23:28:03 UTC] [2025-09-05T23:28:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (38.92ms)
+[05-Sep-2025 23:28:03 UTC] 0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e
+[05-Sep-2025 23:28:03 UTC] [2025-09-05T23:28:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/name – 200 (28.97ms)
+[05-Sep-2025 23:28:03 UTC] [2025-09-05T23:28:03+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/lists?page=1&perPage=25&withCounts=1 – 200 (23.47ms)
+[05-Sep-2025 23:28:04 UTC] [2025-09-05T23:28:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (65.74ms)
+[05-Sep-2025 23:28:04 UTC] [2025-09-05T23:28:04+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=25 – 200 (63.15ms)
+[05-Sep-2025 23:28:14 UTC] [2025-09-05T23:28:14+00:00] GET http://127.0.0.1:8000/companies/0f7807eea90a7af1655b1085fb57d402ef04e075f301b94165da172e85efcc3e/contacts?page=1&perPage=50 – 200 (118.35ms)

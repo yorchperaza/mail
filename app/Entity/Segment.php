@@ -36,10 +36,19 @@ class Segment
 
     #[Field(type: 'string', nullable: true)]
     public ?string $hash = null;
+    /** @var SegmentMembers[] */
+    #[OneToMany(targetEntity: SegmentMembers::class, mappedBy: 'segment')]
+    public array $segmentMembers = [];
+    
+     /** @var SegmentBuild[] */
+    #[OneToMany(targetEntity: SegmentBuild::class, mappedBy: 'segment')]
+    public array $segmentBuilds = [];
 
     public function __construct()
     {
         $this->campaigns = [];
+        $this->segmentMembers = [];
+        $this->segmentBuilds = [];
     }
 
     public function getId(): int
@@ -134,5 +143,39 @@ class Segment
     {
         $this->hash = $hash;
         return $this;
+    }
+
+    public function addSegmentMembers(SegmentMembers $item): self
+    {
+        $this->segmentMembers[] = $item;
+        return $this;
+    }
+
+    public function removeSegmentMembers(SegmentMembers $item): self
+    {
+        $this->segmentMembers = array_filter($this->segmentMembers, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getSegmentMembers(): array
+    {
+        return $this->segmentMembers;
+    }
+
+    public function addSegmentBuild(SegmentBuild $item): self
+    {
+        $this->segmentBuilds[] = $item;
+        return $this;
+    }
+
+    public function removeSegmentBuild(SegmentBuild $item): self
+    {
+        $this->segmentBuilds = array_filter($this->segmentBuilds, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getSegmentBuilds(): array
+    {
+        return $this->segmentBuilds;
     }
 }
