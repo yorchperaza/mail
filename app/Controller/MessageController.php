@@ -85,48 +85,6 @@ final class MessageController
         return new JsonResponse($result, $http);
     }
 
-
-    /* =========================================================================
-     * API key entrypoint — send server-to-server (Mailgun-like)
-     * ========================================================================= */
-    /**
-     * @throws \DateMalformedStringException
-     * @throws \JsonException
-     */
-    #[Route(methods: 'POST', path: '/messages/send')]
-    public function sendWithApiKey(ServerRequestInterface $request): JsonResponse
-    {
-        $apiKey = $this->readApiKeyFromHeader($request);
-        if (!$apiKey) throw new RuntimeException('Unauthorized', 401);
-
-        // was: $this->assertApiKeyAllowed($apiKey, 'messages:send');
-        $this->assertApiKeyAllowed($apiKey, 'mail:send');   // ← change here
-
-        $company = $apiKey->getCompany();
-        if (!$company) throw new RuntimeException('API key not bound to a company', 403);
-
-        $domain = $apiKey->getDomain();
-        if (!$domain) throw new RuntimeException('API key not bound to a domain', 403);
-
-
-        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-
-        $this->enforceAndConsumeMessageQuota($company, $now, 1);
-
-        $body   = json_decode((string)$request->getBody(), true) ?: [];
-        $result = $this->mailService->createAndEnqueue($body, $company, $domain);
-
-        $status = (string)($result['status'] ?? '');
-        $http   = match ($status) {
-            'queued'       => 202,
-            'preview'      => 200,
-            'queue_failed' => 503,
-            default        => 200,
-        };
-
-        return new JsonResponse($result, $http);
-    }
-
     /* =========================================================================
      * Core flow (preview / send / queue)
      * ========================================================================= */
@@ -601,7 +559,6 @@ final class MessageController
         $filters = $this->parseMessageFilters($request->getQueryParams());
         // 3) Build and execute query
         $result = $this->queryMessages($company->getId(), $filters);
-
         // 4) Format response
         return new JsonResponse($this->formatMessagesResponse($result, $filters));
     }
@@ -781,11 +738,23 @@ final class MessageController
         // Execute query
         $items = $qb->fetchAll();
 
+        // Attach recipients in one extra query
+        $messageIds = array_values(array_filter(array_map(fn($r) => (int)($r['id'] ?? 0), $items)));
+        $recMap = $this->loadRecipientsForMessageIds($messageIds);
+
+        // Shape payloads and merge recipients
+        $items = array_map(function(array $row) use ($recMap) {
+            $item = $this->formatMessageItem($row);
+            $mid  = $item['id'] ?? 0;
+            $item['recipients'] = $recMap[$mid] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]];
+            return $item;
+        }, $items);
+
         return [
-            'items' => $items,
-            'total' => $total,
-            'page' => $filters['page'],
-            'per_page' => $filters['per_page'],
+            'items'       => $items,
+            'total'       => $total,
+            'page'        => $filters['page'],
+            'per_page'    => $filters['per_page'],
             'total_pages' => (int)max(1, ceil($total / $filters['per_page'])),
         ];
     }
@@ -823,30 +792,30 @@ final class MessageController
     private function formatMessagesResponse(array $result, array $filters): array
     {
         $items = array_map(
-            fn($row) => $this->formatMessageItem($row),
+            fn($row) => isset($row['from_email']) ? $this->formatMessageItem($row) : $row,
             $result['items']
         );
 
         return [
             'meta' => [
-                'page' => $result['page'],
-                'perPage' => $result['per_page'],
-                'total' => $result['total'],
+                'page'       => $result['page'],
+                'perPage'    => $result['per_page'],
+                'total'      => $result['total'],
                 'totalPages' => $result['total_pages'],
-                'sort' => $filters['sort'],
-                'order' => $filters['order'],
-                'filters' => [
-                    'domain_id' => $filters['domain_ids'],
-                    'date_from' => $filters['date_from']?->format(DATE_ATOM),
-                    'date_to' => $filters['date_to']?->format(DATE_ATOM),
-                    'hour_from' => $filters['hour_from'],
-                    'hour_to' => $filters['hour_to'],
-                    'state' => $filters['states'],
-                    'from' => $filters['from_like'],
-                    'to' => $filters['to_like'],
-                    'subject' => $filters['subject_like'],
+                'sort'       => $filters['sort'],
+                'order'      => $filters['order'],
+                'filters'    => [
+                    'domain_id'  => $filters['domain_ids'],
+                    'date_from'  => $filters['date_from']?->format(DATE_ATOM),
+                    'date_to'    => $filters['date_to']?->format(DATE_ATOM),
+                    'hour_from'  => $filters['hour_from'],
+                    'hour_to'    => $filters['hour_to'],
+                    'state'      => $filters['states'],
+                    'from'       => $filters['from_like'],
+                    'to'         => $filters['to_like'],
+                    'subject'    => $filters['subject_like'],
                     'message_id' => $filters['message_id'],
-                    'has_opens' => $filters['has_opens'],
+                    'has_opens'  => $filters['has_opens'],
                     'has_clicks' => $filters['has_clicks'],
                 ],
             ],
@@ -854,29 +823,48 @@ final class MessageController
         ];
     }
 
-    /**
-     * Format a single message item
-     */
+    private function col(array $row, string $snake, ?string $camel = null): mixed
+    {
+        if (array_key_exists($snake, $row)) return $row[$snake];
+        if ($camel && array_key_exists($camel, $row)) return $row[$camel];
+        return null;
+    }
+
     private function formatMessageItem(array $row): array
     {
+        // Prefer snake_case columns (raw DB), fall back to camelCase if already shaped
+        $fromEmail = (string)($this->col($row, 'from_email', 'fromEmail') ?? '');
+        $fromName  = $this->col($row, 'from_name', 'fromName');
+        $replyTo   = $this->col($row, 'reply_to', 'replyTo');
+        $subject   = $this->col($row, 'subject', 'subject');
+        $created   = $this->col($row, 'created_at', 'createdAt');
+        $queued    = $this->col($row, 'queued_at',  'queuedAt');
+        $sent      = $this->col($row, 'sent_at',    'sentAt');
+        $state     = $this->col($row, 'final_state','state');
+        $msgId     = $this->col($row, 'message_id', 'messageId');
+        $domainNm  = $this->col($row, 'domain_name','domainName');
+
         return [
-            'id' => isset($row['id']) ? (int)$row['id'] : null,
-            'company_id' => isset($row['company_id']) ? (int)$row['company_id'] : null,
-            'domain_id' => isset($row['domain_id']) ? (int)$row['domain_id'] : null,
-            'from' => [
-                'email' => (string)($row['from_email'] ?? ''),
-                'name' => $row['from_name'] !== null ? (string)$row['from_name'] : null,
+            'id'         => isset($row['id']) ? (int)$row['id'] : (int)($row['id'] ?? 0),
+            'company_id' => isset($row['company_id']) ? (int)$row['company_id'] : (int)($row['companyId'] ?? 0),
+            'domain_id'  => isset($row['domain_id'])  ? (int)$row['domain_id']  : (int)($row['domainId'] ?? 0),
+            'from'       => [
+                'email' => $fromEmail,
+                'name'  => $fromName !== null ? (string)$fromName : null,
             ],
-            'replyTo' => $row['reply_to'] !== null ? (string)$row['reply_to'] : null,
-            'subject' => $row['subject'] !== null ? (string)$row['subject'] : null,
-            'createdAt' => $this->toIso8601($row['created_at'] ?? null),
-            'queuedAt' => $this->toIso8601($row['queued_at'] ?? null),
-            'sentAt' => $this->toIso8601($row['sent_at'] ?? null),
-            'state' => $row['final_state'] !== null ? (string)$row['final_state'] : null,
-            'messageId' => $row['message_id'] !== null ? (string)$row['message_id'] : null,
-            'domainName' => isset($row['domain_name']) ? (string)$row['domain_name'] : null,
+            'replyTo'    => $replyTo !== null ? (string)$replyTo : null,
+            'subject'    => $subject !== null ? (string)$subject : null,
+            'createdAt'  => is_string($created) ? $this->toIso8601($created) : (is_string($row['createdAt'] ?? null) ? $row['createdAt'] : null),
+            'queuedAt'   => is_string($queued)  ? $this->toIso8601($queued)  : (is_string($row['queuedAt'] ?? null)  ? $row['queuedAt']  : null),
+            'sentAt'     => is_string($sent)    ? $this->toIso8601($sent)    : (is_string($row['sentAt'] ?? null)    ? $row['sentAt']    : null),
+            'state'      => $state !== null ? (string)$state : null,
+            'messageId'  => $msgId !== null ? (string)$msgId : null,
+            'domainName' => $domainNm !== null ? (string)$domainNm : null,
+            // if recipients already attached upstream, keep them
+            'recipients' => $row['recipients'] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]],
         ];
     }
+
 
     /* ===== Helper Methods ===== */
 
@@ -1132,10 +1120,11 @@ final class MessageController
             return [
                 'filename'    => (string)($a['filename'] ?? ''),
                 'contentType' => (string)($a['contentType'] ?? 'application/octet-stream'),
-                // do NOT return raw content; length is enough for UI
                 'length'      => isset($a['content']) && is_string($a['content']) ? strlen($a['content']) : null,
             ];
         }, $attachments) : null;
+
+        $recipients = $this->shapeRecipientsForMessageId((int)$m->getId());
 
         return [
             'id'         => $m->getId(),
@@ -1147,7 +1136,9 @@ final class MessageController
             'envelope'   => [
                 'from'    => ['email' => $m->getFrom_email(), 'name' => $m->getFrom_name()],
                 'replyTo' => $m->getReply_to(),
-                // If you later persist recipients, include them here.
+                'to'      => $recipients['to']  ?? [],
+                'cc'      => $recipients['cc']  ?? [],
+                'bcc'     => $recipients['bcc'] ?? [],
             ],
             'subject'    => $m->getSubject(),
             'text'       => $m->getText_body(),
@@ -1252,6 +1243,46 @@ final class MessageController
             'remaining' => $limit - ($current + $units),
             'resetAt'   => $resetAt->format(\DateTimeInterface::ATOM),
         ];
+    }
+
+    /**
+     * @param int[] $messageIds
+     * @return array<int,array{to:string[],cc:string[],bcc:string[]}>
+     */
+    private function loadRecipientsForMessageIds(array $messageIds): array
+    {
+        if (empty($messageIds)) return [];
+        error_log('01 recipents');
+        $qb = $this->qb->duplicate()
+            ->select(['mr.message_id','mr.type','mr.email'])
+            ->from('messagerecipients', 'mr')
+            ->whereIn('mr.message_id', $messageIds);
+
+        $rows = $qb->fetchAll();
+        error_log('02 recipents');
+        $out = [];
+        foreach ($rows as $r) {
+            $mid  = (int)($r['message_id'] ?? 0);
+            $type = strtolower((string)($r['type'] ?? ''));
+            $email= trim((string)($r['email'] ?? ''));
+            if ($mid <= 0 || $email === '') continue;
+            if (!isset($out[$mid])) $out[$mid] = ['to'=>[], 'cc'=>[], 'bcc'=>[]];
+            if (!in_array($type, ['to','cc','bcc'], true)) $type = 'to';
+            $out[$mid][$type][] = $email;
+        }
+        // de-dup per bucket
+        foreach ($out as $mid => $buckets) {
+            foreach ($buckets as $k => $arr) {
+                $out[$mid][$k] = array_values(array_unique($arr));
+            }
+        }
+        return $out;
+    }
+
+    private function shapeRecipientsForMessageId(int $messageId): array
+    {
+        $map = $this->loadRecipientsForMessageIds([$messageId]);
+        return $map[$messageId] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]];
     }
 
 }
