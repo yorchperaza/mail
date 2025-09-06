@@ -286,12 +286,6 @@ final class UserController
         $companyRepo = $this->repos->getRepository(Company::class);
         $companies   = $companyRepo->findByRelation('users', $userId);
 
-        if (!$user->getFullName()) {
-            return new JsonResponse([
-                'redirectTo' => '/dashboard/onboarding'
-            ], 200);
-        }
-
         // 4) Shape the response
         $companyPayload = array_map(fn(Company $c) => [
             'id'   => $c->getId(),
