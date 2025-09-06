@@ -43,7 +43,10 @@ final class SegmentBuildController
         return $s;
     }
 
-    /** POST /companies/{hash}/segments/{id}/builds — enqueue a build (202 Accepted) */
+    /** POST /companies/{hash}/segments/{id}/builds — enqueue a build (202 Accepted)
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/companies/{hash}/segments/{id}/builds')]
     public function enqueue(ServerRequestInterface $r): JsonResponse {
         $uid = $this->auth($r);

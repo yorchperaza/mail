@@ -15,12 +15,15 @@ final class SegmentBuildOrchestrator
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
-        Client|\Redis|null        $redis = null,   // <-- optional + typed (no "mixed")
+        Client|\Redis|null        $redis = null,   // optional + typed (no "mixed")
         private string            $stream = 'seg:builds',
         private string            $group  = 'seg_builders',
     ) {
+        error_log('[SEG][BOOT] ctor start');
         $this->redis = $redis ?: self::makeRedisFromEnv();
+        error_log('[SEG][BOOT] redis ready via '.(is_object($this->redis) ? get_class($this->redis) : gettype($this->redis)));
         $this->bootstrapGroup();
+        error_log('[SEG][BOOT] ctor done; stream='.$this->stream.' group='.$this->group);
     }
 
     private static function makeRedisFromEnv(): \Redis|Client
@@ -34,72 +37,103 @@ final class SegmentBuildOrchestrator
             (int)($_ENV['REDIS_DB'] ?? 0),
         );
 
+        // Log non-sensitive connection facts
+        $pu = parse_url($url) ?: [];
+        $dbg = sprintf(
+            'scheme=%s host=%s port=%s db=%s hasAuth=%s',
+            $pu['scheme'] ?? 'tcp',
+            $pu['host'] ?? '127.0.0.1',
+            $pu['port'] ?? '6379',
+            isset($pu['path']) ? trim((string)$pu['path'], '/') : '0',
+            array_key_exists('pass', $pu) ? 'yes' : 'no'
+        );
+        error_log('[SEG][BOOT] makeRedisFromEnv: '.$dbg);
+
         if (class_exists(Client::class)) {
+            error_log('[SEG][BOOT] using Predis');
             // Predis: no read timeout while blocking on streams
             return new Client($url, ['read_write_timeout' => 0]);
         }
 
         if (!class_exists(\Redis::class)) {
+            error_log('[SEG][ERR] No Redis client available (Predis/phpredis not installed).');
             throw new \RuntimeException('No Redis client available (Predis/phpredis not installed).');
         }
 
-        $parts = parse_url($url) ?: [];
-        $host  = $parts['host'] ?? '127.0.0.1';
-        $port  = (int)($parts['port'] ?? 6379);
-        $pass  = $parts['pass'] ?? null;
-        $db    = isset($parts['path']) ? (int)trim($parts['path'], '/') : 0;
+        // phpredis
+        $host  = $pu['host'] ?? '127.0.0.1';
+        $port  = (int)($pu['port'] ?? 6379);
+        $pass  = $pu['pass'] ?? null;
+        $db    = isset($pu['path']) ? (int)trim((string)$pu['path'], '/') : 0;
 
         $r = new \Redis();
-        $r->pconnect($host, $port, 2.5);
-        if ($pass) $r->auth($pass);
-        if ($db) $r->select($db);
+        $ok = @$r->pconnect($host, $port, 2.5);
+        error_log('[SEG][BOOT] phpredis pconnect host='.$host.' port='.$port.' ok='.($ok ? '1' : '0'));
+        if ($pass) {
+            $authOk = @$r->auth($pass);
+            error_log('[SEG][BOOT] phpredis auth ok='.($authOk ? '1' : '0'));
+        }
+        if ($db) {
+            $selOk = @$r->select($db);
+            error_log('[SEG][BOOT] phpredis select db='.$db.' ok='.($selOk ? '1' : '0'));
+        }
         $r->setOption(\Redis::OPT_READ_TIMEOUT, -1);
         return $r;
     }
 
     /* ==================== Public API ==================== */
 
-    /** Enqueue a build job (company_id, segment_id, materialize?)
-     * @throws \DateMalformedStringException
-     */
+    /** Enqueue a build job (company_id, segment_id, materialize?) */
     public function enqueueBuild(int $companyId, int $segmentId, bool $materialize = true): string
     {
+        error_log(sprintf('[SEG][ENQ] company_id=%d segment_id=%d materialize=%s', $companyId, $segmentId, $materialize ? '1' : '0'));
+
         $payload = json_encode([
             'company_id'  => $companyId,
             'segment_id'  => $segmentId,
             'materialize' => $materialize,
-            'enqueued_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            'enqueued_at' => new \DateTimeImmutable('now', new \DateTimeZone('UTC'))->format(\DATE_ATOM),
         ], JSON_UNESCAPED_SLASHES);
 
         // set queued status right away
         $this->setStatus($companyId, $segmentId, [
             'status'   => 'queued',
             'message'  => 'Waiting for a worker',
-            'entryId'  => null,            // you can fill with XADD id if you want
+            'entryId'  => null,
             'progress' => 0,
         ]);
 
-        return $this->xadd($this->stream, ['data' => $payload]);
+        $id = $this->xadd($this->stream, ['data' => $payload]);
+        error_log('[SEG][ENQ] xadd id='.$id);
+        return $id;
     }
 
     /** Blocking loop (call from a CLI worker). */
     public function runForever(): void
     {
         $consumer = gethostname() . '-' . getmypid();
+        error_log('[SEG][RUN] runForever start consumer='.$consumer);
         while (true) {
-            $batch = $this->xreadgroup($this->group, $consumer, [$this->stream => '>'], 10, 30000);
-            if (!$batch || empty($batch[$this->stream])) {
-                continue;
-            }
-            foreach ($batch[$this->stream] as $id => $fields) {
-                try {
-                    $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
-                    $this->runBuildJob($payload);
-                    $this->xack($this->stream, $this->group, [$id]);
-                } catch (\Throwable $e) {
-                    // log and leave as pending (or move to DLQ as needed)
-                    error_log('[SEG][ERR] '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
+            try {
+                $batch = $this->xreadgroup($this->group, $consumer, [$this->stream => '>'], 10, 30000);
+                $n = is_array($batch[$this->stream] ?? null) ? count($batch[$this->stream]) : 0;
+                if ($n === 0) {
+                    continue;
                 }
+                error_log('[SEG][RUN] fetched messages n='.$n);
+                foreach ($batch[$this->stream] as $id => $fields) {
+                    try {
+                        $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
+                        error_log('[SEG][RUN] processing id='.$id.' payloadKeys='.implode(',', array_keys($payload)));
+                        $this->runBuildJob($payload);
+                        $acked = $this->xack($this->stream, $this->group, [$id]);
+                        error_log('[SEG][RUN] acked id='.$id.' ack='.$acked);
+                    } catch (\Throwable $e) {
+                        error_log('[SEG][ERR] runForever job: '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
+                    }
+                }
+            } catch (\Throwable $e) {
+                error_log('[SEG][ERR] runForever loop: '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
             }
         }
     }
@@ -108,17 +142,21 @@ final class SegmentBuildOrchestrator
     public function runOnce(int $count = 10, int $blockMs = 3000): void
     {
         $consumer = gethostname() . '-' . getmypid();
+        error_log('[SEG][RUNONCE] start count='.$count.' blockMs='.$blockMs.' consumer='.$consumer);
         $batch = $this->xreadgroup($this->group, $consumer, [$this->stream => '>'], $count, $blockMs);
-        if (!$batch || empty($batch[$this->stream])) {
-            return;
-        }
+        $n = is_array($batch[$this->stream] ?? null) ? count($batch[$this->stream]) : 0;
+        error_log('[SEG][RUNONCE] fetched n='.$n);
+        if ($n === 0) return;
+
         foreach ($batch[$this->stream] as $id => $fields) {
             try {
                 $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
+                error_log('[SEG][RUNONCE] processing id='.$id);
                 $this->runBuildJob($payload);
-                $this->xack($this->stream, $this->group, [$id]);
+                $acked = $this->xack($this->stream, $this->group, [$id]);
+                error_log('[SEG][RUNONCE] acked id='.$id.' ack='.$acked);
             } catch (\Throwable $e) {
-                error_log('[SEG][ERR] '.$e->getMessage());
+                error_log('[SEG][ERR] runOnce job: '.$e->getMessage());
             }
         }
     }
@@ -130,8 +168,11 @@ final class SegmentBuildOrchestrator
         $segmentId   = (int)($payload['segment_id'] ?? 0);
         $materialize = (bool)($payload['materialize'] ?? true);
 
+        error_log(sprintf('[SEG][JOB] start company_id=%d segment_id=%d materialize=%s', $companyId, $segmentId, $materialize ? '1' : '0'));
+
         if ($companyId <= 0 || $segmentId <= 0) {
             $this->setStatus($companyId, $segmentId, ['status'=>'error','message'=>'Invalid payload']);
+            error_log('[SEG][JOB][ERR] invalid payload');
             throw new \RuntimeException('Invalid build payload');
         }
 
@@ -149,14 +190,17 @@ final class SegmentBuildOrchestrator
 
         $company = $coRepo->find($companyId);
         $segment = $segRepo->find($segmentId);
+        error_log('[SEG][JOB] repos fetched company='.($company ? '1' : '0').' segment='.($segment ? '1' : '0'));
         if (!$company || !$segment) {
             $this->setStatus($companyId, $segmentId, ['status'=>'error','message'=>'Company or segment not found']);
+            error_log('[SEG][JOB][ERR] company or segment not found');
             throw new \RuntimeException('Company or Segment not found');
         }
 
         try {
             /** @var SegmentBuildService $svc */
             $svc = new SegmentBuildService($this->repos, $this->qb);
+            error_log('[SEG][JOB] SegmentBuildService created');
 
             // optional intermediate status
             $this->setStatus($companyId, $segmentId, [
@@ -166,16 +210,21 @@ final class SegmentBuildOrchestrator
             ]);
 
             $res = $svc->buildSegment($company, $segment, $materialize);
+            $matches = (int)($res['matches'] ?? 0);
+            $added   = (int)($res['stats']['added'] ?? 0);
+            $removed = (int)($res['stats']['removed'] ?? 0);
+            $kept    = (int)($res['stats']['kept'] ?? 0);
+            error_log(sprintf('[SEG][JOB] build done matches=%d added=%d removed=%d kept=%d', $matches, $added, $removed, $kept));
 
             // done
             $this->setStatus($companyId, $segmentId, [
                 'status'    => 'ok',
                 'message'   => 'Segment built',
                 'progress'  => 100,
-                'matches'   => (int)($res['matches'] ?? 0),
-                'added'     => (int)($res['stats']['added'] ?? 0),
-                'removed'   => (int)($res['stats']['removed'] ?? 0),
-                'kept'      => (int)($res['stats']['kept'] ?? 0),
+                'matches'   => $matches,
+                'added'     => $added,
+                'removed'   => $removed,
+                'kept'      => $kept,
                 'builtAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
             ]);
 
@@ -185,6 +234,7 @@ final class SegmentBuildOrchestrator
                 'status'  => 'error',
                 'message' => $e->getMessage(),
             ]);
+            error_log('[SEG][JOB][ERR] '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
             throw $e;
         }
     }
@@ -194,11 +244,14 @@ final class SegmentBuildOrchestrator
 
     private function bootstrapGroup(): void
     {
+        error_log('[SEG][BOOT] bootstrapGroup start stream='.$this->stream.' group='.$this->group);
         try {
             // MKSTREAM to auto-create stream if missing
             $this->xgroupCreate($this->stream, $this->group, '0', true);
+            error_log('[SEG][BOOT] group ensured OK');
         } catch (\Throwable $e) {
-            // group may already exist – ignore
+            // group may already exist – ignore, but log
+            error_log('[SEG][BOOT] group ensure skipped: '.$e->getMessage());
         }
     }
 
@@ -207,6 +260,7 @@ final class SegmentBuildOrchestrator
     /** @param array<string,string> $fields */
     private function xadd(string $stream, array $fields): string
     {
+        error_log('[SEG][REDIS] XADD stream='.$stream);
         if ($this->redis instanceof \Redis) {
             // phpredis
             return (string)$this->redis->xAdd($stream, '*', $fields);
@@ -218,6 +272,8 @@ final class SegmentBuildOrchestrator
     /** @param array<string,string> $streams */
     private function xreadgroup(string $group, string $consumer, array $streams, int $count, int $blockMs): array
     {
+        $keys = implode(',', array_keys($streams));
+        error_log("[SEG][REDIS] XREADGROUP group={$group} consumer={$consumer} streams={$keys} count={$count} blockMs={$blockMs}");
         if ($this->redis instanceof \Redis) {
             // phpredis
             return $this->redis->xReadGroup($group, $consumer, $streams, $count, $blockMs);
@@ -240,6 +296,7 @@ final class SegmentBuildOrchestrator
 
     private function xack(string $stream, string $group, array $ids): int
     {
+        error_log('[SEG][REDIS] XACK stream='.$stream.' ids='.implode(',', $ids));
         if ($this->redis instanceof \Redis) {
             return (int)$this->redis->xAck($stream, $group, $ids);
         }
@@ -249,6 +306,7 @@ final class SegmentBuildOrchestrator
 
     private function xgroupCreate(string $stream, string $group, string $id = '0', bool $mkstream = true): void
     {
+        error_log('[SEG][REDIS] XGROUP CREATE stream='.$stream.' group='.$group.' mkstream='.($mkstream?'1':'0'));
         if ($this->redis instanceof \Redis) {
             // phpredis supports MKSTREAM boolean param
             $this->redis->xGroup('CREATE', $stream, $group, $id, $mkstream);
@@ -275,8 +333,10 @@ final class SegmentBuildOrchestrator
      */
     private function decodeXreadReply($raw): array
     {
-        // Predis returns: [[stream, [[id, [k1,v1,k2,v2...]], ...]]]
-        if (!is_array($raw) || empty($raw)) return [];
+        if (!is_array($raw) || empty($raw)) {
+            error_log('[SEG][REDIS] decodeXreadReply empty');
+            return [];
+        }
         $out = [];
         foreach ($raw as $streamEntry) {
             if (!is_array($streamEntry) || count($streamEntry) < 2) continue;
@@ -291,6 +351,7 @@ final class SegmentBuildOrchestrator
                 $out[$stream][$id] = $fields;
             }
         }
+        error_log('[SEG][REDIS] decodeXreadReply parsed streams='.implode(',', array_keys($out)));
         return $out;
     }
 
@@ -304,24 +365,28 @@ final class SegmentBuildOrchestrator
         $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM);
         $data = array_merge(['updatedAt' => $now], $payload);
         $json = json_encode($data, JSON_UNESCAPED_SLASHES);
+        $key = $this->statusKey($companyId, $segmentId);
         if ($this->redis instanceof \Redis) {
-            $this->redis->setex($this->statusKey($companyId, $segmentId), 3600, $json);
+            $ok = $this->redis->setex($key, 3600, $json);
+            error_log('[SEG][STATUS] SETEX key='.$key.' ok='.($ok ? '1' : '0'));
         } else {
-            $this->redis->executeRaw(['SETEX', $this->statusKey($companyId, $segmentId), '3600', $json]);
+            $this->redis->executeRaw(['SETEX', $key, '3600', $json]);
+            error_log('[SEG][STATUS] SETEX (Predis) key='.$key);
         }
     }
 
     /** Public: used by controller. */
     public function lastStatus(int $companyId, int $segmentId): ?array {
+        $key = $this->statusKey($companyId, $segmentId);
         if ($this->redis instanceof \Redis) {
-            $raw = $this->redis->get($this->statusKey($companyId, $segmentId));
+            $raw = $this->redis->get($key);
         } else {
-            $raw = $this->redis->executeRaw(['GET', $this->statusKey($companyId, $segmentId)]);
+            $raw = $this->redis->executeRaw(['GET', $key]);
         }
-        if (!is_string($raw) || $raw === '') return null;
-        $data = json_decode($raw, true);
+        $isHit = is_string($raw) && $raw !== '';
+        error_log('[SEG][STATUS] GET key='.$key.' hit='.($isHit?'1':'0'));
+        if (!$isHit) return null;
+        $data = json_decode((string)$raw, true);
         return is_array($data) ? $data : null;
     }
-
-
 }
