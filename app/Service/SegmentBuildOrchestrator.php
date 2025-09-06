@@ -5,6 +5,7 @@ namespace App\Service;
 
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
+use Predis\Client;
 
 /**
  * Orchestrates segment builds using Redis Streams.
@@ -12,19 +13,16 @@ use MonkeysLegion\Query\QueryBuilder;
  */
 final class SegmentBuildOrchestrator
 {
-    /** @var \Redis|\Predis\Client */
+    /** @var \Redis|Client */
     private $redis;
 
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
-                                  $redis,                                // <-- allow \Redis OR Predis\Client
-        private string $stream = 'seg:builds',
-        private string $group  = 'seg_builders',
+        Client|\Redis             $redis,   // <-- accept Predis OR phpredis
+        private string            $stream = 'seg:builds',
+        private string            $group  = 'seg_builders',
     ) {
-        if (!($redis instanceof \Redis) && !($redis instanceof \Predis\Client)) {
-            throw new \InvalidArgumentException('redis must be \Redis or Predis\Client');
-        }
         $this->redis = $redis;
         $this->bootstrapGroup();
     }

@@ -95,7 +95,7 @@ return [
     SegmentBuildOrchestrator::class => fn($c) => new SegmentBuildOrchestrator(
         $c->get(RepositoryFactory::class),
         $c->get(QueryBuilder::class),
-        $c->get(PredisClient::class),
+        $c->get(PredisClient::class),   // Predis\Client instance
         stream: $_ENV['SEGMENT_STREAM'] ?? 'seg:builds',
         group:  $_ENV['SEGMENT_GROUP']  ?? 'seg_builders',
     ),
