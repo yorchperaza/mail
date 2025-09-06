@@ -7,10 +7,6 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
 use Predis\Client;
 
-/**
- * Orchestrates segment builds using Redis Streams.
- * Works with either phpredis (\Redis) or Predis\Client.
- */
 final class SegmentBuildOrchestrator
 {
     /** @var \Redis|Client */
@@ -19,12 +15,46 @@ final class SegmentBuildOrchestrator
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
-        Client|\Redis             $redis,   // <-- accept Predis OR phpredis
+        Client|\Redis|null        $redis = null,   // <-- optional + typed (no "mixed")
         private string            $stream = 'seg:builds',
         private string            $group  = 'seg_builders',
     ) {
-        $this->redis = $redis;
+        $this->redis = $redis ?: self::makeRedisFromEnv();
         $this->bootstrapGroup();
+    }
+
+    private static function makeRedisFromEnv(): \Redis|Client
+    {
+        $url = $_ENV['REDIS_URL'] ?? sprintf(
+            '%s://%s%s:%d/%d',
+            ($_ENV['REDIS_SCHEME'] ?? 'tcp') === 'tls' ? 'tls' : 'tcp',
+            !empty($_ENV['REDIS_AUTH']) ? (':'.$_ENV['REDIS_AUTH'].'@') : '',
+            $_ENV['REDIS_HOST'] ?? '127.0.0.1',
+            (int)($_ENV['REDIS_PORT'] ?? 6379),
+            (int)($_ENV['REDIS_DB'] ?? 0),
+        );
+
+        if (class_exists(Client::class)) {
+            // Predis: no read timeout while blocking on streams
+            return new Client($url, ['read_write_timeout' => 0]);
+        }
+
+        if (!class_exists(\Redis::class)) {
+            throw new \RuntimeException('No Redis client available (Predis/phpredis not installed).');
+        }
+
+        $parts = parse_url($url) ?: [];
+        $host  = $parts['host'] ?? '127.0.0.1';
+        $port  = (int)($parts['port'] ?? 6379);
+        $pass  = $parts['pass'] ?? null;
+        $db    = isset($parts['path']) ? (int)trim($parts['path'], '/') : 0;
+
+        $r = new \Redis();
+        $r->pconnect($host, $port, 2.5);
+        if ($pass) $r->auth($pass);
+        if ($db) $r->select($db);
+        $r->setOption(\Redis::OPT_READ_TIMEOUT, -1);
+        return $r;
     }
 
     /* ==================== Public API ==================== */
