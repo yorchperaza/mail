@@ -422,6 +422,7 @@ final class CompanyController
                 'id'   => $company->getPlan()?->getId(),
                 'name' => $company->getPlan()?->getName(),
             ] : null,
+            'status'       => (bool)$company->getStatus(),
             'users' => array_map(fn($u) => [
                 'id'       => $u->getId(),
                 'email'    => $u->getEmail(),
@@ -431,6 +432,148 @@ final class CompanyController
 
         return new JsonResponse($payload);
     }
+
+    /**
+     * PATCH /companies/{hash}
+     * Partially updates basic company info.
+     *
+     * Accepts any subset of:
+     *   - name (non-empty string)
+     *   - phone_number (string|null)
+     *   - address (object|null) with {street,city,zip,country} all non-empty when provided
+     *   - status (bool)
+     *
+     * Returns the updated resource.
+     *
+     * @throws \JsonException
+     * @throws \ReflectionException
+     */
+    #[Route(methods: 'PATCH', path: '/companies/{hash}')]
+    public function update(ServerRequestInterface $request): JsonResponse
+    {
+
+        $userId = (int)$request->getAttribute('user_id', 0);
+        if ($userId <= 0) {
+            error_log('[CO][PATCH][ERR] Unauthorized');
+            throw new RuntimeException('Unauthorized', 401);
+        }
+
+        $hash = $request->getAttribute('hash');
+        if (!is_string($hash) || strlen($hash) !== 64) {
+            error_log('[CO][PATCH][ERR] invalid hash');
+            throw new RuntimeException('Invalid company identifier', 400);
+        }
+
+        /** @var \App\Repository\CompanyRepository $companyRepo */
+        $companyRepo = $this->repos->getRepository(Company::class);
+
+        /** @var Company|null $company */
+        $company = $companyRepo->findOneBy(['hash' => $hash]);
+        if (!$company) {
+            error_log('[CO][PATCH][ERR] not found');
+            throw new RuntimeException('Company not found', 404);
+        }
+
+        // Ensure requester belongs to the company (adjust to role-check if you have pivot roles)
+        $belongs = array_filter($company->getUsers() ?? [], fn(User $u) => $u->getId() === $userId);
+        if (empty($belongs)) {
+            error_log('[CO][PATCH][ERR] forbidden (membership)');
+            throw new RuntimeException('Forbidden', 403);
+        }
+
+        $raw = (string)$request->getBody();
+        $len = strlen($raw);
+        error_log("[CO][PATCH] bodyLen={$len}");
+        $body = $raw === '' ? [] : (json_decode($raw, true, 512, JSON_THROW_ON_ERROR) ?: []);
+
+        // Track what actually changed
+        $changed = [];
+
+        // name
+        if (array_key_exists('name', $body)) {
+            $name = trim((string)$body['name']);
+            if ($name === '') {
+                throw new RuntimeException('Name cannot be empty', 422);
+            }
+            if ($company->getName() !== $name) {
+                $company->setName($name);
+                $changed[] = 'name';
+            }
+        }
+
+        // phone_number (nullable)
+        if (array_key_exists('phone_number', $body)) {
+            $phone = $body['phone_number'];
+            $phone = ($phone === null) ? null : trim((string)$phone);
+            if ($company->getPhone_number() !== $phone) {
+                $company->setPhone_number($phone);
+                $changed[] = 'phone_number';
+            }
+        }
+
+        // address (nullable OR full object with non-empty fields)
+        if (array_key_exists('address', $body)) {
+            $address = $body['address'];
+            if ($address === null) {
+                if ($company->getAddress() !== null) {
+                    $company->setAddress(null);
+                    $changed[] = 'address(null)';
+                }
+            } else {
+                if (!is_array($address)) {
+                    throw new RuntimeException('Address must be an object or null', 422);
+                }
+                foreach (['street','city','zip','country'] as $k) {
+                    if (!array_key_exists($k, $address) || trim((string)$address[$k]) === '') {
+                        throw new RuntimeException("Address must include non-empty “{$k}”", 422);
+                    }
+                    $address[$k] = trim((string)$address[$k]);
+                }
+                // Only mark changed if different
+                if ($company->getAddress() !== $address) {
+                    $company->setAddress($address);
+                    $changed[] = 'address';
+                }
+            }
+        }
+
+        // status (bool)
+        if (array_key_exists('status', $body)) {
+            $status = (bool)$body['status'];
+            if ((bool)$company->getStatus() !== $status) {
+                $company->setStatus($status);
+                $changed[] = 'status';
+            }
+        }
+
+        if (empty($changed)) {
+            error_log('[CO][PATCH] no changes');
+            // 204 No Content is also fine; returning the current resource is convenient for clients
+            return new JsonResponse([
+                'id'           => $company->getId(),
+                'hash'         => $company->getHash(),
+                'name'         => $company->getName(),
+                'phone_number' => $company->getPhone_number(),
+                'address'      => $company->getAddress(),
+                'status'       => (bool)$company->getStatus(),
+            ], 200);
+        }
+
+        // Persist
+        $companyRepo->save($company);
+
+        // Response
+        return new JsonResponse([
+            'id'           => $company->getId(),
+            'hash'         => $company->getHash(),
+            'name'         => $company->getName(),
+            'phone_number' => $company->getPhone_number(),
+            'address'      => $company->getAddress(),
+            'status'       => (bool)$company->getStatus(),
+            // keep shape minimal; add plan, stripe, etc. if needed
+        ], 200);
+    }
+
 
     /**
      * GET /companies/{hash}/name
