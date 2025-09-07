@@ -69,31 +69,30 @@ final class SegmentBuildController
             $uid = $this->auth($r);
             $hash = (string)$r->getAttribute('hash');
             $segId = (int)$r->getAttribute('id');
-            error_log(sprintf('[SEG][CTRL][ENQ] params hash=%s segId=%d', $hash, $segId));
 
             $co  = $this->company($hash, $uid);
             $seg = $this->segment($segId, $co);
 
-            $rawBody = (string)$r->getBody();
-            $bodyLen = strlen($rawBody);
-            $body = json_decode($rawBody, true) ?: [];
+            $body = json_decode((string)$r->getBody(), true) ?: [];
             $materialize = (bool)($body['materialize'] ?? true);
-            error_log(sprintf('[SEG][CTRL][ENQ] bodyLen=%d materialize=%s', $bodyLen, $materialize ? '1' : '0'));
 
+            // Add to queue
             $entryId = $this->orchestrator->enqueueBuild(
                 $co->getId(),
                 $seg->getId(),
                 $materialize
             );
-            error_log(sprintf('[SEG][CTRL][ENQ] enqueued entryId=%s company_id=%d segment_id=%d', (string)$entryId, $co->getId(), $seg->getId()));
+
+            // IMMEDIATELY process the queue (don't wait for worker)
+            $this->orchestrator->runOnce(1, 100);
 
             return new JsonResponse([
-                'status'  => 'enqueued',
+                'status'  => 'processing',
                 'entryId' => $entryId,
                 'segment' => ['id' => $seg->getId(), 'name' => $seg->getName()],
-            ], 202);
+            ], 200); // Changed from 202 to 200
         } catch (\Throwable $e) {
-            error_log('[SEG][CTRL][ENQ][ERR] '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
+            error_log('[SEG][CTRL][ENQ][ERR] '.$e->getMessage());
             throw $e;
         }
     }
