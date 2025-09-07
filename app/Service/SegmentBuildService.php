@@ -119,7 +119,7 @@ final class SegmentBuildService
      * Create a SegmentBuild row and (optionally) materialize members.
      * Returns [build:SegmentBuild, stats: array].
      *
-     * $materialize = true → upsert rows in segment_members (diff-based), update segment counters.
+     * $materialize = true → upsert rows in segmentmembers (diff-based), update segment counters.
      */
     public function buildSegment(Company $company, Segment $segment, bool $materialize = true): array
     {
@@ -156,7 +156,7 @@ final class SegmentBuildService
     }
 
     /**
-     * Compute diff with current materialization and upsert rows in segment_members.
+     * Compute diff with current materialization and upsert rows in segmentmembers.
      * Returns stats.
      */
     public function materializeMembers(Segment $segment, array $matches): array
@@ -166,7 +166,7 @@ final class SegmentBuildService
 
         // Load existing member contact ids for this segment
         $pdo = $this->qb->pdo();
-        $stmt = $pdo->prepare("SELECT contact_id FROM segment_members WHERE segment_id = :sid");
+        $stmt = $pdo->prepare("SELECT contact_id FROM segmentmembers WHERE segment_id = :sid");
         $stmt->bindValue(':sid', $segment->getId(), \PDO::PARAM_INT);
         $stmt->execute();
         $existingRows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
@@ -188,14 +188,14 @@ final class SegmentBuildService
             foreach (array_keys($toAdd) as $cid) {
                 $values[] = sprintf('(%d,%d,%s)', (int)$segment->getId(), (int)$cid, $pdo->quote($now));
             }
-            $sql = "INSERT INTO segment_members (segment_id, contact_id, build_at) VALUES " . implode(',', $values);
+            $sql = "INSERT INTO segmentmembers (segment_id, contact_id, build_at) VALUES " . implode(',', $values);
             $pdo->exec($sql);
         }
 
         // Bulk delete removes
         if ($toRemove) {
             $ids = implode(',', array_map('intval', array_keys($toRemove)));
-            $sql = "DELETE FROM segment_members WHERE segment_id = " . (int)$segment->getId() . " AND contact_id IN ($ids)";
+            $sql = "DELETE FROM segmentmembers WHERE segment_id = " . (int)$segment->getId() . " AND contact_id IN ($ids)";
             $pdo->exec($sql);
         }
 
