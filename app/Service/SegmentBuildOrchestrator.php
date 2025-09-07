@@ -14,6 +14,12 @@ final class SegmentBuildOrchestrator
 
     private string $consumer;
 
+    // ---- NEW: safety/robustness knobs ----
+    private int $maxJobSeconds;
+    private int $maxRetries;
+    private int $claimIdleMs;
+    private string $dlq;
+
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
@@ -25,6 +31,13 @@ final class SegmentBuildOrchestrator
         $this->redis = $redis ?: self::makeRedisFromEnv();
         error_log('[SEG][BOOT] redis ready via '.(is_object($this->redis) ? get_class($this->redis) : gettype($this->redis)));
         $this->bootstrapGroup();
+
+        // ---- NEW: knobs from env ----
+        $this->maxJobSeconds = (int)($_ENV['SEGMENT_MAX_SECONDS']   ?? 300);     // 5 min default
+        $this->maxRetries    = (int)($_ENV['SEGMENT_MAX_RETRIES']   ?? 5);
+        $this->claimIdleMs   = (int)($_ENV['SEGMENT_CLAIM_IDLE_MS'] ?? 60000);
+        $this->dlq           = (string)($_ENV['SEGMENT_DLQ']        ?? 'seg:builds:dead');
+
         error_log('[SEG][BOOT] ctor done; stream='.$this->stream.' group='.$this->group);
     }
 
@@ -94,7 +107,7 @@ final class SegmentBuildOrchestrator
             'company_id'  => $companyId,
             'segment_id'  => $segmentId,
             'materialize' => $materialize,
-            'enqueued_at' => new \DateTimeImmutable('now', new \DateTimeZone('UTC'))->format(\DATE_ATOM),
+            'enqueued_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
         ], JSON_UNESCAPED_SLASHES);
 
         // set queued status right away
@@ -116,34 +129,38 @@ final class SegmentBuildOrchestrator
         $this->consumer = gethostname() . '-' . getmypid();
         error_log("[SEG][WORKER] start consumer={$this->consumer}");
         while (true) {
-            $batch = $this->xreadgroup($this->group, $this->consumer, [$this->stream => '>'], 10, 30000);
+            $blockMs = (int)($_ENV['SEGMENT_BLOCK_MS'] ?? 30000);
+            $batch = $this->xreadgroup($this->group, $this->consumer, [$this->stream => '>'], 10, $blockMs);
             if (!$batch || empty($batch[$this->stream])) {
                 error_log("[SEG][WORKER] idle…");
-                // also try to reclaim stale messages (idle > 60s)
-                $this->claimStale();
+                // also try to reclaim stale messages (idle > configured)
+                $this->claimStale($this->claimIdleMs);
                 continue;
             }
             foreach ($batch[$this->stream] as $id => $fields) {
                 error_log("[SEG][WORKER] got {$id}");
                 try {
                     $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
-                    $this->runBuildJobWithHeartbeat($payload); // <— new wrapper
+                    $this->runBuildJobWithHeartbeat($payload); // wrapper
                     $this->xack($this->stream, $this->group, [$id]);
                     error_log("[SEG][WORKER] ack {$id}");
                 } catch (\Throwable $e) {
                     error_log("[SEG][ERR] {$e->getMessage()} @ {$e->getFile()}:{$e->getLine()}");
-                    // leave pending (or push to DLQ if you want)
+                    // retry/DLQ, then ACK the failed delivery so it doesn’t stay pending
+                    try { $this->failOrRetry($fields, $e); } catch (\Throwable $ignored) {}
+                    try { $this->xack($this->stream, $this->group, [$id]); } catch (\Throwable $ignored) {}
                 }
             }
         }
     }
 
-    // heartbeat wrapper (updates status every ~5s while build runs)
+    // heartbeat wrapper (updates status every ~5s; enforces max duration)
     private function runBuildJobWithHeartbeat(array $payload): array
     {
         $companyId   = (int)($payload['company_id'] ?? 0);
         $segmentId   = (int)($payload['segment_id'] ?? 0);
 
+        $t0 = time();
         $lastBeat = 0;
         $beat = function(int $progress, string $msg) use ($companyId, $segmentId, &$lastBeat) {
             $now = time();
@@ -164,28 +181,37 @@ final class SegmentBuildOrchestrator
             'message'  => 'Computing matches…',
             'progress' => 10,
         ]);
-
-        // call the original job, but keep sending beats
-        $t0 = microtime(true);
         $beat(15, 'Preparing SQL…');
 
-        $res = $this->runBuildJob($payload); // your existing method (kept as-is)
+        // run the real job
+        $res = $this->runBuildJob($payload);
 
-        $dt = (int)round((microtime(true) - $t0));
+        $elapsed = time() - $t0;
+        if ($elapsed > $this->maxJobSeconds) {
+            $this->setStatus($companyId, $segmentId, [
+                'status'  => 'error',
+                'message' => 'Segment build timed out',
+            ]);
+            throw new \RuntimeException('Segment build timed out');
+        }
+
+        // finalize (idempotent with runBuildJob’s own finalize)
         $this->setStatus($companyId, $segmentId, [
-            'status'    => 'ok',
-            'message'   => 'Segment built',
-            'progress'  => 100,
-            'durationSec' => $dt,
-            'builtAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            'status'      => 'ok',
+            'message'     => 'Segment built',
+            'progress'    => 100,
+            'durationSec' => $elapsed,
+            'builtAt'     => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
         ]);
 
         return $res;
     }
 
-// reclaim stale pending messages so you don't get “stuck running” forever
+    // reclaim stale pending messages so you don't get “stuck running” forever
     private function claimStale(int $minIdleMs = 60000, int $count = 10): void
     {
+        $minIdleMs = $this->claimIdleMs ?: $minIdleMs;
+
         if (!isset($this->consumer)) {
             $this->consumer = gethostname() . '-' . getmypid();
         }
@@ -314,6 +340,37 @@ final class SegmentBuildOrchestrator
         }
     }
 
+    // NEW: retry / DLQ logic
+    private function failOrRetry(array $fields, \Throwable $e): void
+    {
+        $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
+        $companyId = (int)($payload['company_id'] ?? 0);
+        $segmentId = (int)($payload['segment_id'] ?? 0);
+
+        $retries = (int)($payload['retries'] ?? 0) + 1;
+        $payload['retries'] = $retries;
+        $payload['error']   = substr($e->getMessage(), 0, 500);
+
+        if ($retries > $this->maxRetries) {
+            // Move to DLQ
+            $this->xadd($this->dlq, ['data' => json_encode($payload, JSON_UNESCAPED_SLASHES)]);
+            $this->setStatus($companyId, $segmentId, [
+                'status'  => 'error',
+                'message' => 'Moved to DLQ after retries: '.$e->getMessage(),
+            ]);
+            error_log("[SEG][DLQ] moved company={$companyId} segment={$segmentId} retries={$retries}");
+            return;
+        }
+
+        // Re-enqueue for retry
+        $this->xadd($this->stream, ['data' => json_encode($payload, JSON_UNESCAPED_SLASHES)]);
+        $this->setStatus($companyId, $segmentId, [
+            'status'   => 'queued',
+            'message'  => "Retry {$retries}/{$this->maxRetries}",
+            'progress' => 0,
+        ]);
+        error_log("[SEG][RETRY] requeued company={$companyId} segment={$segmentId} retries={$retries}");
+    }
 
     /* ==================== Bootstrap group ==================== */
 
