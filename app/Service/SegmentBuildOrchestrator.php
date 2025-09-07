@@ -7,18 +7,16 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
 use Predis\Client;
 
+/**
+ * Orchestrates segment builds using Redis Streams.
+ * Works with either phpredis (\Redis) or Predis\Client.
+ */
 final class SegmentBuildOrchestrator
 {
     /** @var \Redis|Client */
     private $redis;
 
     private string $consumer;
-
-    // ---- NEW: safety/robustness knobs ----
-    private int $maxJobSeconds;
-    private int $maxRetries;
-    private int $claimIdleMs;
-    private string $dlq;
 
     public function __construct(
         private RepositoryFactory $repos,
@@ -31,60 +29,74 @@ final class SegmentBuildOrchestrator
         $this->redis = $redis ?: self::makeRedisFromEnv();
         error_log('[SEG][BOOT] redis ready via '.(is_object($this->redis) ? get_class($this->redis) : gettype($this->redis)));
         $this->bootstrapGroup();
-
-        // ---- NEW: knobs from env ----
-        $this->maxJobSeconds = (int)($_ENV['SEGMENT_MAX_SECONDS']   ?? 300);     // 5 min default
-        $this->maxRetries    = (int)($_ENV['SEGMENT_MAX_RETRIES']   ?? 5);
-        $this->claimIdleMs   = (int)($_ENV['SEGMENT_CLAIM_IDLE_MS'] ?? 60000);
-        $this->dlq           = (string)($_ENV['SEGMENT_DLQ']        ?? 'seg:builds:dead');
-
         error_log('[SEG][BOOT] ctor done; stream='.$this->stream.' group='.$this->group);
+    }
+
+    /** Read env from $_ENV or getenv(), with default. */
+    private static function env(string $key, mixed $default = null): mixed
+    {
+        if (array_key_exists($key, $_ENV)) return $_ENV[$key];
+        $v = getenv($key);
+        return ($v === false || $v === null) ? $default : $v;
     }
 
     private static function makeRedisFromEnv(): \Redis|Client
     {
-        $url = $_ENV['REDIS_URL'] ?? sprintf(
-            '%s://%s%s:%d/%d',
-            ($_ENV['REDIS_SCHEME'] ?? 'tcp') === 'tls' ? 'tls' : 'tcp',
-            !empty($_ENV['REDIS_AUTH']) ? (':'.$_ENV['REDIS_AUTH'].'@') : '',
-            $_ENV['REDIS_HOST'] ?? '127.0.0.1',
-            (int)($_ENV['REDIS_PORT'] ?? 6379),
-            (int)($_ENV['REDIS_DB'] ?? 0),
-        );
+        // Prefer discrete vars; only fall back to REDIS_URL if explicitly set.
+        $scheme = (string) self::env('REDIS_SCHEME', 'tcp');
+        $host   = (string) self::env('REDIS_HOST',   '127.0.0.1');
+        $port   = (int)    self::env('REDIS_PORT',   6379);
+        $db     = (int)    self::env('REDIS_DB',     0);
+        $pass   = (string) self::env('REDIS_AUTH',   '');
+        $urlEnv = (string) self::env('REDIS_URL',    '');
 
-        // Log non-sensitive connection facts
-        $pu = parse_url($url) ?: [];
+        // If REDIS_URL is present but discrete vars are also present, we still log both.
         $dbg = sprintf(
-            'scheme=%s host=%s port=%s db=%s hasAuth=%s',
-            $pu['scheme'] ?? 'tcp',
-            $pu['host'] ?? '127.0.0.1',
-            $pu['port'] ?? '6379',
-            isset($pu['path']) ? trim((string)$pu['path'], '/') : '0',
-            array_key_exists('pass', $pu) ? 'yes' : 'no'
+            'scheme=%s host=%s port=%d db=%d hasAuth=%s hasURL=%s',
+            $scheme, $host, $port, $db, ($pass !== '' ? 'yes' : 'no'), ($urlEnv !== '' ? 'yes' : 'no')
         );
         error_log('[SEG][BOOT] makeRedisFromEnv: '.$dbg);
 
+        // ---------- Predis path ----------
         if (class_exists(Client::class)) {
             error_log('[SEG][BOOT] using Predis');
-            // Predis: no read timeout while blocking on streams
-            return new Client($url, ['read_write_timeout' => 0]);
+
+            // Build parameters array (explicit password avoids NOAUTH surprises)
+            $params = [
+                'scheme'   => $scheme === 'tls' ? 'tls' : 'tcp',
+                'host'     => $host,
+                'port'     => $port,
+                'database' => $db,
+            ];
+            if ($pass !== '') {
+                $params['password'] = $pass;
+            }
+
+            $options = [
+                // No read timeout while blocking on streams
+                'read_write_timeout' => 0,
+            ];
+
+            // If user insists on REDIS_URL, let Predis parse it, but still keep options.
+            // NOTE: Password supplied via $params takes precedence; URL is used mainly
+            // for non-standard schemes or when only URL is provided.
+            if ($urlEnv !== '' && $pass === '') {
+                return new Client($urlEnv, $options);
+            }
+
+            return new Client($params, $options);
         }
 
+        // ---------- phpredis path ----------
         if (!class_exists(\Redis::class)) {
             error_log('[SEG][ERR] No Redis client available (Predis/phpredis not installed).');
             throw new \RuntimeException('No Redis client available (Predis/phpredis not installed).');
         }
 
-        // phpredis
-        $host  = $pu['host'] ?? '127.0.0.1';
-        $port  = (int)($pu['port'] ?? 6379);
-        $pass  = $pu['pass'] ?? null;
-        $db    = isset($pu['path']) ? (int)trim((string)$pu['path'], '/') : 0;
-
         $r = new \Redis();
         $ok = @$r->pconnect($host, $port, 2.5);
         error_log('[SEG][BOOT] phpredis pconnect host='.$host.' port='.$port.' ok='.($ok ? '1' : '0'));
-        if ($pass) {
+        if ($pass !== '') {
             $authOk = @$r->auth($pass);
             error_log('[SEG][BOOT] phpredis auth ok='.($authOk ? '1' : '0'));
         }
@@ -129,38 +141,34 @@ final class SegmentBuildOrchestrator
         $this->consumer = gethostname() . '-' . getmypid();
         error_log("[SEG][WORKER] start consumer={$this->consumer}");
         while (true) {
-            $blockMs = (int)($_ENV['SEGMENT_BLOCK_MS'] ?? 30000);
-            $batch = $this->xreadgroup($this->group, $this->consumer, [$this->stream => '>'], 10, $blockMs);
+            $batch = $this->xreadgroup($this->group, $this->consumer, [$this->stream => '>'], 10, 30000);
             if (!$batch || empty($batch[$this->stream])) {
                 error_log("[SEG][WORKER] idle…");
-                // also try to reclaim stale messages (idle > configured)
-                $this->claimStale($this->claimIdleMs);
+                // also try to reclaim stale messages (idle > 60s)
+                $this->claimStale();
                 continue;
             }
             foreach ($batch[$this->stream] as $id => $fields) {
                 error_log("[SEG][WORKER] got {$id}");
                 try {
                     $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
-                    $this->runBuildJobWithHeartbeat($payload); // wrapper
+                    $this->runBuildJobWithHeartbeat($payload);
                     $this->xack($this->stream, $this->group, [$id]);
                     error_log("[SEG][WORKER] ack {$id}");
                 } catch (\Throwable $e) {
                     error_log("[SEG][ERR] {$e->getMessage()} @ {$e->getFile()}:{$e->getLine()}");
-                    // retry/DLQ, then ACK the failed delivery so it doesn’t stay pending
-                    try { $this->failOrRetry($fields, $e); } catch (\Throwable $ignored) {}
-                    try { $this->xack($this->stream, $this->group, [$id]); } catch (\Throwable $ignored) {}
+                    // leave pending (or push to DLQ if you want)
                 }
             }
         }
     }
 
-    // heartbeat wrapper (updates status every ~5s; enforces max duration)
+    // heartbeat wrapper (updates status every ~5s while build runs)
     private function runBuildJobWithHeartbeat(array $payload): array
     {
         $companyId   = (int)($payload['company_id'] ?? 0);
         $segmentId   = (int)($payload['segment_id'] ?? 0);
 
-        $t0 = time();
         $lastBeat = 0;
         $beat = function(int $progress, string $msg) use ($companyId, $segmentId, &$lastBeat) {
             $now = time();
@@ -181,27 +189,20 @@ final class SegmentBuildOrchestrator
             'message'  => 'Computing matches…',
             'progress' => 10,
         ]);
+
+        // call the original job, but keep sending beats
+        $t0 = microtime(true);
         $beat(15, 'Preparing SQL…');
 
-        // run the real job
         $res = $this->runBuildJob($payload);
 
-        $elapsed = time() - $t0;
-        if ($elapsed > $this->maxJobSeconds) {
-            $this->setStatus($companyId, $segmentId, [
-                'status'  => 'error',
-                'message' => 'Segment build timed out',
-            ]);
-            throw new \RuntimeException('Segment build timed out');
-        }
-
-        // finalize (idempotent with runBuildJob’s own finalize)
+        $dt = (int)round((microtime(true) - $t0));
         $this->setStatus($companyId, $segmentId, [
-            'status'      => 'ok',
-            'message'     => 'Segment built',
-            'progress'    => 100,
-            'durationSec' => $elapsed,
-            'builtAt'     => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            'status'    => 'ok',
+            'message'   => 'Segment built',
+            'progress'  => 100,
+            'durationSec' => $dt,
+            'builtAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
         ]);
 
         return $res;
@@ -210,8 +211,6 @@ final class SegmentBuildOrchestrator
     // reclaim stale pending messages so you don't get “stuck running” forever
     private function claimStale(int $minIdleMs = 60000, int $count = 10): void
     {
-        $minIdleMs = $this->claimIdleMs ?: $minIdleMs;
-
         if (!isset($this->consumer)) {
             $this->consumer = gethostname() . '-' . getmypid();
         }
@@ -338,38 +337,6 @@ final class SegmentBuildOrchestrator
             error_log('[SEG][JOB][ERR] '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
             throw $e;
         }
-    }
-
-    // NEW: retry / DLQ logic
-    private function failOrRetry(array $fields, \Throwable $e): void
-    {
-        $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
-        $companyId = (int)($payload['company_id'] ?? 0);
-        $segmentId = (int)($payload['segment_id'] ?? 0);
-
-        $retries = (int)($payload['retries'] ?? 0) + 1;
-        $payload['retries'] = $retries;
-        $payload['error']   = substr($e->getMessage(), 0, 500);
-
-        if ($retries > $this->maxRetries) {
-            // Move to DLQ
-            $this->xadd($this->dlq, ['data' => json_encode($payload, JSON_UNESCAPED_SLASHES)]);
-            $this->setStatus($companyId, $segmentId, [
-                'status'  => 'error',
-                'message' => 'Moved to DLQ after retries: '.$e->getMessage(),
-            ]);
-            error_log("[SEG][DLQ] moved company={$companyId} segment={$segmentId} retries={$retries}");
-            return;
-        }
-
-        // Re-enqueue for retry
-        $this->xadd($this->stream, ['data' => json_encode($payload, JSON_UNESCAPED_SLASHES)]);
-        $this->setStatus($companyId, $segmentId, [
-            'status'   => 'queued',
-            'message'  => "Retry {$retries}/{$this->maxRetries}",
-            'progress' => 0,
-        ]);
-        error_log("[SEG][RETRY] requeued company={$companyId} segment={$segmentId} retries={$retries}");
     }
 
     /* ==================== Bootstrap group ==================== */
