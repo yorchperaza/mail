@@ -12,6 +12,8 @@ final class SegmentBuildOrchestrator
     /** @var \Redis|Client */
     private $redis;
 
+    private string $consumer;
+
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
@@ -111,30 +113,103 @@ final class SegmentBuildOrchestrator
     /** Blocking loop (call from a CLI worker). */
     public function runForever(): void
     {
-        $consumer = gethostname() . '-' . getmypid();
-        error_log('[SEG][RUN] runForever start consumer='.$consumer);
+        $this->consumer = gethostname() . '-' . getmypid();
+        error_log("[SEG][WORKER] start consumer={$this->consumer}");
         while (true) {
-            try {
-                $batch = $this->xreadgroup($this->group, $consumer, [$this->stream => '>'], 10, 30000);
-                $n = is_array($batch[$this->stream] ?? null) ? count($batch[$this->stream]) : 0;
-                if ($n === 0) {
-                    continue;
+            $batch = $this->xreadgroup($this->group, $this->consumer, [$this->stream => '>'], 10, 30000);
+            if (!$batch || empty($batch[$this->stream])) {
+                error_log("[SEG][WORKER] idle…");
+                // also try to reclaim stale messages (idle > 60s)
+                $this->claimStale();
+                continue;
+            }
+            foreach ($batch[$this->stream] as $id => $fields) {
+                error_log("[SEG][WORKER] got {$id}");
+                try {
+                    $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
+                    $this->runBuildJobWithHeartbeat($payload); // <— new wrapper
+                    $this->xack($this->stream, $this->group, [$id]);
+                    error_log("[SEG][WORKER] ack {$id}");
+                } catch (\Throwable $e) {
+                    error_log("[SEG][ERR] {$e->getMessage()} @ {$e->getFile()}:{$e->getLine()}");
+                    // leave pending (or push to DLQ if you want)
                 }
-                error_log('[SEG][RUN] fetched messages n='.$n);
-                foreach ($batch[$this->stream] as $id => $fields) {
-                    try {
-                        $payload = json_decode((string)($fields['data'] ?? '{}'), true) ?: [];
-                        error_log('[SEG][RUN] processing id='.$id.' payloadKeys='.implode(',', array_keys($payload)));
-                        $this->runBuildJob($payload);
-                        $acked = $this->xack($this->stream, $this->group, [$id]);
-                        error_log('[SEG][RUN] acked id='.$id.' ack='.$acked);
-                    } catch (\Throwable $e) {
-                        error_log('[SEG][ERR] runForever job: '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
-                    }
+            }
+        }
+    }
+
+    // heartbeat wrapper (updates status every ~5s while build runs)
+    private function runBuildJobWithHeartbeat(array $payload): array
+    {
+        $companyId   = (int)($payload['company_id'] ?? 0);
+        $segmentId   = (int)($payload['segment_id'] ?? 0);
+
+        $lastBeat = 0;
+        $beat = function(int $progress, string $msg) use ($companyId, $segmentId, &$lastBeat) {
+            $now = time();
+            if ($now - $lastBeat >= 5) { // every 5s
+                $this->setStatus($companyId, $segmentId, [
+                    'status'   => 'running',
+                    'message'  => $msg,
+                    'progress' => $progress,
+                    'heartbeatAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+                ]);
+                $lastBeat = $now;
+            }
+        };
+
+        // initial beat
+        $this->setStatus($companyId, $segmentId, [
+            'status'   => 'running',
+            'message'  => 'Computing matches…',
+            'progress' => 10,
+        ]);
+
+        // call the original job, but keep sending beats
+        $t0 = microtime(true);
+        $beat(15, 'Preparing SQL…');
+
+        $res = $this->runBuildJob($payload); // your existing method (kept as-is)
+
+        $dt = (int)round((microtime(true) - $t0));
+        $this->setStatus($companyId, $segmentId, [
+            'status'    => 'ok',
+            'message'   => 'Segment built',
+            'progress'  => 100,
+            'durationSec' => $dt,
+            'builtAt'   => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+        ]);
+
+        return $res;
+    }
+
+// reclaim stale pending messages so you don't get “stuck running” forever
+    private function claimStale(int $minIdleMs = 60000, int $count = 10): void
+    {
+        if (!isset($this->consumer)) {
+            $this->consumer = gethostname() . '-' . getmypid();
+        }
+
+        if ($this->redis instanceof \Redis && method_exists($this->redis, 'xAutoClaim')) {
+            try {
+                $res = $this->redis->xAutoClaim($this->stream, $this->group, $this->consumer, $minIdleMs, '0-0', $count);
+                if (!empty($res[1])) {
+                    error_log('[SEG][WORKER] autoclaimed '.count($res[1]).' stale message(s)');
                 }
             } catch (\Throwable $e) {
-                error_log('[SEG][ERR] runForever loop: '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
+                // ignore
             }
+            return;
+        }
+
+        // Predis: use XAUTOCLAIM raw
+        try {
+            $raw = $this->redis->executeRaw(['XAUTOCLAIM', $this->stream, $this->group, $this->consumer, (string)$minIdleMs, '0-0', 'COUNT', (string)$count]);
+            if (is_array($raw) && !empty($raw[1])) {
+                error_log('[SEG][WORKER] autoclaimed '.count($raw[1]).' stale message(s)');
+            }
+        } catch (\Throwable $e) {
+            // ignore
         }
     }
 
