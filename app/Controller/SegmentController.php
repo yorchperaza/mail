@@ -9,10 +9,12 @@ use App\Entity\Contact;
 use App\Entity\ListGroup;
 use App\Entity\ListContact;
 use App\Service\CompanyResolver;
+use App\Service\SegmentBuildOrchestrator;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Query\QueryBuilder;
+use Predis\Client;
 use Psr\Http\Message\ServerRequestInterface;
 use Random\RandomException;
 use RuntimeException;
@@ -23,6 +25,7 @@ final class SegmentController
         private RepositoryFactory $repos,
         private CompanyResolver   $companyResolver,
         private QueryBuilder      $qb,
+        private Client    $redis,
     ) {}
 
     /* ---------------------------- helpers ---------------------------- */
@@ -182,8 +185,8 @@ final class SegmentController
     /* ------------- build / preview recipients from definition ------------- */
 
     /**
-     * POST /build: Compute and store materialized_count + last_built_at.
-     * Body (optional): { dryRun?: bool }
+     * POST /build: Enqueue segment build job
+     * Body (optional): { dryRun?: bool, materialize?: bool }
      */
     #[Route(methods: 'POST', path: '/companies/{hash}/segments/{id}/build')]
     public function build(ServerRequestInterface $r): JsonResponse {
@@ -201,45 +204,51 @@ final class SegmentController
 
             $body = json_decode((string)$r->getBody(), true) ?: [];
             $dry  = (bool)($body['dryRun'] ?? false);
+            $materialize = (bool)($body['materialize'] ?? true);
 
-            $t0  = microtime(true);
-            $def = $s->getDefinition() ?? [];
+            if ($dry) {
+                // For dry run, evaluate synchronously without queuing
+                $t0 = microtime(true);
+                $def = $s->getDefinition() ?? [];
+                $result = $this->evaluateDefinition($co->getId(), $def, 20);
+                $result += [0 => 0, 1 => [], 2 => null];
+                [$matches, $sample, $checked] = $result;
 
-            // evaluate
-            $result = $this->evaluateDefinition($co->getId(), $def, 20);
-            error_log('Evaluation result: ' . json_encode($result));
-            // pad to avoid notices if an older version returns fewer elements
-            $result += [0 => 0, 1 => [], 2 => null];
-            [$matches, $sample, $checked] = $result;
-
-            $prevCount = (int)($s->getMaterialized_count() ?? 0);
-            if (!$dry) {
-                $s->setMaterialized_count($matches)->setLast_built_at($this->now());
-                $repo->save($s);
+                return new JsonResponse([
+                    'segment' => $this->shape($s),
+                    'matches' => $matches,
+                    'sample'  => $sample,
+                    'dryRun'  => true,
+                    'status'  => 'completed',
+                    'duration_ms' => (int)round((microtime(true) - $t0) * 1000)
+                ]);
             }
-            $durationMs = (int) round((microtime(true) - $t0) * 1000);
 
-            $rulesHuman = $this->humanizeDefinition($co->getId(), $def);
-            error_log('Human rules: ' . json_encode($rulesHuman));
+            // For real builds, enqueue to Redis
+            $orchestrator = new SegmentBuildOrchestrator(
+                $this->repos,
+                $this->qb,
+                $this->redis // Make sure you have Redis instance available
+            );
+
+            $entryId = $orchestrator->enqueueBuild(
+                $co->getId(),
+                $s->getId(),
+                $materialize
+            );
+
+            error_log("[SEG][CTRL][BUILD] Enqueued job with entry ID: {$entryId}");
+
             return new JsonResponse([
-                'segment'   => $this->shape($s),
-                'matches'   => $matches,
-                'sample'    => $sample,
-                'dryRun'    => $dry,
-                'performed' => [
-                    'updated'          => !$dry,
-                    'previous_count'   => $prevCount,
-                    'new_count'        => $matches,
-                    'delta'            => $matches - $prevCount,
-                    'checked_contacts' => $checked,
-                    'duration_ms'      => $durationMs,
-                    'at'               => $this->now()->format(\DateTimeInterface::ATOM),
-                ],
-                'rules_human' => $rulesHuman,
-            ]);
+                'segment'  => $this->shape($s),
+                'status'   => 'queued',
+                'queueId'  => $entryId,
+                'message'  => 'Build job has been queued',
+                'statusUrl' => "/companies/{$r->getAttribute('hash')}/segments/{$id}/builds/status"
+            ], 202); // 202 Accepted
+
         } catch (\Throwable $e) {
-            error_log("[segments.build] ERROR: " . $e->getMessage() . " @ " . $e->getFile() . ":" . $e->getLine());
-            // return a structured error rather than a raw 500
+            error_log("[segments.build] ERROR: " . $e->getMessage());
             $code = ($e instanceof RuntimeException && $e->getCode() >= 400 && $e->getCode() < 600)
                 ? $e->getCode()
                 : 500;
