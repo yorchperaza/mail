@@ -164,7 +164,7 @@ final class SegmentBuildOrchestrator
     }
 
     // heartbeat wrapper (updates status every ~5s while build runs)
-    private function runBuildJobWithHeartbeat(array $payload): array
+    public function runBuildJobWithHeartbeat(array $payload): array
     {
         $companyId   = (int)($payload['company_id'] ?? 0);
         $segmentId   = (int)($payload['segment_id'] ?? 0);

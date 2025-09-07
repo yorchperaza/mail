@@ -167,13 +167,14 @@ final class SegmentBuildController
             $co  = $this->company($hash, $uid);
             $seg = $this->segment($sid, $co);
 
-            $rawBody = (string)$r->getBody();
-            $bodyLen = strlen($rawBody);
-            $body = json_decode($rawBody, true) ?: [];
+            $rawBody     = (string)$r->getBody();
+            $bodyLen     = strlen($rawBody);
+            $body        = json_decode($rawBody, true) ?: [];
             $materialize = (bool)($body['materialize'] ?? true);
             error_log(sprintf('[SEG][CTRL][RUN] bodyLen=%d materialize=%s', $bodyLen, $materialize ? '1' : '0'));
 
-            $res = $this->orchestrator->runBuildJob([
+            // *** IMPORTANT: use the heartbeat runner so status key is updated during the run ***
+            $res = $this->orchestrator->runBuildJobWithHeartbeat([
                 'company_id'  => $co->getId(),
                 'segment_id'  => $seg->getId(),
                 'materialize' => $materialize,
@@ -182,10 +183,29 @@ final class SegmentBuildController
             $ok = (string)($res['status'] ?? '') === 'ok';
             error_log(sprintf('[SEG][CTRL][RUN] done ok=%s', $ok ? '1' : '0'));
 
-            return new JsonResponse($res, $ok ? 200 : 409);
+            // Make the response shape friendly for both "enqueue" UI and "sync run" UI:
+            // - keep HTTP 200 because we actually performed the job
+            // - include a 'mode' so the frontend can branch
+            // - include 'entryId' as null (so the same UI code doesn't choke)
+            return new JsonResponse([
+                'mode'     => 'sync',
+                'status'   => $ok ? 'ok' : 'error',
+                'entryId'  => null,
+                'result'   => $res,
+                'company'  => (int)$co->getId(),
+                'segment'  => (int)$seg->getId(),
+                'at'       => new \DateTimeImmutable('now', new \DateTimeZone('UTC'))->format(\DateTimeInterface::ATOM),
+            ], 200);
         } catch (\Throwable $e) {
             error_log('[SEG][CTRL][RUN][ERR] '.$e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
-            throw $e;
+            // Surface structured error
+            $code = ($e instanceof \RuntimeException && $e->getCode() >= 400 && $e->getCode() < 600) ? $e->getCode() : 500;
+            return new JsonResponse([
+                'mode'   => 'sync',
+                'status' => 'error',
+                'error'  => $e->getMessage(),
+            ], $code);
         }
     }
+
 }
