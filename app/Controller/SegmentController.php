@@ -184,83 +184,83 @@ final class SegmentController
 
     /* ------------- build / preview recipients from definition ------------- */
 
-    /**
-     * POST /build: Enqueue segment build job
-     * Body (optional): { dryRun?: bool, materialize?: bool }
-     */
-    #[Route(methods: 'POST', path: '/companies/{hash}/segments/{id}/build')]
-    public function build(ServerRequestInterface $r): JsonResponse {
-        try {
-            $uid = $this->auth($r);
-            $co  = $this->company((string)$r->getAttribute('hash'), $uid);
-            $id  = (int)$r->getAttribute('id');
-
-            /** @var \App\Repository\SegmentRepository $repo */
-            $repo = $this->repos->getRepository(Segment::class);
-            $s = $repo->find($id);
-            if (!$s || $s->getCompany()?->getId() !== $co->getId()) {
-                throw new RuntimeException('Segment not found', 404);
-            }
-
-            $body = json_decode((string)$r->getBody(), true) ?: [];
-            $dry  = (bool)($body['dryRun'] ?? false);
-            $materialize = (bool)($body['materialize'] ?? true);
-
-            if ($dry) {
-                // For dry run, evaluate synchronously without queuing
-                $t0 = microtime(true);
-                $def = $s->getDefinition() ?? [];
-                $result = $this->evaluateDefinition($co->getId(), $def, 20);
-                $result += [0 => 0, 1 => [], 2 => null];
-                [$matches, $sample, $checked] = $result;
-
-                return new JsonResponse([
-                    'segment' => $this->shape($s),
-                    'matches' => $matches,
-                    'sample'  => $sample,
-                    'dryRun'  => true,
-                    'status'  => 'completed',
-                    'duration_ms' => (int)round((microtime(true) - $t0) * 1000)
-                ]);
-            }
-
-            // For real builds, enqueue to Redis
-            $orchestrator = new SegmentBuildOrchestrator(
-                $this->repos,
-                $this->qb,
-                $this->redis // Make sure you have Redis instance available
-            );
-
-            $entryId = $orchestrator->enqueueBuild(
-                $co->getId(),
-                $s->getId(),
-                $materialize
-            );
-
-            error_log("[SEG][CTRL][BUILD] Enqueued job with entry ID: {$entryId}");
-
-            return new JsonResponse([
-                'segment'  => $this->shape($s),
-                'status'   => 'queued',
-                'queueId'  => $entryId,
-                'message'  => 'Build job has been queued',
-                'statusUrl' => "/companies/{$r->getAttribute('hash')}/segments/{$id}/builds/status"
-            ], 202); // 202 Accepted
-
-        } catch (\Throwable $e) {
-            error_log("[segments.build] ERROR: " . $e->getMessage());
-            $code = ($e instanceof RuntimeException && $e->getCode() >= 400 && $e->getCode() < 600)
-                ? $e->getCode()
-                : 500;
-
-            return new JsonResponse([
-                'error'   => $e->getMessage(),
-                'type'    => (new \ReflectionClass($e))->getShortName(),
-                'code'    => $code,
-                'traceId' => bin2hex(random_bytes(6)),
-            ], $code);
-        }
-    }
+//    /**
+//     * POST /build: Enqueue segment build job
+//     * Body (optional): { dryRun?: bool, materialize?: bool }
+//     */
+//    #[Route(methods: 'POST', path: '/companies/{hash}/segments/{id}/build')]
+//    public function build(ServerRequestInterface $r): JsonResponse {
+//        try {
+//            $uid = $this->auth($r);
+//            $co  = $this->company((string)$r->getAttribute('hash'), $uid);
+//            $id  = (int)$r->getAttribute('id');
+//
+//            /** @var \App\Repository\SegmentRepository $repo */
+//            $repo = $this->repos->getRepository(Segment::class);
+//            $s = $repo->find($id);
+//            if (!$s || $s->getCompany()?->getId() !== $co->getId()) {
+//                throw new RuntimeException('Segment not found', 404);
+//            }
+//
+//            $body = json_decode((string)$r->getBody(), true) ?: [];
+//            $dry  = (bool)($body['dryRun'] ?? false);
+//            $materialize = (bool)($body['materialize'] ?? true);
+//
+//            if ($dry) {
+//                // For dry run, evaluate synchronously without queuing
+//                $t0 = microtime(true);
+//                $def = $s->getDefinition() ?? [];
+//                $result = $this->evaluateDefinition($co->getId(), $def, 20);
+//                $result += [0 => 0, 1 => [], 2 => null];
+//                [$matches, $sample, $checked] = $result;
+//
+//                return new JsonResponse([
+//                    'segment' => $this->shape($s),
+//                    'matches' => $matches,
+//                    'sample'  => $sample,
+//                    'dryRun'  => true,
+//                    'status'  => 'completed',
+//                    'duration_ms' => (int)round((microtime(true) - $t0) * 1000)
+//                ]);
+//            }
+//
+//            // For real builds, enqueue to Redis
+//            $orchestrator = new SegmentBuildOrchestrator(
+//                $this->repos,
+//                $this->qb,
+//                $this->redis // Make sure you have Redis instance available
+//            );
+//
+//            $entryId = $orchestrator->enqueueBuild(
+//                $co->getId(),
+//                $s->getId(),
+//                $materialize
+//            );
+//
+//            error_log("[SEG][CTRL][BUILD] Enqueued job with entry ID: {$entryId}");
+//
+//            return new JsonResponse([
+//                'segment'  => $this->shape($s),
+//                'status'   => 'queued',
+//                'queueId'  => $entryId,
+//                'message'  => 'Build job has been queued',
+//                'statusUrl' => "/companies/{$r->getAttribute('hash')}/segments/{$id}/builds/status"
+//            ], 202); // 202 Accepted
+//
+//        } catch (\Throwable $e) {
+//            error_log("[segments.build] ERROR: " . $e->getMessage());
+//            $code = ($e instanceof RuntimeException && $e->getCode() >= 400 && $e->getCode() < 600)
+//                ? $e->getCode()
+//                : 500;
+//
+//            return new JsonResponse([
+//                'error'   => $e->getMessage(),
+//                'type'    => (new \ReflectionClass($e))->getShortName(),
+//                'code'    => $code,
+//                'traceId' => bin2hex(random_bytes(6)),
+//            ], $code);
+//        }
+//    }
 
     /**
      * GET /preview: same evaluation but read-only and paginated.

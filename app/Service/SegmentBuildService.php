@@ -104,8 +104,8 @@ final class SegmentBuildService
 
             $email = trim((string)$c->getEmail());
             if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) continue;
-            if ($c->getBounced_at() !== null) continue;
-            if ($c->getUnsubscribed_at() !== null) continue;
+//            if ($c->getBounced_at() !== null) continue;
+//            if ($c->getUnsubscribed_at() !== null) continue;
 
             $ok = true;
 
