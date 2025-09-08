@@ -229,7 +229,7 @@ final class DomainController
             }
 
             // 4) Create base entity
-            $domain = (new Domain())
+            $domain = new Domain()
                 ->setDomain($name)
                 ->setStatus(Domain::STATUS_PENDING)
                 ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
@@ -255,21 +255,37 @@ final class DomainController
                 throw new RuntimeException('Failed to provision SMTP credentials', 500);
             }
 
-            // 6) Initialize DNS/SMTP expectations via service (and persist updates)
+            // 6) Initialize DNS/SMTP expectations (soft-fail if OpenDKIM tables are not writable)
+            error_log("[createDomain][$rid] Initializing DNS bootstrap for domain_id=" . (int)$domain->getId());
+            $bootstrap = null;
+            $opendkimError = null;
+
             try {
-                error_log("[createDomain][$rid] Initializing DNS bootstrap for domain_id=" . (int)$domain->getId());
                 $bootstrap = $this->domainConfig->initializeAndSave($domain);
-                // Log shapes but not full keys
+                // Let DomainConfig optionally pass back a soft error (if it caught one)
+                $opendkimError = $bootstrap['opendkim_error'] ?? null;
+
                 $dkimKeys = isset($bootstrap['dns']['dkim'])
-                    ? (is_array($bootstrap['dns']['dkim']) ? count($bootstrap['dns']['dkim']) . " selectors" : 'present')
+                    ? (is_array($bootstrap['dns']['dkim']) ? 'present' : 'present')
                     : 'none';
                 error_log("[createDomain][$rid] DNS bootstrap prepared: spf=" . (!empty($bootstrap['dns']['spf']) ? 'yes' : 'no') .
                     " dmarc=" . (!empty($bootstrap['dns']['dmarc']) ? 'yes' : 'no') .
                     " mx=" . (!empty($bootstrap['dns']['mx']) ? 'yes' : 'no') .
-                    " dkim=" . $dkimKeys);
+                    " dkim=" . $dkimKeys .
+                    ($opendkimError ? " (opendkim_error present)" : ""));
             } catch (\Throwable $e) {
-                error_log("[createDomain][$rid] DNS bootstrap failed: " . $e->getMessage());
-                throw new RuntimeException('Failed to initialize DNS records', 500);
+                // Do NOT fail request: surface as warning and continue
+                $opendkimError = $e->getMessage();
+                error_log("[createDomain][$rid] DNS bootstrap soft-failed: " . $opendkimError);
+                $bootstrap = [
+                    'dns' => [
+                        'txt'   => null,
+                        'spf'   => null,
+                        'dmarc' => null,
+                        'mx'    => null,
+                        'dkim'  => null,
+                    ],
+                ];
             }
 
             $resp = new JsonResponse([
@@ -294,6 +310,8 @@ final class DomainController
                     'password' => $creds['password'],
                     'ip_pool'  => $creds['ip_pool'],
                 ],
+                // NEW: non-blocking warning the UI can display
+                'opendkim_error' => $opendkimError,
             ], 201);
 
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
@@ -313,7 +331,7 @@ final class DomainController
             ], $code);
         }
     }
-    
+
     /**
      * GET /companies/{hash}/domains/{id}
      *
