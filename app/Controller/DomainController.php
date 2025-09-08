@@ -129,101 +129,191 @@ final class DomainController
     #[Route(methods: 'POST', path: '/companies/{hash}/domains')]
     public function createDomain(ServerRequestInterface $request): JsonResponse
     {
-        // 1) Auth
-        $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) {
-            throw new RuntimeException('Unauthorized', 401);
-        }
+        $t0  = microtime(true);
+        $rid = bin2hex(random_bytes(6)); // simple trace/correlation id for logs
 
-        // 2) Resolve + authorize company
-        $hash    = (string)$request->getAttribute('hash');
-        $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (! $company) {
-            throw new RuntimeException('Company not found or access denied', 404);
-        }
+        $mask = static function (?string $s, int $show = 2): string {
+            if ($s === null || $s === '') return '';
+            $len = strlen($s);
+            if ($len <= $show) return str_repeat('*', $len);
+            return substr($s, 0, $show) . str_repeat('*', max(0, $len - $show));
+        };
 
-        /** @var \App\Repository\DomainRepository $domainRepo */
-        $domainRepo = $this->repos->getRepository(Domain::class);
-
-        // ---- NEW: Enforce domain limits for Starter/Grow/No Plan ----
-        $planName = null;
         try {
-            $planName = $company->getPlan()?->getName();
-        } catch (\Throwable $ignored) {}
-
-        // Fallback if plan relation isn’t loaded
-        if ($planName === null || $planName === '') {
-            /** @var \App\Repository\CompanyRepository $companyRepo */
-            $companyRepo = $this->repos->getRepository(Company::class);
-            $row = (clone $companyRepo->qb)
-                ->select(['p.name AS name'])
-                ->from('company', 'c')
-                ->leftJoin('plan', 'p', 'p.id', '=', 'c.plan_id')
-                ->where('c.id', '=', (int)$company->getId())
-                ->fetch();
-            $planName = $row?->name ?? null;
-        }
-
-        $planKey = strtoupper((string)$planName);
-        if ($planKey === '' || in_array($planKey, ['STARTER', 'GROW'], true)) {
-            $existing = $domainRepo->count(['company_id' => (int)$company->getId()]);
-            if ($existing >= 1) {
-                throw new RuntimeException(
-                    'Your current plan allows only one domain. Upgrade to add more.',
-                    403
-                );
+            // 1) Auth
+            $userId = (int)$request->getAttribute('user_id', 0);
+            error_log("[createDomain][$rid] START user_id={$userId}");
+            if ($userId <= 0) {
+                error_log("[createDomain][$rid] Unauthorized: missing/invalid user_id");
+                throw new RuntimeException('Unauthorized', 401);
             }
+
+            // 2) Resolve + authorize company
+            $hash = (string)$request->getAttribute('hash');
+            error_log("[createDomain][$rid] Resolving company for hash={$hash}");
+            $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
+            if (!$company) {
+                error_log("[createDomain][$rid] Company not found or access denied for hash={$hash}, user_id={$userId}");
+                throw new RuntimeException('Company not found or access denied', 404);
+            }
+            $companyId = (int)$company->getId();
+            error_log("[createDomain][$rid] Company resolved id={$companyId}");
+
+            /** @var \App\Repository\DomainRepository $domainRepo */
+            $domainRepo = $this->repos->getRepository(Domain::class);
+
+            // ---- NEW: Enforce domain limits for Starter/Grow/No Plan ----
+            $planName = null;
+            try {
+                $planName = $company->getPlan()?->getName();
+                error_log("[createDomain][$rid] Plan (via relation) planName=" . ($planName ?? 'NULL'));
+            } catch (\Throwable $e) {
+                error_log("[createDomain][$rid] Plan relation access failed: " . $e->getMessage());
+            }
+
+            // Fallback if plan relation isn’t loaded
+            if ($planName === null || $planName === '') {
+                try {
+                    /** @var \App\Repository\CompanyRepository $companyRepo */
+                    $companyRepo = $this->repos->getRepository(Company::class);
+                    $row = (clone $companyRepo->qb)
+                        ->select(['p.name AS name'])
+                        ->from('company', 'c')
+                        ->leftJoin('plan', 'p', 'p.id', '=', 'c.plan_id')
+                        ->where('c.id', '=', $companyId)
+                        ->fetch();
+                    $planName = $row?->name ?? null;
+                    error_log("[createDomain][$rid] Plan (via SQL) planName=" . ($planName ?? 'NULL'));
+                } catch (\Throwable $e) {
+                    error_log("[createDomain][$rid] Plan SQL lookup failed: " . $e->getMessage());
+                }
+            }
+
+            $planKey = strtoupper((string)$planName);
+            if ($planKey === '' || in_array($planKey, ['STARTER', 'GROW'], true)) {
+                try {
+                    $existing = $domainRepo->count(['company_id' => $companyId]);
+                    error_log("[createDomain][$rid] Domain count for company_id={$companyId} is {$existing}");
+                    if ($existing >= 1) {
+                        error_log("[createDomain][$rid] Plan limit reached for planKey={$planKey} (>=1 domain)");
+                        throw new RuntimeException(
+                            'Your current plan allows only one domain. Upgrade to add more.',
+                            403
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    error_log("[createDomain][$rid] Counting domains failed: " . $e->getMessage());
+                    throw new RuntimeException('Failed to check domain limits', 500);
+                }
+            }
+
+            // 3) Parse & validate payload
+            $rawBody = (string)$request->getBody();
+            error_log("[createDomain][$rid] Raw body length=" . strlen($rawBody));
+            try {
+                $body = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                error_log("[createDomain][$rid] JSON parse error: " . $e->getMessage());
+                throw new RuntimeException('Invalid JSON body', 400);
+            }
+
+            $name = strtolower(trim((string)($body['domain'] ?? '')));
+            error_log("[createDomain][$rid] Parsed domain candidate='{$name}'");
+            if ($name === '') {
+                error_log("[createDomain][$rid] Validation failed: empty domain");
+                throw new RuntimeException('Domain name is required', 400);
+            }
+            if (!preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $name)) {
+                error_log("[createDomain][$rid] Validation failed: invalid format '{$name}'");
+                throw new RuntimeException('Invalid domain format', 400);
+            }
+
+            // 4) Create base entity
+            $domain = (new Domain())
+                ->setDomain($name)
+                ->setStatus(Domain::STATUS_PENDING)
+                ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
+                ->setCompany($company);
+
+            // 5) Persist domain
+            try {
+                $domainRepo->save($domain);
+                error_log("[createDomain][$rid] Domain persisted id=" . (int)$domain->getId());
+            } catch (\Throwable $e) {
+                error_log("[createDomain][$rid] Domain save failed: " . $e->getMessage());
+                throw new RuntimeException('Failed to create domain', 500);
+            }
+
+            // 5.1) Provision SMTP creds (mask in logs)
+            try {
+                error_log("[createDomain][$rid] Provisioning SMTP credentials (previewDomain={$name})");
+                $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
+                error_log("[createDomain][$rid] SMTP provisioned: username=" . $mask($creds['username'] ?? '')
+                    . " ip_pool=" . ($creds['ip_pool'] ?? 'NULL'));
+            } catch (\Throwable $e) {
+                error_log("[createDomain][$rid] SMTP provision failed: " . $e->getMessage());
+                throw new RuntimeException('Failed to provision SMTP credentials', 500);
+            }
+
+            // 6) Initialize DNS/SMTP expectations via service (and persist updates)
+            try {
+                error_log("[createDomain][$rid] Initializing DNS bootstrap for domain_id=" . (int)$domain->getId());
+                $bootstrap = $this->domainConfig->initializeAndSave($domain);
+                // Log shapes but not full keys
+                $dkimKeys = isset($bootstrap['dns']['dkim'])
+                    ? (is_array($bootstrap['dns']['dkim']) ? count($bootstrap['dns']['dkim']) . " selectors" : 'present')
+                    : 'none';
+                error_log("[createDomain][$rid] DNS bootstrap prepared: spf=" . (!empty($bootstrap['dns']['spf']) ? 'yes' : 'no') .
+                    " dmarc=" . (!empty($bootstrap['dns']['dmarc']) ? 'yes' : 'no') .
+                    " mx=" . (!empty($bootstrap['dns']['mx']) ? 'yes' : 'no') .
+                    " dkim=" . $dkimKeys);
+            } catch (\Throwable $e) {
+                error_log("[createDomain][$rid] DNS bootstrap failed: " . $e->getMessage());
+                throw new RuntimeException('Failed to initialize DNS records', 500);
+            }
+
+            $resp = new JsonResponse([
+                'id'         => $domain->getId(),
+                'domain'     => $domain->getDomain(),
+                'status'     => $domain->getStatus(),
+                'created_at' => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
+                'txt'        => $bootstrap['dns']['txt'] ?? null,
+                'records'    => [
+                    'spf_expected'   => $bootstrap['dns']['spf']   ?? null,
+                    'dmarc_expected' => $bootstrap['dns']['dmarc'] ?? null,
+                    'mx_expected'    => $bootstrap['dns']['mx']    ?? null,
+                    'dkim'           => $bootstrap['dns']['dkim']  ?? null,
+                ],
+                'smtp'       => [
+                    'host'     => 'smtp.monkeysmail.com',
+                    'ip'       => '34.30.122.164',
+                    'ports'    => [587, 465],
+                    'tls'      => ['starttls' => true, 'implicit' => true],
+                    'username' => $creds['username'],
+                    // keep full password in response, but DO NOT log it
+                    'password' => $creds['password'],
+                    'ip_pool'  => $creds['ip_pool'],
+                ],
+            ], 201);
+
+            $dt = number_format((microtime(true) - $t0) * 1000, 1);
+            error_log("[createDomain][$rid] OK 201 company_id={$companyId} domain={$name} planKey={$planKey} dt_ms={$dt}");
+            return $resp;
+
+        } catch (\Throwable $e) {
+            $dt = number_format((microtime(true) - $t0) * 1000, 1);
+            // Log full exception with code + first line of trace for quick pinpointing
+            $trace = explode("\n", $e->getTraceAsString())[0] ?? '';
+            error_log("[createDomain][$rid] ERROR code={$e->getCode()} msg=" . $e->getMessage() . " at {$trace} dt_ms={$dt}");
+
+            $code = $e instanceof \RuntimeException && $e->getCode() >= 400 ? $e->getCode() : 500;
+            return new JsonResponse([
+                'error'   => $e->getMessage(),
+                'traceId' => $rid,
+            ], $code);
         }
-
-        // 3) Parse & validate payload
-        $body = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
-        $name = strtolower(trim((string)($body['domain'] ?? '')));
-        if ($name === '') {
-            throw new RuntimeException('Domain name is required', 400);
-        }
-        if (!preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $name)) {
-            throw new RuntimeException('Invalid domain format', 400);
-        }
-
-        // 4) Create base entity
-        $domain = new Domain()
-            ->setDomain($name)
-            ->setStatus(Domain::STATUS_PENDING)
-            ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
-            ->setCompany($company);
-
-        // 5) Persist
-        $domainRepo->save($domain);
-        // one login per company; username shown with this domain
-        $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
-        // 6) Initialize DNS/SMTP expectations via the service (and persist updates)
-        $bootstrap = $this->domainConfig->initializeAndSave($domain);
-
-        return new JsonResponse([
-            'id'         => $domain->getId(),
-            'domain'     => $domain->getDomain(),
-            'status'     => $domain->getStatus(),
-            'created_at' => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
-            'txt'        => $bootstrap['dns']['txt'],
-            'records'    => [
-                'spf_expected'   => $bootstrap['dns']['spf'],
-                'dmarc_expected' => $bootstrap['dns']['dmarc'],
-                'mx_expected'    => $bootstrap['dns']['mx'],
-                'dkim'           => $bootstrap['dns']['dkim'] ?? null,
-            ],
-            'smtp'       => [
-                'host'     => 'smtp.monkeysmail.com',
-                'ip'       => '34.30.122.164',
-                'ports'    => [587, 465],
-                'tls'      => ['starttls' => true, 'implicit' => true],
-                'username' => $creds['username'],
-                'password' => $creds['password'],
-                'ip_pool'  => $creds['ip_pool'],
-            ],
-        ], 201);
     }
-
-
+    
     /**
      * GET /companies/{hash}/domains/{id}
      *
