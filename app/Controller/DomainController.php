@@ -288,6 +288,7 @@ final class DomainController
                 ];
             }
 
+            // ---- build response safely (ip_pool may be absent) ----
             $resp = new JsonResponse([
                 'id'         => $domain->getId(),
                 'domain'     => $domain->getDomain(),
@@ -305,12 +306,12 @@ final class DomainController
                     'ip'       => '34.30.122.164',
                     'ports'    => [587, 465],
                     'tls'      => ['starttls' => true, 'implicit' => true],
-                    'username' => $creds['username'],
+                    'username' => $creds['username'] ?? null,
                     // keep full password in response, but DO NOT log it
-                    'password' => $creds['password'],
-                    'ip_pool'  => $creds['ip_pool'],
+                    'password' => $creds['password'] ?? null,
+                    'ip_pool'  => $creds['ip_pool']  ?? null,   // <-- safe default added
                 ],
-                // NEW: non-blocking warning the UI can display
+                // Non-blocking warning the UI can display
                 'opendkim_error' => $opendkimError,
             ], 201);
 
