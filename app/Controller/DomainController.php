@@ -162,7 +162,7 @@ final class DomainController
             /** @var \App\Repository\DomainRepository $domainRepo */
             $domainRepo = $this->repos->getRepository(Domain::class);
 
-            // ---- NEW: Enforce domain limits for Starter/Grow/No Plan ----
+            // ---- Enforce domain limits for Starter/Grow/No Plan ----
             $planName = null;
             try {
                 $planName = $company->getPlan()?->getName();
@@ -171,7 +171,6 @@ final class DomainController
                 error_log("[createDomain][$rid] Plan relation access failed: " . $e->getMessage());
             }
 
-            // Fallback if plan relation isn’t loaded
             if ($planName === null || $planName === '') {
                 try {
                     /** @var \App\Repository\CompanyRepository $companyRepo */
@@ -229,7 +228,7 @@ final class DomainController
             }
 
             // 4) Create base entity
-            $domain = new Domain()
+            $domain = (new Domain())
                 ->setDomain($name)
                 ->setStatus(Domain::STATUS_PENDING)
                 ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
@@ -249,7 +248,7 @@ final class DomainController
                 error_log("[createDomain][$rid] Provisioning SMTP credentials (previewDomain={$name})");
                 $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
                 error_log("[createDomain][$rid] SMTP provisioned: username=" . $mask($creds['username'] ?? '')
-                    . " ip_pool=" . ($creds['ip_pool'] ?? 'NULL'));
+                    . " ip_pool=" . (($creds['ip_pool'] ?? null) === null ? 'NULL' : $creds['ip_pool']));
             } catch (\Throwable $e) {
                 error_log("[createDomain][$rid] SMTP provision failed: " . $e->getMessage());
                 throw new RuntimeException('Failed to provision SMTP credentials', 500);
@@ -265,13 +264,12 @@ final class DomainController
                 // Let DomainConfig optionally pass back a soft error (if it caught one)
                 $opendkimError = $bootstrap['opendkim_error'] ?? null;
 
-                $dkimKeys = isset($bootstrap['dns']['dkim'])
-                    ? (is_array($bootstrap['dns']['dkim']) ? 'present' : 'present')
-                    : 'none';
+                // Count selectors if DKIM map present
+                $dkimCount = is_array($bootstrap['dns']['dkim'] ?? null) ? count($bootstrap['dns']['dkim']) : 0;
                 error_log("[createDomain][$rid] DNS bootstrap prepared: spf=" . (!empty($bootstrap['dns']['spf']) ? 'yes' : 'no') .
                     " dmarc=" . (!empty($bootstrap['dns']['dmarc']) ? 'yes' : 'no') .
                     " mx=" . (!empty($bootstrap['dns']['mx']) ? 'yes' : 'no') .
-                    " dkim=" . $dkimKeys .
+                    " dkim=" . ($dkimCount > 0 ? "{$dkimCount} selectors" : "none") .
                     ($opendkimError ? " (opendkim_error present)" : ""));
             } catch (\Throwable $e) {
                 // Do NOT fail request: surface as warning and continue
@@ -299,6 +297,7 @@ final class DomainController
                     'spf_expected'   => $bootstrap['dns']['spf']   ?? null,
                     'dmarc_expected' => $bootstrap['dns']['dmarc'] ?? null,
                     'mx_expected'    => $bootstrap['dns']['mx']    ?? null,
+                    // DomainConfig now returns a selector→{selector,value} map
                     'dkim'           => $bootstrap['dns']['dkim']  ?? null,
                 ],
                 'smtp'       => [
@@ -309,7 +308,7 @@ final class DomainController
                     'username' => $creds['username'] ?? null,
                     // keep full password in response, but DO NOT log it
                     'password' => $creds['password'] ?? null,
-                    'ip_pool'  => $creds['ip_pool']  ?? null,   // <-- safe default added
+                    'ip_pool'  => $creds['ip_pool']  ?? null,   // safe default
                 ],
                 // Non-blocking warning the UI can display
                 'opendkim_error' => $opendkimError,

@@ -10,8 +10,8 @@ use Random\RandomException;
 
 final class DomainConfig
 {
-    private const string SMTP_HOST = 'smtp.monkeysmail.com';
-    private const string SMTP_IP   = '34.30.122.164';
+    private const string SMTP_HOST     = 'smtp.monkeysmail.com';
+    private const string SMTP_IP       = '34.30.122.164';
     private const string DKIM_SELECTOR = 'monkey';
     private const string DKIM_KEY_DIR  = '/var/lib/rspamd/dkim';
 
@@ -31,12 +31,12 @@ final class DomainConfig
      *     spf: string,
      *     dmarc: string,
      *     mx: array<array{host:string, value:string, priority:int}>,
-     *     dkim: array{name:string, value:string}  // TXT to publish
+     *     dkim: array<string, array{selector:string, value:string}>
      *   },
      *   smtp: array{
-     *     host:string, ip:string, ports:array<int>, tls: array{starttls:bool, implicit:bool},
-     *     credentials: array{username:string, password:string} // returned only once!
-     *   }
+     *     host:string, ip:string, ports:array<int>, tls: array{starttls:bool, implicit:bool}
+     *   },
+     *   opendkim_error?: string|null
      * }
      * @throws RandomException
      * @throws \Throwable
@@ -45,9 +45,10 @@ final class DomainConfig
     {
         $name = strtolower(trim((string)$domain->getDomain()));
 
-        // 1) TXT/ SPF/ DMARC/ MX (as you already had)
+        // 1) TXT / SPF / DMARC / MX expectations
         $txtName  = "_monkeys-verify.$name";
         $txtValue = 'monkeys-site-verification=' . bin2hex(random_bytes(16));
+
         $spfExpected   = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
         $dmarcExpected = sprintf(
             'v=DMARC1; p=none; rua=mailto:dmarc@%1$s; ruf=mailto:dmarc@%1$s; fo=1; adkim=s; aspf=s',
@@ -56,38 +57,50 @@ final class DomainConfig
         $mxExpected = [[
             'host'     => $name,
             'priority' => 10,
+            // Some UIs want the target separately; we also keep "value" for compatibility.
             'value'    => self::SMTP_HOST . '.',
         ]];
 
-        // 2) DKIM: file ensure + derive DNS + **persist entity**
+        // 2) DKIM: generate/ensure key (independent of OpenDKIM tables)
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
+        $dkimTxtName  = $dk['txt_name'];   // e.g. "monkey._domainkey.monkeys.cloud"
+        $dkimTxtValue = $dk['txt_value'];  // "v=DKIM1; k=rsa; p=..."
 
-        $this->openDkimConfigurator->ensureDomain($name, self::DKIM_SELECTOR, $dk['private_path']);
+        // 2.1) Try to register in OpenDKIM (non-fatal; capture error)
+        $opendkimError = null;
+        try {
+            $this->openDkimConfigurator->ensureDomain($name, self::DKIM_SELECTOR, $dk['private_path']);
+        } catch (\Throwable $e) {
+            $opendkimError = $e->getMessage();
+        }
 
         /** @var \App\Repository\DkimKeyRepository|\MonkeysLegion\Repository\EntityRepository $dkRepo */
         $dkRepo = $this->repos->getRepository(DkimKey::class);
 
-        // Try to find an existing active row for this domain+selector
+        // Find existing active row for this domain+selector (idempotent)
         $existing = $dkRepo->findOneBy([
             'domain'   => $domain,
             'selector' => self::DKIM_SELECTOR,
         ]);
 
         if (! $existing) {
-            $existing = new DkimKey();
-            $existing
+            $existing = (new DkimKey())
                 ->setDomain($domain)
                 ->setSelector(self::DKIM_SELECTOR)
                 ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
                 ->setActive(true);
         }
-        // Update (idempotent) with latest key info
+
+        // Update with latest key info
         $existing
             ->setPublic_key_pem($dk['public_pem'])
             ->setPrivate_key_ref($dk['private_path']);
+        if (method_exists($existing, 'setTxt_value')) {
+            $existing->setTxt_value($dkimTxtValue);
+        }
         $dkRepo->save($existing);
 
-        // 3) Persist base expectations back to Domain
+        // 3) Persist expectations back to Domain
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
         $domain
@@ -101,14 +114,19 @@ final class DomainConfig
             ->setBimi_enabled(false);
         $domainRepo->save($domain);
 
-        // 4) Return bootstrap payload for UI
-        return [
+        // 4) Return bootstrap payload for UI (DKIM as mapping by selector)
+        $payload = [
             'dns' => [
-                'txt'   => ['name' => $txtName, 'value' => $txtValue],
+                'txt'   => ['name' => $txtName,  'value' => $txtValue],
                 'spf'   => $spfExpected,
                 'dmarc' => $dmarcExpected,
                 'mx'    => $mxExpected,
-                'dkim'  => ['name' => $dk['txt_name'], 'value' => $dk['txt_value']],
+                'dkim'  => [
+                    self::DKIM_SELECTOR => [
+                        'selector' => self::DKIM_SELECTOR,
+                        'value'    => $dkimTxtValue,
+                    ],
+                ],
             ],
             'smtp' => [
                 'host'  => self::SMTP_HOST,
@@ -117,5 +135,11 @@ final class DomainConfig
                 'tls'   => ['starttls' => true, 'implicit' => true],
             ],
         ];
+
+        if ($opendkimError !== null) {
+            $payload['opendkim_error'] = $opendkimError;
+        }
+
+        return $payload;
     }
 }
