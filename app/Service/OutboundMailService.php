@@ -789,22 +789,56 @@ final class OutboundMailService
 
     private static function makeRedisFromEnv(): \Redis|Predis
     {
-        // Mirror your Segment orchestrator connection logic or keep it simple:
-        $url = getenv('REDIS_URL') ?: 'redis://127.0.0.1:6379/0';
+        // Prefer REDIS_URL, else assemble from separate vars
+        $url = getenv('REDIS_URL');
+        if (!$url || trim($url) === '') {
+            $host = getenv('REDIS_HOST') ?: '127.0.0.1';
+            $port = getenv('REDIS_PORT') ?: '6379';
+            $db   = getenv('REDIS_DB')   ?: '0';
+            $auth = getenv('REDIS_AUTH') ?: '';
+            $scheme = ((getenv('REDIS_SCHEME') ?: '') === 'rediss' || getenv('REDIS_TLS') === '1') ? 'rediss' : 'redis';
+            $url = sprintf('%s://%s%s:%s/%s',
+                $scheme,
+                $auth !== '' ? (':'.rawurlencode($auth).'@') : '',
+                $host, $port, $db
+            );
+        }
+
+        $parts = parse_url($url) ?: [];
+        $host  = $parts['host'] ?? '127.0.0.1';
+        $port  = (int)($parts['port'] ?? 6379);
+        $db    = isset($parts['path']) ? (int)trim($parts['path'], '/') : 0;
+
+        // Support ACL username + password (REDIS_USERNAME / REDIS_AUTH as fallback)
+        $user = isset($parts['user']) ? rawurldecode($parts['user']) : (getenv('REDIS_USERNAME') ?: null);
+        $pass = isset($parts['pass']) ? rawurldecode($parts['pass']) : (getenv('REDIS_AUTH') ?: null);
 
         if (class_exists(\Redis::class)) {
             $r = new \Redis();
-            $parts = parse_url($url);
-            $host = $parts['host'] ?? '127.0.0.1';
-            $port = (int)($parts['port'] ?? 6379);
             $r->connect($host, $port, 1.5);
-            if (!empty($parts['pass'])) $r->auth($parts['pass']);
-            if (!empty($parts['path'])) $r->select((int)trim($parts['path'], '/'));
+
+            if (is_string($pass) && $pass !== '') {
+                // Redis 6+ ACL support: prefer [$user, $pass] if a user is provided
+                if (is_string($user) && $user !== '') {
+                    $r->auth([$user, $pass]);
+                } else {
+                    // default user
+                    $r->auth($pass);
+                }
+            }
+
+            // Only select when DB > 0; DB 0 is default and doesn't need SELECT
+            if ($db > 0) {
+                $r->select($db);
+            }
+
             return $r;
         }
 
+        // Predis fallback (DSN works with recent Predis)
         return new Predis($url);
     }
+
 
     /* ================= Your existing internals (stubs to integrate) ================= */
 
