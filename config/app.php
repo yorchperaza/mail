@@ -25,20 +25,29 @@ $env = function(string $k, $default = null) {
 return [
 
     MySqlConnection::class => function () use ($env) {
-        $charset = (string) $env('DB_CHARSET', 'utf8mb4');
+        // 👇 prefer discrete env, falling back to sensible defaults
         $cfg = [
-            'host'    => (string) $env('DB_HOST',     '127.0.0.1'),
-            'port'    => (int)    $env('DB_PORT',     3306),
+            'host'    => (string) $env('DB_HOST', '127.0.0.1'),
+            'port'    => (int)    $env('DB_PORT', 3306),
             'dbname'  => (string) $env('DB_DATABASE', 'ml_mail'),
-            'user'    => (string) $env('DB_USER',     'root'),
-            'pass'    => (string) $env('DB_PASS',     ''),
-            'charset' => $charset,
+            'user'    => (string) $env('DB_USER', 'root'),
+            'pass'    => (string) $env('DB_PASS', ''),
+            'charset' => (string) $env('DB_CHARSET', 'utf8mb4'),
             'options' => [
                 \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES ".$charset,
+                \PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES ' . (string) $env('DB_CHARSET', 'utf8mb4'),
             ],
         ];
+
+        // quick one-time log to catch surprises (no secrets)
+        error_log(sprintf(
+            '[DB] host=%s port=%d db=%s user=%s pass_set=%s',
+            $cfg['host'], $cfg['port'], $cfg['dbname'],
+            $cfg['user'] !== '' ? $cfg['user'] : '<empty>',
+            $cfg['pass'] !== '' ? 'yes' : 'no'
+        ));
+
         return new MySqlConnection($cfg);
     },
 
