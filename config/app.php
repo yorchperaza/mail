@@ -24,9 +24,8 @@ $env = function(string $k, $default = null) {
 
 return [
 
-    MonkeysLegion\Database\MySQL\Connection::class => function () use ($env) {
+    MySqlConnection::class => function () use ($env) {
         $charset = (string) $env('DB_CHARSET', 'utf8mb4');
-
         $cfg = [
             'host'    => (string) $env('DB_HOST',     '127.0.0.1'),
             'port'    => (int)    $env('DB_PORT',     3306),
@@ -40,7 +39,7 @@ return [
                 \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES ".$charset,
             ],
         ];
-        return new MonkeysLegion\Database\MySQL\Connection($cfg);
+        return new MySqlConnection($cfg);
     },
 
     /* -------------------------- Redis (Predis) -------------------------- */
