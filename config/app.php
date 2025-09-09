@@ -24,21 +24,23 @@ $env = function(string $k, $default = null) {
 
 return [
 
-    MySqlConnection::class => function () {
+    MonkeysLegion\Database\MySQL\Connection::class => function () use ($env) {
+        $charset = (string) $env('DB_CHARSET', 'utf8mb4');
+
         $cfg = [
-            'host'    => $_ENV['DB_HOST']     ?? '127.0.0.1',
-            'port'    => (int)($_ENV['DB_PORT'] ?? 3306),
-            'dbname'  => $_ENV['DB_DATABASE'] ?? 'ml_mail',
-            'user'    => $_ENV['DB_USER']     ?? 'root',
-            'pass'    => $_ENV['DB_PASS']     ?? '',
-            'charset' => $_ENV['DB_CHARSET']  ?? 'utf8mb4',
+            'host'    => (string) $env('DB_HOST',     '127.0.0.1'),
+            'port'    => (int)    $env('DB_PORT',     3306),
+            'dbname'  => (string) $env('DB_DATABASE', 'ml_mail'),
+            'user'    => (string) $env('DB_USER',     'root'),
+            'pass'    => (string) $env('DB_PASS',     ''),
+            'charset' => $charset,
             'options' => [
                 \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
-                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES ".($_ENV['DB_CHARSET'] ?? 'utf8mb4'),
+                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES ".$charset,
             ],
         ];
-        return new MySqlConnection($cfg);
+        return new MonkeysLegion\Database\MySQL\Connection($cfg);
     },
 
     /* -------------------------- Redis (Predis) -------------------------- */
