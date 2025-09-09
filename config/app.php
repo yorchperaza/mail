@@ -22,7 +22,7 @@ return [
         $cfg = [
             'host'    => $_ENV['DB_HOST']     ?? '127.0.0.1',
             'port'    => (int)($_ENV['DB_PORT'] ?? 3306),
-            'dbname'  => $_ENV['DB_DATABASE'] ?? 'ml_mail',   // <-- was DB_NAME
+            'dbname'  => $_ENV['DB_DATABASE'] ?? 'ml_mail',
             'user'    => $_ENV['DB_USER']     ?? 'root',
             'pass'    => $_ENV['DB_PASS']     ?? '',
             'charset' => $_ENV['DB_CHARSET']  ?? 'utf8mb4',
@@ -43,22 +43,30 @@ return [
             'port'     => (int)($_ENV['REDIS_PORT'] ?? 6379),
             'database' => (int)($_ENV['REDIS_DB'] ?? 0),
         ];
+
         if (!empty($_ENV['REDIS_AUTH'])) {
             $params['password'] = $_ENV['REDIS_AUTH'];
         }
+
+        // Only disable timeout for worker processes, not web requests
         $options = [];
+        if (PHP_SAPI === 'cli') {
+            $options['read_write_timeout'] = -1;  // Use -1 instead of 0
+        }
+
         if (($params['scheme'] ?? 'tcp') === 'tls') {
             $options['ssl'] = [
                 'verify_peer'      => false,
                 'verify_peer_name' => false,
             ];
         }
+
         return new PredisClient($params, $options);
     },
 
     /* ----------------------------- Queue -------------------------------- */
     MailQueue::class => function ($c) {
-        // DEV: process jobs immediately (no worker, no Redis)
+        // Check if we should use the dev queue
         if (!empty($_ENV['DEV_INLINE_QUEUE'])) {
             return new DevInlineMailQueue(
                 $c->get(MailSender::class)
@@ -87,12 +95,12 @@ return [
 
     /* --------------------------- Services ------------------------------- */
     OutboundMailService::class => fn($c) => new OutboundMailService(
-        $c->get(RepositoryFactory::class),   // $repos
-        $c->get(QueryBuilder::class),        // $qb        ✅ was wrong before
-        $c->get(MailQueue::class),           // $queue     ✅ ensure alias -> DevInlineMailQueue
-        $c->get(MailSender::class),          // $sender    ✅ ensure alias -> PhpMailerMailSender
-        null,                                // $redis (optional) or provide a shared client
-        3600                                 // $statusTtlSec
+        $c->get(RepositoryFactory::class),
+        $c->get(QueryBuilder::class),
+        $c->get(MailQueue::class),
+        $c->get(MailSender::class),
+        null,  // Let the service create its own Redis connection if needed
+        3600
     ),
 
     CampaignDispatchService::class => fn($c) => new CampaignDispatchService(
@@ -103,8 +111,8 @@ return [
     /* ---------------------- Webhook Dispatcher -------------------------- */
     WebhookDispatcher::class => fn($c) => new WebhookDispatcher(
         $c->get(RepositoryFactory::class),
-        $c->get(PredisClient::class),                        // reuse your Predis connection
-        $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'  // list/stream key to enqueue deliveries
+        $c->get(PredisClient::class),
+        $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'
     ),
 
     /* --------------------- Segment Build Services ----------------------- */
@@ -116,7 +124,7 @@ return [
     SegmentBuildOrchestrator::class => fn($c) => new SegmentBuildOrchestrator(
         $c->get(RepositoryFactory::class),
         $c->get(QueryBuilder::class),
-        $c->get(PredisClient::class),   // Predis\Client instance
+        $c->get(PredisClient::class),
         stream: $_ENV['SEGMENT_STREAM'] ?? 'seg:builds',
         group:  $_ENV['SEGMENT_GROUP']  ?? 'seg_builders',
     ),
