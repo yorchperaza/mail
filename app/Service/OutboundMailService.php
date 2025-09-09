@@ -14,6 +14,8 @@ use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use MonkeysLegion\Repository\RepositoryFactory;
 use Random\RandomException;
+use MonkeysLegion\Query\QueryBuilder;
+use Predis\Client as Predis;
 
 final class OutboundMailService
 {
@@ -22,9 +24,13 @@ final class OutboundMailService
 
     public function __construct(
         private RepositoryFactory $repos,
-        private MailQueue         $queue,
-        private MailSender        $smtp,
-    ) {}
+        private QueryBuilder      $qb,
+        private MailSender        $sender,
+        private \Redis|Predis|null $redis = null,
+        private int               $statusTtlSec = 3600,
+    ) {
+        $this->redis = $this->redis ?: self::makeRedisFromEnv();
+    }
 
     /** Persist Message as queued/preview and push to Redis (always queues when not dryRun). */
     public function createAndEnqueue(array $payload, Company $company, Domain $domain): array
@@ -661,6 +667,178 @@ final class OutboundMailService
         } catch (\Throwable $t) {
             error_log('[RateLimit][ensure][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
         }
+    }
+
+    /**
+     * Create message entity, persist, send immediately, and heartbeat status to Redis.
+     * Returns a SendOutcome with httpStatus + data (mirrors your Segment runNow shape).
+     */
+    public function createAndSendNowWithHeartbeat(array $body, Company $company, Domain $domain): SendOutcome
+    {
+        $t0 = microtime(true);
+
+        // 1) Create + persist Message (implement these helpers to fit your codebase)
+        $msg = $this->createMessageEntityFromBody($body, $company, $domain);
+        $this->persistMessage($msg);
+
+        $companyId = (int)$company->getId();
+        $messageId = (int)$msg->getId();
+        $key       = $this->mailStatusKey($companyId, $messageId);
+
+        $lastBeat = 0;
+        $beat = function (int $progress, string $message) use ($key, &$lastBeat) {
+            $now = time();
+            if ($now - $lastBeat < 5) return; // every ~5s
+            $this->setMailStatus($key, [
+                'status'      => 'sending',
+                'message'     => $message,
+                'progress'    => $progress,
+                'heartbeatAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            ]);
+            $lastBeat = $now;
+        };
+
+        // initial status
+        $this->setMailStatus($key, [
+            'status'   => 'starting',
+            'progress' => 1,
+            'createdAt'=> (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+        ]);
+
+        // 2) Build envelope from body (headers/to/cc/bcc/replyTo/etc)
+        $beat(10, 'preparing envelope');
+        $envelope = $this->buildEnvelopeFromBody($body);
+
+        // 3) Send via MailSender (e.g., PhpMailerMailSender)
+        $beat(35, 'connecting to SMTP');
+        $res = $this->sender->send($msg, $envelope);
+
+        // 4) Finalize
+        $ok  = (bool)($res['ok'] ?? false);
+        $mid = $res['message_id'] ?? null;
+        $err = $res['error'] ?? null;
+
+        $dt = (int)round(microtime(true) - $t0);
+
+        if ($ok) {
+            $this->markMessageSent($msg, $mid);
+            $this->setMailStatus($key, [
+                'status'      => 'sent',
+                'progress'    => 100,
+                'messageId'   => $mid,
+                'durationSec' => $dt,
+                'sentAt'      => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            ]);
+
+            return new SendOutcome(201, [
+                'status'   => 'sent',
+                'entryId'  => $messageId,
+                'result'   => ['ok' => true, 'message_id' => $mid],
+            ]);
+        }
+
+        $this->markMessageFailed($msg, (string)$err);
+        $this->setMailStatus($key, [
+            'status'   => 'error',
+            'progress' => 100,
+            'message'  => (string)$err,
+            'failedAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+        ]);
+
+        return new SendOutcome(502, [
+            'status'  => 'error',
+            'entryId' => $messageId,
+            'error'   => (string)$err,
+        ]);
+    }
+
+    /* ================= Redis status helpers (like segments) ================= */
+
+    private function mailStatusKey(int $companyId, int $messageId): string
+    {
+        return sprintf('mail:status:%d:%d', $companyId, $messageId);
+    }
+
+    private function setMailStatus(string $key, array $payload): void
+    {
+        $now  = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM);
+        $json = json_encode(array_merge(['updatedAt' => $now], $payload), JSON_UNESCAPED_SLASHES);
+
+        if ($this->redis instanceof \Redis) {
+            // SETEX key ttl payload
+            $this->redis->setex($key, $this->statusTtlSec, $json);
+        } else {
+            // Predis
+            $this->redis->executeRaw(['SETEX', $key, (string)$this->statusTtlSec, $json]);
+        }
+    }
+
+    public function lastMailStatus(int $companyId, int $messageId): ?array
+    {
+        $key = $this->mailStatusKey($companyId, $messageId);
+        $raw = $this->redis instanceof \Redis
+            ? $this->redis->get($key)
+            : $this->redis->executeRaw(['GET', $key]);
+
+        if (!is_string($raw) || $raw === '') return null;
+        $dec = json_decode($raw, true);
+        return is_array($dec) ? $dec : null;
+    }
+
+    private static function makeRedisFromEnv(): \Redis|Predis
+    {
+        // Mirror your Segment orchestrator connection logic or keep it simple:
+        $url = getenv('REDIS_URL') ?: 'redis://127.0.0.1:6379/0';
+
+        if (class_exists(\Redis::class)) {
+            $r = new \Redis();
+            $parts = parse_url($url);
+            $host = $parts['host'] ?? '127.0.0.1';
+            $port = (int)($parts['port'] ?? 6379);
+            $r->connect($host, $port, 1.5);
+            if (!empty($parts['pass'])) $r->auth($parts['pass']);
+            if (!empty($parts['path'])) $r->select((int)trim($parts['path'], '/'));
+            return $r;
+        }
+
+        return new Predis($url);
+    }
+
+    /* ================= Your existing internals (stubs to integrate) ================= */
+
+    private function createMessageEntityFromBody(array $body, Company $company, Domain $domain)
+    {
+        // TODO: hydrate Message + set company/domain bindings, headers, body, tracking, attachments, etc.
+        // return $msg;
+    }
+
+    private function persistMessage(Message $msg): void
+    {
+        // TODO: repos->persist($msg) + flush, etc.
+    }
+
+    private function markMessageSent(Message $msg, ?string $providerMsgId): void
+    {
+        // TODO: set status, provider id, sent_at, persist
+    }
+
+    private function markMessageFailed(Message $msg, string $error): void
+    {
+        // TODO: set status, error, persist
+    }
+
+    private function buildEnvelopeFromBody(array $body): array
+    {
+        // Extract from/replyTo/to/cc/bcc/headers safely. Normalize strings/arrays.
+        return [
+            'from'    => $body['from']['email'] ?? null,
+            'fromName'=> $body['from']['name']  ?? null,
+            'replyTo' => $body['replyTo']       ?? null,
+            'to'      => array_values((array)($body['to']  ?? [])),
+            'cc'      => array_values((array)($body['cc']  ?? [])),
+            'bcc'     => array_values((array)($body['bcc'] ?? [])),
+            'headers' => (array)($body['headers'] ?? []),
+        ];
     }
 
 }

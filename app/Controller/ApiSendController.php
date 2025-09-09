@@ -75,7 +75,7 @@ final class ApiSendController
             // --- Auth
             $apiKey = $this->readApiKeyFromHeader($request);
             if (!$apiKey) {
-                error_log('sendWithApiKey: missing/invalid API key');
+                error_log('[MAIL][CTRL][SEND] missing/invalid API key');
                 return $this->jsonError(401, 'unauthorized', 'Invalid or missing API key');
             }
 
@@ -83,7 +83,7 @@ final class ApiSendController
             try {
                 $this->assertApiKeyAllowed($apiKey, 'mail:send');
             } catch (RuntimeException $e) {
-                error_log('sendWithApiKey: scope check failed: ' . $e->getMessage());
+                error_log('[MAIL][CTRL][SEND] scope check failed: ' . $e->getMessage());
                 return $this->jsonError(403, 'forbidden', 'API key is missing the required scope', ['required' => 'mail:send']);
             }
 
@@ -94,9 +94,14 @@ final class ApiSendController
             $domain = $apiKey->getDomain();
             if (!$domain) return $this->jsonError(403, 'forbidden', 'API key not bound to a domain');
 
-            // --- Body
-            $now  = new DateTimeImmutable('now', new DateTimeZone('UTC'));
-            $body = $this->decodeJsonBody($request);
+            // --- Body + mode
+            $now      = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+            $rawBody  = (string)$request->getBody();
+            $body     = json_decode($rawBody, true) ?: [];
+            $q        = $request->getQueryParams();
+            $modeQ    = strtolower((string)($q['mode'] ?? ''));
+            $modeB    = strtolower((string)($body['mode'] ?? ''));
+            $runNow   = $modeQ === 'sync' || $modeB === 'sync' || !empty($body['runNow']);
 
             // --- Validation
             $units = $this->countRecipientUnitsFromBody($body);
@@ -111,7 +116,19 @@ final class ApiSendController
                 return $this->handleQuotaException($e);
             }
 
-            // --- Enqueue
+            if ($runNow) {
+                error_log('[MAIL][CTRL][SEND] runNow=1 (sync mode)');
+                $out = $this->mailService->createAndSendNowWithHeartbeat($body, $company, $domain);
+
+                return new JsonResponse(array_merge([
+                    'mode'    => 'sync',
+                    'company' => (int)$company->getId(),
+                    'domain'  => (int)$domain->getId(),
+                    'at'      => $now->format(\DateTimeInterface::ATOM),
+                ], $out->data), $out->httpStatus);
+            }
+
+            // --- Enqueue (default)
             $result = $this->mailService->createAndEnqueue($body, $company, $domain);
             $status = (string)($result['status'] ?? '');
             $http   = match ($status) {
@@ -123,16 +140,18 @@ final class ApiSendController
             };
 
             return new JsonResponse([
+                'mode'       => 'enqueue',
                 'status'     => $status ?: 'queued',
                 'recipients' => $units,
                 'message'    => $result['message'] ?? null,
             ], $http);
 
-        } catch (Throwable $e) {
-            error_log('sendWithApiKey: unexpected error: ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            error_log('[MAIL][CTRL][SEND][ERR] ' . $e->getMessage().' @ '.$e->getFile().':'.$e->getLine());
             return $this->jsonError(500, 'internal_error', 'Internal Server Error');
         }
     }
+
 
     /* =========================================================================
      * 2) Send to a LIST (recipients resolved server-side) — BY HASH (in body)
