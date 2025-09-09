@@ -37,32 +37,34 @@ return [
 
     /* -------------------------- Redis (Predis) -------------------------- */
     PredisClient::class => function () {
-        // Prefer a single DSN that already includes auth, host, db, etc.
-        $url = $_ENV['REDIS_URL'] ?? '';
+        // 1) Prefer a full DSN (supports user/pass/db/tls in one var)
+        $url = $_ENV['REDIS_URL'] ?? getenv('REDIS_URL') ?? '';
         if (is_string($url) && trim($url) !== '') {
-            // Examples:
-            //  redis://:password@10.0.0.164:6379/0
-            //  rediss://:password@host:6380/0   (TLS)
             return new PredisClient($url);
         }
 
-        // Fallback to individual pieces (supports ACL username + password)
+        // 2) Fallback to discrete pieces
+        $host = $_ENV['REDIS_HOST'] ?? getenv('REDIS_HOST') ?? '127.0.0.1';
+        $port = (int)($_ENV['REDIS_PORT'] ?? getenv('REDIS_PORT') ?? 6379);
+        $db   = (int)($_ENV['REDIS_DB']   ?? getenv('REDIS_DB')   ?? 0);
+
+        // Support ACL/password via either REDIS_AUTH or REDIS_PASSWORD (common)
+        $pass = $_ENV['REDIS_AUTH'] ?? getenv('REDIS_AUTH') ?? ($_ENV['REDIS_PASSWORD'] ?? getenv('REDIS_PASSWORD') ?? null);
+
         $params = [
-            'scheme'   => ($_ENV['REDIS_SCHEME'] ?? 'tcp') === 'rediss' ? 'tls' : ($_ENV['REDIS_SCHEME'] ?? 'tcp'),
-            'host'     => $_ENV['REDIS_HOST'] ?? '127.0.0.1',
-            'port'     => (int)($_ENV['REDIS_PORT'] ?? 6379),
-            'database' => (int)($_ENV['REDIS_DB'] ?? 0),
+            'scheme'   => 'tcp',      // or 'tls' if you actually need TLS
+            'host'     => $host,
+            'port'     => $port,
+            'database' => $db,
         ];
-
-        if (!empty($_ENV['REDIS_AUTH'])) {
-            $params['password'] = $_ENV['REDIS_AUTH'];
-        }
-        if (!empty($_ENV['REDIS_USERNAME'])) {
-            $params['username'] = $_ENV['REDIS_USERNAME']; // Redis 6+ ACL user
+        if ($pass !== null && $pass !== '') {
+            $params['password'] = $pass;
         }
 
+        // Optional TLS handling:
         $options = [];
-        if (($params['scheme'] ?? 'tcp') === 'tls') {
+        if (($_ENV['REDIS_SCHEME'] ?? '') === 'rediss' || ($_ENV['REDIS_TLS'] ?? '') === '1') {
+            $params['scheme'] = 'tls';
             $options['ssl'] = [
                 'verify_peer'      => false,
                 'verify_peer_name' => false,
