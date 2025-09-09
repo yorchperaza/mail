@@ -10,9 +10,15 @@ use Predis\Client as PredisClient;
 require __DIR__ . '/../vendor/autoload.php';
 
 putenv('DB_HOST=34.9.43.102');
-putenv('DB_USERNAME=mailmonkeys');
-putenv('DB_PASSWORD=t3mp0r4lAllyson#22');
+putenv('DB_USER=mailmonkeys');
+putenv('DB_PASS=t3mp0r4lAllyson#22');
 putenv('DB_DATABASE=ml_mail');
+
+// Also set in $_ENV and $_SERVER
+$_ENV['DB_HOST'] = '34.9.43.102';
+$_ENV['DB_USER'] = 'mailmonkeys';
+$_ENV['DB_PASS'] = 't3mp0r4lAllyson#22';
+$_ENV['DB_DATABASE'] = 'ml_mail';
 
 /**
  * Load environment variables before building the container.
