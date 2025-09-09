@@ -22,7 +22,7 @@ return [
         $cfg = [
             'host'    => $_ENV['DB_HOST']     ?? '127.0.0.1',
             'port'    => (int)($_ENV['DB_PORT'] ?? 3306),
-            'dbname'  => $_ENV['DB_DATABASE'] ?? 'ml_mail',
+            'dbname'  => $_ENV['DB_DATABASE'] ?? 'ml_mail',   // <-- was DB_NAME
             'user'    => $_ENV['DB_USER']     ?? 'root',
             'pass'    => $_ENV['DB_PASS']     ?? '',
             'charset' => $_ENV['DB_CHARSET']  ?? 'utf8mb4',
@@ -37,54 +37,37 @@ return [
 
     /* -------------------------- Redis (Predis) -------------------------- */
     PredisClient::class => function () {
-        // 1) Prefer a full DSN (supports user/pass/db/tls in one var)
-        $url = $_ENV['REDIS_URL'] ?? getenv('REDIS_URL') ?? '';
-        if (is_string($url) && trim($url) !== '') {
-            return new PredisClient($url);
-        }
-
-        // 2) Fallback to discrete pieces
-        $host = $_ENV['REDIS_HOST'] ?? getenv('REDIS_HOST') ?? '127.0.0.1';
-        $port = (int)($_ENV['REDIS_PORT'] ?? getenv('REDIS_PORT') ?? 6379);
-        $db   = (int)($_ENV['REDIS_DB']   ?? getenv('REDIS_DB')   ?? 0);
-
-        // Support ACL/password via either REDIS_AUTH or REDIS_PASSWORD (common)
-        $pass = $_ENV['REDIS_AUTH'] ?? getenv('REDIS_AUTH') ?? ($_ENV['REDIS_PASSWORD'] ?? getenv('REDIS_PASSWORD') ?? null);
-
         $params = [
-            'scheme'   => 'tcp',      // or 'tls' if you actually need TLS
-            'host'     => $host,
-            'port'     => $port,
-            'database' => $db,
+            'scheme'   => $_ENV['REDIS_SCHEME'] ?? 'tcp',
+            'host'     => $_ENV['REDIS_HOST'] ?? '127.0.0.1',
+            'port'     => (int)($_ENV['REDIS_PORT'] ?? 6379),
+            'database' => (int)($_ENV['REDIS_DB'] ?? 0),
         ];
-        if ($pass !== null && $pass !== '') {
-            $params['password'] = $pass;
+        if (!empty($_ENV['REDIS_AUTH'])) {
+            $params['password'] = $_ENV['REDIS_AUTH'];
         }
-
-        // Optional TLS handling:
         $options = [];
-        if (($_ENV['REDIS_SCHEME'] ?? '') === 'rediss' || ($_ENV['REDIS_TLS'] ?? '') === '1') {
-            $params['scheme'] = 'tls';
+        if (($params['scheme'] ?? 'tcp') === 'tls') {
             $options['ssl'] = [
                 'verify_peer'      => false,
                 'verify_peer_name' => false,
             ];
         }
-
         return new PredisClient($params, $options);
     },
 
     /* ----------------------------- Queue -------------------------------- */
     MailQueue::class => function ($c) {
-        // NOTE: set DEV_INLINE_QUEUE=0 in prod; inline bypasses the worker.
+        // DEV: process jobs immediately (no worker, no Redis)
         if (!empty($_ENV['DEV_INLINE_QUEUE'])) {
             return new DevInlineMailQueue(
                 $c->get(MailSender::class)
             );
         }
 
+        // Default: Redis Streams queue
         return new PredisStreamsMailQueue(
-            $c->get(PredisClient::class),                      // ✅ authenticated Predis
+            $c->get(PredisClient::class),
             stream: $_ENV['MAIL_STREAM'] ?? 'mail:outbound',
             group:  $_ENV['MAIL_GROUP']  ?? 'senders',
         );
@@ -104,12 +87,12 @@ return [
 
     /* --------------------------- Services ------------------------------- */
     OutboundMailService::class => fn($c) => new OutboundMailService(
-        $c->get(RepositoryFactory::class),
-        $c->get(QueryBuilder::class),
-        $c->get(MailQueue::class),
-        $c->get(MailSender::class),
-        $c->get(PredisClient::class),   // ✅ inject the same authenticated Redis client
-        3600
+        $c->get(RepositoryFactory::class),   // $repos
+        $c->get(QueryBuilder::class),        // $qb        ✅ was wrong before
+        $c->get(MailQueue::class),           // $queue     ✅ ensure alias -> DevInlineMailQueue
+        $c->get(MailSender::class),          // $sender    ✅ ensure alias -> PhpMailerMailSender
+        null,                                // $redis (optional) or provide a shared client
+        3600                                 // $statusTtlSec
     ),
 
     CampaignDispatchService::class => fn($c) => new CampaignDispatchService(
@@ -120,8 +103,8 @@ return [
     /* ---------------------- Webhook Dispatcher -------------------------- */
     WebhookDispatcher::class => fn($c) => new WebhookDispatcher(
         $c->get(RepositoryFactory::class),
-        $c->get(PredisClient::class),                        // ✅ same Predis
-        $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'
+        $c->get(PredisClient::class),                        // reuse your Predis connection
+        $_ENV['WEBHOOK_QUEUE_KEY'] ?? 'webhooks:deliveries'  // list/stream key to enqueue deliveries
     ),
 
     /* --------------------- Segment Build Services ----------------------- */
@@ -133,7 +116,7 @@ return [
     SegmentBuildOrchestrator::class => fn($c) => new SegmentBuildOrchestrator(
         $c->get(RepositoryFactory::class),
         $c->get(QueryBuilder::class),
-        $c->get(PredisClient::class),   // ✅ same Predis
+        $c->get(PredisClient::class),   // Predis\Client instance
         stream: $_ENV['SEGMENT_STREAM'] ?? 'seg:builds',
         group:  $_ENV['SEGMENT_GROUP']  ?? 'seg_builders',
     ),
