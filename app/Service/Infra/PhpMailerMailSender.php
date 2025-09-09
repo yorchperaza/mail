@@ -21,6 +21,55 @@ final class PhpMailerMailSender implements MailSender
     {
     }
 
+    public function sendRaw(array $data): array
+    {
+        $mail = new PHPMailer(true);
+
+        try {
+            // SMTP settings - using the class properties
+            $mail->isSMTP();
+            $mail->Host = $this->host;
+            $mail->Port = $this->port;
+            $mail->SMTPAuth = !empty($this->username);
+            $mail->Username = $this->username;
+            $mail->Password = $this->password;
+            $mail->SMTPSecure = $this->secure === 'tls' ? PHPMailer::ENCRYPTION_STARTTLS : PHPMailer::ENCRYPTION_SMTPS;
+            $mail->Timeout = $this->timeout;
+
+            // From
+            $mail->setFrom($data['from_email'], $data['from_name'] ?? '');
+
+            // Reply-to
+            if (!empty($data['reply_to'])) {
+                $mail->addReplyTo($data['reply_to']);
+            }
+
+            // Recipients
+            foreach ($data['to'] ?? [] as $email) {
+                $mail->addAddress($email);
+            }
+            foreach ($data['cc'] ?? [] as $email) {
+                $mail->addCC($email);
+            }
+            foreach ($data['bcc'] ?? [] as $email) {
+                $mail->addBCC($email);
+            }
+
+            // Content
+            $mail->Subject = $data['subject'] ?? '';
+            $mail->Body = $data['html_body'] ?? '';
+            $mail->AltBody = $data['text_body'] ?? '';
+            $mail->isHTML(!empty($data['html_body']));
+
+            $mail->send();
+
+            return ['ok' => true, 'message_id' => $mail->getLastMessageID()];
+
+        } catch (\Exception $e) {
+            return ['ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
     public function send(Message $msg, array $envelope): array
     {
         $mail = new PHPMailer(true);

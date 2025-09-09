@@ -13,6 +13,7 @@ use App\Entity\UsageAggregate;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use MonkeysLegion\Repository\RepositoryFactory;
+use PHPMailer\PHPMailer\PHPMailer;
 use Random\RandomException;
 use MonkeysLegion\Query\QueryBuilder;
 use Predis\Client as Predis;
@@ -219,39 +220,69 @@ final class OutboundMailService
     }
 
     /** Worker path: load Message, send via SMTP, update state; update recipients + events. */
+    private function getDirectDbConnection(): \PDO
+    {
+        static $pdo = null;
+        if ($pdo === null) {
+            $host = '34.9.43.102';
+            $db = 'ml_mail';
+            $user = 'mailmonkeys';
+            $pass = 't3mp0r4lAllyson#22';
+
+            $dsn = "mysql:host=$host;dbname=$db;charset=utf8mb4";
+            $pdo = new \PDO($dsn, $user, $pass, [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+                \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+            ]);
+            error_log('[Mail] Direct DB connection established');
+        }
+        return $pdo;
+    }
+
     public function processJob(array $job): void
     {
         error_log('[Mail] processJob start payload='.json_encode($job));
         $id = (int)($job['message_id'] ?? 0);
         if ($id <= 0) { error_log('[Mail] processJob missing message_id'); return; }
 
-        /** @var \App\Repository\MessageRepository $repo */
-        $repo = $this->repos->getRepository(Message::class);
-        $msg  = $repo->find($id);
-        if (!$msg) { error_log('[Mail] processJob message not found id='.$id); return; }
+        // DIRECT DATABASE QUERY
+        $pdo = $this->getDirectDbConnection();
+        $stmt = $pdo->prepare('SELECT * FROM messages WHERE id = ?');
+        $stmt->execute([$id]);
+        $msgData = $stmt->fetch();
 
-        // ✅ use $this->sender, not $this->smtp
-        $res = $this->sender->send($msg, (array)($job['envelope'] ?? []));
-        error_log('[Mail] sender->send returned '.json_encode($res));
-
-        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $msg->setSent_at($now);
-        $msg->setFinal_state($res['ok'] ? 'sent' : 'failed');
-        if (!empty($res['message_id'])) $msg->setMessage_id((string)$res['message_id']);
-        $repo->save($msg);
-        error_log(sprintf('[Mail] processJob saved final_state=%s message_id=%s', $msg->getFinal_state(), (string)$msg->getMessage_id()));
-
-        if ($res['ok']) {
-            $this->updateRecipientsStatus($msg, 'sent');
-            $this->addMessageEvent($msg, 'sent');
-            // Note: Usage and monthly counters were already incremented at enqueue time
-            // We're not incrementing again to avoid double-counting
-            error_log('[Mail] processJob completed successfully - counters already incremented at enqueue');
-        } else {
-            $this->updateRecipientsStatus($msg, 'failed');
-            $this->addMessageEvent($msg, 'failed');
-            error_log('[Mail] processJob failed - message not sent');
+        if (!$msgData) {
+            error_log('[Mail] processJob message not found id='.$id);
+            return;
         }
+
+        // Get envelope from job
+        $envelope = (array)($job['envelope'] ?? []);
+
+        // Build email data
+        $emailData = [
+            'from_email' => $msgData['from_email'],
+            'from_name' => $msgData['from_name'],
+            'reply_to' => $msgData['reply_to'],
+            'subject' => $msgData['subject'],
+            'html_body' => $msgData['html_body'],
+            'text_body' => $msgData['text_body'],
+            'to' => $envelope['to'] ?? [],
+            'cc' => $envelope['cc'] ?? [],
+            'bcc' => $envelope['bcc'] ?? [],
+        ];
+
+        // Send using the sender service (which has the SMTP properties)
+        $res = $this->sender->sendRaw($emailData);
+
+        // Update message status
+        $now = date('Y-m-d H:i:s');
+        $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
+
+        $updateStmt = $pdo->prepare('UPDATE messages SET final_state = ?, sent_at = ? WHERE id = ?');
+        $updateStmt->execute([$status, $now, $id]);
+
+        error_log(sprintf('[Mail] processJob completed status=%s id=%d', $status, $id));
     }
 
     /* ----------------------- helpers ----------------------- */
