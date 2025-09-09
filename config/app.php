@@ -26,11 +26,11 @@ return [
 
     MySqlConnection::class => function () use ($env) {
         $cfg = [
-            'host'    => (string) $env('DB_HOST', '127.0.0.1'),
+            'host'    => (string) $env('DB_HOST', '34.9.43.102'),
             'port'    => (int)    $env('DB_PORT', 3306),
             'dbname'  => (string) $env('DB_DATABASE', 'ml_mail'),
             'user'    => (string) $env('DB_USER', 'mailmonkeys'),
-            'pass'    => (string) $env('DB_PASS', ''),
+            'pass'    => (string) $env('DB_PASS', 't3mp0r4lAllyson#22'),
             'charset' => (string) $env('DB_CHARSET', 'utf8mb4'),
             'options' => [
                 \PDO::ATTR_ERRMODE            => \PDO::ERRMODE_EXCEPTION,
