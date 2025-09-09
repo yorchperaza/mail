@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
+use Dotenv\Dotenv;
 use Predis\Client as PredisClient;
 
 require __DIR__ . '/../vendor/autoload.php';
@@ -13,9 +14,9 @@ require __DIR__ . '/../vendor/autoload.php';
  * Uses vlucas/phpdotenv if present; otherwise a tiny safe loader.
  */
 $root = dirname(__DIR__);
-if (class_exists(\Dotenv\Dotenv::class)) {
+if (class_exists(Dotenv::class)) {
     // Unsafe allows existing env to win; safeLoad won't throw if file is missing
-    \Dotenv\Dotenv::createUnsafeImmutable($root)->safeLoad();
+    Dotenv::createUnsafeImmutable($root)->safeLoad();
 } else {
     $envFile = $root.'/.env';
     if (is_readable($envFile)) {

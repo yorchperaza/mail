@@ -47,7 +47,7 @@ return [
             $cfg['pass'] !== '' ? 'yes' : 'no'
         ));
 
-        return new \MonkeysLegion\Database\MySQL\Connection($cfg);
+        return new MySqlConnection($cfg);
     },
 
     /* -------------------------- Redis (Predis) -------------------------- */
