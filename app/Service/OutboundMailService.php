@@ -791,66 +791,115 @@ final class OutboundMailService
 
     private static function makeRedisFromEnv(): \Redis|Predis
     {
-        // Prefer REDIS_URL, else assemble from separate vars
-        $url = getenv('REDIS_URL');
-        if (!$url || trim($url) === '') {
-            // IMPORTANT: Use your actual Redis server IP as fallback
-            $host = getenv('REDIS_HOST') ?: '10.0.0.164';  // Changed from 127.0.0.1
-            $port = getenv('REDIS_PORT') ?: '6379';
-            $db   = getenv('REDIS_DB')   ?: '0';
-            $auth = getenv('REDIS_AUTH') ?: 'S3cureRedisPa55!';  // Added password fallback
-            $scheme = ((getenv('REDIS_SCHEME') ?: '') === 'rediss' || getenv('REDIS_TLS') === '1') ? 'rediss' : 'redis';
-            $url = sprintf('%s://%s%s:%s/%s',
-                $scheme,
-                $auth !== '' ? (':'.rawurlencode($auth).'@') : '',
-                $host, $port, $db
-            );
+        // Read env (prefer explicit vars; allow REDIS_URL as a shortcut)
+        $url    = getenv('REDIS_URL') ?: '';
+        $scheme = getenv('REDIS_SCHEME') ?: '';                    // 'tcp' | 'tls' | 'rediss'
+        $host   = getenv('REDIS_HOST') ?: '127.0.0.1';
+        $port   = (int)(getenv('REDIS_PORT') ?: 6379);
+        $db     = (int)(getenv('REDIS_DB')   ?: 0);
+
+        // Auth (support ACL)
+        $user   = getenv('REDIS_USERNAME') ?: '';
+        $pass   = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
+
+        // TLS?
+        $tlsWanted = ($scheme === 'rediss' || $scheme === 'tls' || (getenv('REDIS_TLS') === '1'));
+
+        // ---------- Predis path ----------
+        if (class_exists(Predis::class)) {
+            // If REDIS_URL is provided and no separate password is set, let Predis parse the URL.
+            if ($url && $pass === '' && $user === '') {
+                return new Predis($url, [
+                    // Block-friendly for XREADGROUP / blocking ops
+                    'read_write_timeout' => 0,
+                ]);
+            }
+
+            // Otherwise, build explicit params to guarantee auth is applied.
+            $params = [
+                'scheme'   => $tlsWanted ? 'tls' : 'tcp',
+                'host'     => $host,
+                'port'     => $port,
+                'database' => $db,
+            ];
+            if ($user !== '') {
+                $params['username'] = $user; // Redis 6+ ACL
+            }
+            if ($pass !== '') {
+                $params['password'] = $pass;
+            }
+
+            $options = [
+                // No read timeout while blocking on streams
+                'read_write_timeout' => 0,
+            ];
+            if ($tlsWanted) {
+                // Relaxed TLS by default; tighten if you have proper certs
+                $options['ssl'] = [
+                    'verify_peer'      => false,
+                    'verify_peer_name' => false,
+                ];
+            }
+
+            return new Predis($params, $options);
         }
 
-        $parts = parse_url($url) ?: [];
-        $host  = $parts['host'] ?? '10.0.0.164';  // Changed from 127.0.0.1
-        $port  = (int)($parts['port'] ?? 6379);
-        $db    = isset($parts['path']) ? (int)trim($parts['path'], '/') : 0;
-
-        // Support ACL username + password (REDIS_USERNAME / REDIS_AUTH as fallback)
-        $user = isset($parts['user']) ? rawurldecode($parts['user']) : (getenv('REDIS_USERNAME') ?: null);
-        $pass = isset($parts['pass']) ? rawurldecode($parts['pass']) : (getenv('REDIS_AUTH') ?: 'S3cureRedisPa55!');  // Added fallback
-
-        if (class_exists(\Redis::class)) {
-            $r = new \Redis();
-            // Add error handling for connection
-            try {
-                $connected = $r->connect($host, $port, 1.5);
-                if (!$connected) {
-                    throw new \RuntimeException("Failed to connect to Redis at {$host}:{$port}");
-                }
-            } catch (\RedisException $e) {
-                error_log("[Redis] Connection failed: {$e->getMessage()}");
-                throw new \RuntimeException("Redis connection failed: " . $e->getMessage());
-            }
-
-            if (is_string($pass) && $pass !== '') {
-                // Redis 6+ ACL support: prefer [$user, $pass] if a user is provided
-                if (is_string($user) && $user !== '') {
-                    $r->auth([$user, $pass]);
-                } else {
-                    // default user
-                    $r->auth($pass);
-                }
-            }
-
-            // Only select when DB > 0; DB 0 is default and doesn't need SELECT
-            if ($db > 0) {
-                $r->select($db);
-            }
-
-            return $r;
+        // ---------- phpredis path ----------
+        if (!class_exists(\Redis::class)) {
+            throw new \RuntimeException('No Redis client available (Predis/phpredis not installed).');
         }
 
-        // Predis fallback (DSN works with recent Predis)
-        return new Predis($url, ['read_write_timeout' => -1]);
+        // If a URL is present, parse it to override host/port/db/user/pass
+        if ($url) {
+            $p = parse_url($url) ?: [];
+            if (!empty($p['host'])) $host = $p['host'];
+            if (!empty($p['port'])) $port = (int)$p['port'];
+            if (!empty($p['path'])) $db   = (int)trim($p['path'], '/');
+            if (!empty($p['user'])) $user = rawurldecode($p['user']);
+            if (!empty($p['pass'])) $pass = rawurldecode($p['pass']);
+            if (!empty($p['scheme'])) {
+                $tlsWanted = ($p['scheme'] === 'rediss' || $p['scheme'] === 'tls');
+            }
+        }
+
+        $r = new \Redis();
+
+        // Optional TLS context
+        $ctx = null;
+        if ($tlsWanted) {
+            $ctx = stream_context_create([
+                'ssl' => [
+                    'verify_peer'      => false,
+                    'verify_peer_name' => false,
+                ],
+            ]);
+        }
+
+        // Connect (use small timeout; read timeout handled via OPT_READ_TIMEOUT below)
+        $connected = $r->connect($host, $port, 2.5, null, 0, 0, $ctx);
+        if (!$connected) {
+            throw new \RuntimeException("Redis connection failed to {$host}:{$port}");
+        }
+
+        // Auth (ACL aware)
+        if ($pass !== '') {
+            $authOk = $user !== '' ? $r->auth([$user, $pass]) : $r->auth($pass);
+            if (!$authOk) {
+                throw new \RuntimeException('Redis AUTH failed (check REDIS_USERNAME/REDIS_AUTH).');
+            }
+        }
+
+        if ($db > 0) {
+            if (!$r->select($db)) {
+                throw new \RuntimeException("Redis SELECT {$db} failed.");
+            }
+        }
+
+        // For blocking ops on streams, avoid read timeouts
+        $r->setOption(\Redis::OPT_READ_TIMEOUT, -1);
+
+        return $r;
     }
-
 
     /* ================= Your existing internals (stubs to integrate) ================= */
 
