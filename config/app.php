@@ -87,9 +87,12 @@ return [
 
     /* --------------------------- Services ------------------------------- */
     OutboundMailService::class => fn($c) => new OutboundMailService(
-        $c->get(RepositoryFactory::class),
-        $c->get(MailQueue::class),
-        $c->get(MailSender::class),
+        $c->get(RepositoryFactory::class),   // $repos
+        $c->get(QueryBuilder::class),        // $qb        ✅ was wrong before
+        $c->get(MailQueue::class),           // $queue     ✅ ensure alias -> DevInlineMailQueue
+        $c->get(MailSender::class),          // $sender    ✅ ensure alias -> PhpMailerMailSender
+        null,                                // $redis (optional) or provide a shared client
+        3600                                 // $statusTtlSec
     ),
 
     CampaignDispatchService::class => fn($c) => new CampaignDispatchService(

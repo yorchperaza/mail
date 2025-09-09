@@ -25,6 +25,7 @@ final class OutboundMailService
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
+        private MailQueue         $queue,
         private MailSender        $sender,
         private \Redis|Predis|null $redis = null,
         private int               $statusTtlSec = 3600,
@@ -227,8 +228,9 @@ final class OutboundMailService
         $msg  = $repo->find($id);
         if (!$msg) { error_log('[Mail] processJob message not found id='.$id); return; }
 
-        $res = $this->smtp->send($msg, (array)($job['envelope'] ?? []));
-        error_log('[Mail] smtp->send returned '.json_encode($res));
+        // ✅ use $this->sender, not $this->smtp
+        $res = $this->sender->send($msg, (array)($job['envelope'] ?? []));
+        error_log('[Mail] sender->send returned '.json_encode($res));
 
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         $msg->setSent_at($now);
