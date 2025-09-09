@@ -304,7 +304,7 @@ final class ApiSendController
             $now  = new DateTimeImmutable('now', new DateTimeZone('UTC'));
 
             // --- Resolve recipients
-            [$emails, $total] = $this->resolveRecipientsForSegment((int)$company->getId(), $segmentHash);
+            [$emails, $total] = $this->resolveRecipientsForSegmentHash((int)$company->getId(), $segmentHash);
             if ($total === 0) {
                 return new JsonResponse([
                     'status'     => 'queued',
@@ -329,7 +329,7 @@ final class ApiSendController
             return new JsonResponse([
                 'status'     => $status ?: 'queued',
                 'recipients' => $total,
-                'target'     => ['type' => 'segment', 'id' => $segmentId],
+                'target'     => ['type' => 'segment', 'hash' => $segmentHash],
                 'message'    => $result['message'] ?? null,
             ], $status === 'queued' ? 202 : 200);
 
