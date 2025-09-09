@@ -158,12 +158,14 @@ final class OutboundMailService
             'company_id' => $company->getId(),
             'domain_id'  => $domain->getId(),
             'envelope'   => [
+                'to'          => $to,
+                'cc'          => $cc,
+                'bcc'         => $bcc,
+                'headers'     => $headers ?? [],
+                // These were missing - PhpMailerMailSender needs them:
                 'fromEmail'   => $msg->getFrom_email(),
                 'fromName'    => $msg->getFrom_name(),
                 'replyTo'     => $msg->getReply_to(),
-                'to'          => $to, 'cc' => $cc, 'bcc' => $bcc,
-                'headers'     => $headers ?? [],
-                'attachments' => $attachments,
             ],
             'created_at' => $nowUtc->format(DATE_ATOM),
         ];

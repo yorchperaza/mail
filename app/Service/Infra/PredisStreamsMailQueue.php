@@ -34,13 +34,17 @@ final class PredisStreamsMailQueue implements MailQueue
      */
     public function enqueue(array $payload): bool
     {
-        // IMPORTANT: throw on JSON errors so we can log them properly upstream
-        $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
+        try {
+            $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        } catch (\JsonException $e) {
+            error_log('[Mail][Queue] JSON encode error: ' . $e->getMessage());
+            return false;
+        }
 
         // XADD <stream> * type outbound json <json>
         $id = $this->redis->executeRaw([
             'XADD', $this->stream, '*',
-            'type', 'campaign',
+            'type', 'outbound',  // Changed from 'campaign'
             'json', $json,
         ]);
 

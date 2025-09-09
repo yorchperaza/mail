@@ -144,8 +144,10 @@ $drainOnce = function() use($readGroup,$stream,$service,$xAck,$group){
         $msgs = $readGroup([$stream=>'0'],100,100);
         if (!$msgs || empty($msgs[$stream])) break;
         foreach ($msgs[$stream] as $entryId=>$fields){
-            $raw = $fields['payload'] ?? ($fields['data'] ?? null);
+            // UPDATED: Check 'json' field first (from PredisStreamsMailQueue)
+            $raw = $fields['json'] ?? ($fields['payload'] ?? ($fields['data'] ?? null));
             $payload = is_string($raw) ? (json_decode($raw,true) ?: null) : null;
+
             if (!$payload && isset($fields['message_id'])) {
                 $payload = [
                         'message_id'=>(int)$fields['message_id'],
@@ -157,9 +159,10 @@ $drainOnce = function() use($readGroup,$stream,$service,$xAck,$group){
                 ];
             }
             if (is_array($payload) && isset($payload['message_id'])) {
+                logerr("[worker][drain] processing message_id=".$payload['message_id']);
                 $service->processJob($payload);
             } else {
-                logerr("[worker][drain] skip malformed entry {$entryId}");
+                logerr("[worker][drain] skip malformed entry {$entryId} fields=".json_encode($fields));
             }
             $xAck($stream,$group,[$entryId]);
         }
@@ -171,24 +174,41 @@ $drainOnce();
 // ---- main loop ----
 while (true) {
     try {
+        // Claim stale messages
         foreach ($xPending($stream,$group,50) as $p) {
             $id   = is_array($p) ? ($p[0] ?? null) : null;
             $idle = (int)(is_array($p) ? ($p[2] ?? 0) : 0);
-            if ($id && $idle >= $claimIdleMs) { $xClaim($stream,$group,$consumer,$claimIdleMs,[$id]); }
+            if ($id && $idle >= $claimIdleMs) {
+                logerr("[worker] claiming stale message {$id} (idle={$idle}ms)");
+                $xClaim($stream,$group,$consumer,$claimIdleMs,[$id]);
+            }
         }
 
         $msgs = $readGroup([$stream => '>'],$batch,$blockMs);
         if (!$msgs || empty($msgs[$stream])) continue;
 
+        logerr("[worker] received ".count($msgs[$stream])." messages");
+
         foreach ($msgs[$stream] as $entryId=>$fields) {
             $payload = null;
-            $raw     = $fields['payload'] ?? ($fields['data'] ?? null);
 
-            if (is_string($raw) && $raw!=='') {
-                $d = json_decode($raw,true);
-                if (is_array($d)) $payload = $d;
+            // UPDATED: Check 'json' field first (from PredisStreamsMailQueue)
+            // PredisStreamsMailQueue stores in 'json' field
+            if (isset($fields['json']) && is_string($fields['json'])) {
+                $payload = json_decode($fields['json'], true);
+                logerr("[worker] extracted payload from 'json' field");
             }
-            if (!$payload && isset($fields['message_id'])) {
+            // Fallback to other field names
+            elseif (isset($fields['data']) && is_string($fields['data'])) {
+                $payload = json_decode($fields['data'], true);
+                logerr("[worker] extracted payload from 'data' field");
+            }
+            elseif (isset($fields['payload']) && is_string($fields['payload'])) {
+                $payload = json_decode($fields['payload'], true);
+                logerr("[worker] extracted payload from 'payload' field");
+            }
+            // Legacy format with direct fields
+            elseif (isset($fields['message_id'])) {
                 $payload = [
                         'message_id'=>(int)$fields['message_id'],
                         'company_id'=>isset($fields['company_id'])?(int)$fields['company_id']:null,
@@ -197,33 +217,46 @@ while (true) {
                                 ? (json_decode($fields['envelope'],true) ?: [])
                                 : [],
                 ];
+                logerr("[worker] built payload from direct fields");
             }
-            if (!$payload && count($fields)===1) {
+            // Single field entry (some Redis clients)
+            elseif (count($fields)===1) {
                 $maybe = json_decode((string)reset($fields),true);
-                if (is_array($maybe)) $payload = $maybe;
+                if (is_array($maybe)) {
+                    $payload = $maybe;
+                    logerr("[worker] extracted payload from single field");
+                }
             }
 
             if (!is_array($payload) || !isset($payload['message_id'])) {
+                logerr("[worker] Invalid payload in entry {$entryId}. Fields: " . json_encode($fields));
                 $xAck($stream,$group,[$entryId]); // don't clog the PEL
                 continue;
             }
 
             try {
+                logerr("[worker] Processing message_id=" . $payload['message_id'] . " company_id=" . ($payload['company_id'] ?? 'null'));
                 $service->processJob($payload);
                 $xAck($stream,$group,[$entryId]);
+                logerr("[worker] Successfully sent message_id=" . $payload['message_id']);
             } catch (\Throwable $e) {
+                logerr("[worker][ERR] Failed to process message_id=" . $payload['message_id'] . ": " . $e->getMessage());
+
                 $retries = isset($fields['retries']) ? (int)$fields['retries'] : 0;
                 $retries++;
+
                 if ($retries > $maxRetries) {
+                    logerr("[worker] Max retries exceeded for message_id=" . $payload['message_id'] . ", moving to DLQ");
                     $xAdd($stream.':dlq', [
-                            'payload' => $raw ?: json_encode($payload, JSON_UNESCAPED_SLASHES),
+                            'json' => json_encode($payload, JSON_UNESCAPED_SLASHES),
                             'error'   => $e->getMessage(),
                             'at'      => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(DATE_ATOM),
                     ]);
                     $xAck($stream,$group,[$entryId]);
                 } else {
+                    logerr("[worker] Retrying message_id=" . $payload['message_id'] . " (attempt {$retries}/{$maxRetries})");
                     $xAdd($stream, [
-                            'payload' => $raw ?: json_encode($payload, JSON_UNESCAPED_SLASHES),
+                            'json' => json_encode($payload, JSON_UNESCAPED_SLASHES),
                             'retries' => (string)$retries,
                     ]);
                     $xAck($stream,$group,[$entryId]);
