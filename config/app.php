@@ -25,12 +25,11 @@ $env = function(string $k, $default = null) {
 return [
 
     MySqlConnection::class => function () use ($env) {
-        // 👇 prefer discrete env, falling back to sensible defaults
         $cfg = [
             'host'    => (string) $env('DB_HOST', '127.0.0.1'),
             'port'    => (int)    $env('DB_PORT', 3306),
             'dbname'  => (string) $env('DB_DATABASE', 'ml_mail'),
-            'user'    => (string) $env('DB_USER', 'root'),
+            'user'    => (string) $env('DB_USER', 'mailmonkeys'),
             'pass'    => (string) $env('DB_PASS', ''),
             'charset' => (string) $env('DB_CHARSET', 'utf8mb4'),
             'options' => [
@@ -40,7 +39,7 @@ return [
             ],
         ];
 
-        // quick one-time log to catch surprises (no secrets)
+        // one-time debug (no secrets)
         error_log(sprintf(
             '[DB] host=%s port=%d db=%s user=%s pass_set=%s',
             $cfg['host'], $cfg['port'], $cfg['dbname'],
@@ -48,7 +47,7 @@ return [
             $cfg['pass'] !== '' ? 'yes' : 'no'
         ));
 
-        return new MySqlConnection($cfg);
+        return new \MonkeysLegion\Database\MySQL\Connection($cfg);
     },
 
     /* -------------------------- Redis (Predis) -------------------------- */
