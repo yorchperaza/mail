@@ -5,7 +5,7 @@ namespace App\Service;
 
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
-use Predis\Client;
+use Predis\Client as Predis;
 
 /**
  * Orchestrates segment builds using Redis Streams.
@@ -13,7 +13,7 @@ use Predis\Client;
  */
 final class SegmentBuildOrchestrator
 {
-    /** @var \Redis|Client */
+    /** @var \Redis|Predis */
     private $redis;
 
     private string $consumer;
@@ -21,7 +21,7 @@ final class SegmentBuildOrchestrator
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
-        Client|\Redis|null        $redis = null,   // optional + typed (no "mixed")
+        Predis|\Redis|null        $redis = null,   // optional + typed (no "mixed")
         private string            $stream = 'seg:builds',
         private string            $group  = 'seg_builders',
     ) {
@@ -40,73 +40,60 @@ final class SegmentBuildOrchestrator
         return ($v === false || $v === null) ? $default : $v;
     }
 
-    private static function makeRedisFromEnv(): \Redis|Client
+    private static function makeRedisFromEnv(): \Redis|Predis
     {
-        // Prefer discrete vars; only fall back to REDIS_URL if explicitly set.
-        $scheme = (string) self::env('REDIS_SCHEME', 'tcp');
-        $host   = (string) self::env('REDIS_HOST',   '127.0.0.1');
-        $port   = (int)    self::env('REDIS_PORT',   6379);
-        $db     = (int)    self::env('REDIS_DB',     0);
-        $pass   = (string) self::env('REDIS_AUTH',   '');
-        $urlEnv = (string) self::env('REDIS_URL',    '');
+        $scheme = getenv('REDIS_SCHEME') ?: 'tcp';
+        $host   = getenv('REDIS_HOST')   ?: '127.0.0.1';
+        $port   = (int)(getenv('REDIS_PORT') ?: 6379);
+        $db     = (int)(getenv('REDIS_DB')   ?: 0);
+        $user   = getenv('REDIS_USERNAME') ?: '';
+        $pass   = getenv('REDIS_AUTH')     ?: (getenv('REDIS_PASSWORD') ?: '');
+        $tls    = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
 
-        // If REDIS_URL is present but discrete vars are also present, we still log both.
-        $dbg = sprintf(
-            'scheme=%s host=%s port=%d db=%d hasAuth=%s hasURL=%s',
-            $scheme, $host, $port, $db, ($pass !== '' ? 'yes' : 'no'), ($urlEnv !== '' ? 'yes' : 'no')
-        );
-        error_log('[SEG][BOOT] makeRedisFromEnv: '.$dbg);
-
-        // ---------- Predis path ----------
-        if (class_exists(Client::class)) {
-            error_log('[SEG][BOOT] using Predis');
-
-            // Build parameters array (explicit password avoids NOAUTH surprises)
+        if (class_exists(Predis::class)) {
             $params = [
-                'scheme'   => $scheme === 'tls' ? 'tls' : 'tcp',
+                'scheme'   => $tls ? 'tls' : 'tcp',
                 'host'     => $host,
                 'port'     => $port,
                 'database' => $db,
             ];
-            if ($pass !== '') {
-                $params['password'] = $pass;
+            if ($user !== '') $params['username'] = $user;
+            if ($pass !== '') $params['password'] = $pass;
+
+            $options = ['read_write_timeout' => 0];
+            if ($tls) {
+                $options['ssl'] = [
+                    'verify_peer'      => false,
+                    'verify_peer_name' => false,
+                ];
             }
 
-            $options = [
-                // No read timeout while blocking on streams
-                'read_write_timeout' => 0,
-            ];
-
-            // If user insists on REDIS_URL, let Predis parse it, but still keep options.
-            // NOTE: Password supplied via $params takes precedence; URL is used mainly
-            // for non-standard schemes or when only URL is provided.
-            if ($urlEnv !== '' && $pass === '') {
-                return new Client($urlEnv, $options);
-            }
-
-            return new Client($params, $options);
+            $client = new Predis($params, $options);
+            $client->executeRaw(['PING']); // surfaces missing AUTH immediately
+            return $client;
         }
 
-        // ---------- phpredis path ----------
         if (!class_exists(\Redis::class)) {
-            error_log('[SEG][ERR] No Redis client available (Predis/phpredis not installed).');
             throw new \RuntimeException('No Redis client available (Predis/phpredis not installed).');
         }
 
+        $ctx = $tls ? stream_context_create(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false]]) : null;
+
         $r = new \Redis();
-        $ok = @$r->pconnect($host, $port, 2.5);
-        error_log('[SEG][BOOT] phpredis pconnect host='.$host.' port='.$port.' ok='.($ok ? '1' : '0'));
-        if ($pass !== '') {
-            $authOk = @$r->auth($pass);
-            error_log('[SEG][BOOT] phpredis auth ok='.($authOk ? '1' : '0'));
+        if (!$r->connect($host, $port, 2.5, null, 0, 0, $ctx)) {
+            throw new \RuntimeException("Redis connect failed to {$host}:{$port}");
         }
-        if ($db) {
-            $selOk = @$r->select($db);
-            error_log('[SEG][BOOT] phpredis select db='.$db.' ok='.($selOk ? '1' : '0'));
+        if ($pass !== '') {
+            $ok = $user !== '' ? $r->auth([$user, $pass]) : $r->auth($pass);
+            if (!$ok) throw new \RuntimeException('Redis AUTH failed');
+        }
+        if ($db > 0 && !$r->select($db)) {
+            throw new \RuntimeException("Redis SELECT {$db} failed");
         }
         $r->setOption(\Redis::OPT_READ_TIMEOUT, -1);
         return $r;
     }
+
 
     /* ==================== Public API ==================== */
 

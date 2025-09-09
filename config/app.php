@@ -37,14 +37,14 @@ return [
 
     /* -------------------------- Redis (Predis) -------------------------- */
     PredisClient::class => function () {
-        // Discrete vars only (ignore REDIS_URL)
-        $host     = $_ENV['REDIS_HOST']     ?? '127.0.0.1';
-        $port     = (int)($_ENV['REDIS_PORT'] ?? 6379);
-        $db       = (int)($_ENV['REDIS_DB']   ?? 0);
-        $username = $_ENV['REDIS_USERNAME'] ?? '';
-        $password = $_ENV['REDIS_AUTH']     ?? ($_ENV['REDIS_PASSWORD'] ?? '');
-        $scheme   = $_ENV['REDIS_SCHEME']   ?? 'tcp';
-        $tls      = $scheme === 'tls' || $scheme === 'rediss' || (($_ENV['REDIS_TLS'] ?? '') === '1');
+        // Discrete vars only (no REDIS_URL)
+        $host   = getenv('REDIS_HOST')   ?: '127.0.0.1';
+        $port   = (int)(getenv('REDIS_PORT') ?: 6379);
+        $db     = (int)(getenv('REDIS_DB')   ?: 0);
+        $user   = getenv('REDIS_USERNAME') ?: '';
+        $pass   = getenv('REDIS_AUTH')     ?: (getenv('REDIS_PASSWORD') ?: '');
+        $scheme = getenv('REDIS_SCHEME')   ?: 'tcp';
+        $tls    = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
 
         $params = [
             'scheme'   => $tls ? 'tls' : 'tcp',
@@ -52,8 +52,8 @@ return [
             'port'     => $port,
             'database' => $db,
         ];
-        if ($username !== '') $params['username'] = $username; // ACL
-        if ($password !== '') $params['password'] = $password; // AUTH
+        if ($user !== '') $params['username'] = $user;  // ACL user (optional)
+        if ($pass !== '') $params['password'] = $pass;  // AUTH (required if Redis has a password)
 
         $options = ['read_write_timeout' => 0];
         if ($tls) {
@@ -65,7 +65,7 @@ return [
 
         $client = new PredisClient($params, $options);
 
-        // Fail fast if connect/AUTH is wrong
+        // Fail fast (this will only succeed if AUTH was included)
         try {
             $client->executeRaw(['PING']);
         } catch (\Throwable $e) {
@@ -75,7 +75,6 @@ return [
 
         return $client;
     },
-
 
     /* ----------------------------- Queue -------------------------------- */
     MailQueue::class => function ($c) {
