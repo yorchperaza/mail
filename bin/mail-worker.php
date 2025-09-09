@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
-use MonkeysLegion\Framework\HttpBootstrap;
 use Predis\Client as PredisClient;
 
 require __DIR__ . '/../vendor/autoload.php';
 
 $wrap = require __DIR__ . '/../bootstrap.php';
-/** @var Psr\Container\ContainerInterface $c */
+/** @var Psr\Container\ContainerInterface $container */
 $container = $wrap->getContainer();
 
 /** @var MailQueue $queue */
@@ -88,21 +87,32 @@ $maxRetries  = (int)(getenv('MAIL_MAX_RETRIES')   ?: 5);
 
 fwrite(STDERR, "[worker] stream={$stream} group={$group} consumer={$consumer}\n");
 
-// --- Ensure group (idempotent) ---
-$ensureGroup = function(string $stream, string $group) use ($redis) {
+// --- Ensure group at 0 (read backlog) ---
+$ensureGroupAtZero = function(string $stream, string $group) use ($redis) {
     try {
         if ($redis instanceof Redis) {
-            // phpredis: XGROUP CREATE <stream> <group> $ MKSTREAM
-            $redis->xGroup('CREATE', $stream, $group, '$', true);
+            $redis->xGroup('CREATE', $stream, $group, '0', true); // MKSTREAM
+            fwrite(STDERR, "[worker] XGROUP CREATE {$stream} {$group} 0 (mkstream)\n");
         } else {
             /** @var PredisClient $redis */
-            $redis->executeRaw(['XGROUP','CREATE',$stream,$group,'$','MKSTREAM']);
+            $redis->executeRaw(['XGROUP','CREATE',$stream,$group,'0','MKSTREAM']);
+            fwrite(STDERR, "[worker] XGROUP CREATE {$stream} {$group} 0 (mkstream)\n");
         }
     } catch (\Throwable $e) {
-        // ignore BUSYGROUP etc.
+        // If BUSYGROUP, still force start id to 0 once (safe even if already 0)
+        try {
+            if ($redis instanceof Redis) {
+                $redis->xGroup('SETID', $stream, $group, '0');
+                fwrite(STDERR, "[worker] XGROUP SETID {$stream} {$group} 0\n");
+            } else {
+                /** @var PredisClient $redis */
+                $redis->executeRaw(['XGROUP','SETID',$stream,$group,'0']);
+                fwrite(STDERR, "[worker] XGROUP SETID {$stream} {$group} 0\n");
+            }
+        } catch (\Throwable $ignored) {}
     }
 };
-$ensureGroup($stream, $group);
+$ensureGroupAtZero($stream, $group);
 
 // --- Helpers to smooth phpredis / Predis differences ---
 $readGroup = function (array $streams, int $count, int $blockMs) use ($redis, $group, $consumer) {
@@ -172,6 +182,39 @@ $xAdd = function (string $stream, array $fields) use ($redis) {
     return $redis->executeRaw($cmd);
 };
 
+// --- One-time backlog drain (deliver everything pending since 0) ---
+$drainOnce = function() use ($readGroup, $stream, $service, $xAck, $group) {
+    fwrite(STDERR, "[worker] draining backlog from id 0…\n");
+    // Use a small loop to drain in batches in case there are lots of entries
+    for ($i = 0; $i < 20; $i++) { // up to 20 batches
+        $msgs = $readGroup([$stream => '0'], 100, 100); // quick sweep
+        if (!$msgs || empty($msgs[$stream])) break;
+        foreach ($msgs[$stream] as $entryId => $fields) {
+            $raw = $fields['payload'] ?? ($fields['data'] ?? null);
+            $payload = is_string($raw) ? (json_decode($raw, true) ?: null) : null;
+            if (!$payload && isset($fields['message_id'])) {
+                $payload = [
+                        'message_id' => (int)$fields['message_id'],
+                        'company_id' => isset($fields['company_id']) ? (int)$fields['company_id'] : null,
+                        'domain_id'  => isset($fields['domain_id'])  ? (int)$fields['domain_id']  : null,
+                        'envelope'   => isset($fields['envelope']) && is_string($fields['envelope'])
+                                ? (json_decode($fields['envelope'], true) ?: [])
+                                : [],
+                ];
+            }
+            if (is_array($payload) && isset($payload['message_id'])) {
+                fwrite(STDERR, "[worker][drain] processing entry {$entryId} message_id=".($payload['message_id'] ?? 'n/a')."\n");
+                $service->processJob($payload);
+            } else {
+                fwrite(STDERR, "[worker][drain] skip malformed entry {$entryId}\n");
+            }
+            $xAck($stream, $group, [$entryId]);
+        }
+    }
+    fwrite(STDERR, "[worker] backlog drain done.\n");
+};
+$drainOnce();
+
 // --- Main loop ---
 while (true) {
     try {
@@ -203,7 +246,6 @@ while (true) {
 
             // B) Flat fields (already key/values)
             if (!$payload && isset($fields['message_id'])) {
-                // Minimal adaptor; you can pass the whole fields array to processJob if your service expects it
                 $payload = [
                         'message_id' => (int)$fields['message_id'],
                         'company_id' => isset($fields['company_id']) ? (int)$fields['company_id'] : null,
@@ -214,19 +256,20 @@ while (true) {
                 ];
             }
 
-            // C) As a last resort, try to decode entire field-set if it looks like JSON
+            // C) Last resort: single JSON field
             if (!$payload && count($fields) === 1) {
                 $maybe = json_decode((string)reset($fields), true);
                 if (is_array($maybe)) $payload = $maybe;
             }
 
             if (!is_array($payload) || !isset($payload['message_id'])) {
-                // Bad message → ack and move on (prevents the PEL from clogging)
                 $xAck($stream, $group, [$entryId]);
+                fwrite(STDERR, "[worker] ack malformed entry {$entryId}\n");
                 continue;
             }
 
             try {
+                fwrite(STDERR, "[worker] processing entry {$entryId} message_id=".($payload['message_id'] ?? 'n/a')."\n");
                 $service->processJob($payload);
                 $xAck($stream, $group, [$entryId]);
             } catch (\Throwable $e) {
