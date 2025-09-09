@@ -37,24 +37,31 @@ return [
 
     /* -------------------------- Redis (Predis) -------------------------- */
     PredisClient::class => function () {
+        $url      = getenv('REDIS_URL') ?: '';
+        $host     = getenv('REDIS_HOST') ?: '127.0.0.1';
+        $port     = (int)(getenv('REDIS_PORT') ?: 6379);
+        $db       = (int)(getenv('REDIS_DB')   ?: 0);
+        $username = getenv('REDIS_USERNAME') ?: '';
+        $password = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
+        $scheme   = getenv('REDIS_SCHEME') ?: '';
+        $tls      = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
+
+        // If a URL is provided and no separate creds are set, let Predis parse it.
+        if ($url !== '' && $username === '' && $password === '') {
+            return new PredisClient($url, ['read_write_timeout' => 0]);
+        }
+
         $params = [
-            'scheme'   => $_ENV['REDIS_SCHEME'] ?? 'tcp',
-            'host'     => $_ENV['REDIS_HOST'] ?? '127.0.0.1',
-            'port'     => (int)($_ENV['REDIS_PORT'] ?? 6379),
-            'database' => (int)($_ENV['REDIS_DB'] ?? 0),
+            'scheme'   => $tls ? 'tls' : 'tcp',
+            'host'     => $host,
+            'port'     => $port,
+            'database' => $db,
         ];
+        if ($username !== '') $params['username'] = $username; // ACL user
+        if ($password !== '') $params['password'] = $password; // AUTH
 
-        if (!empty($_ENV['REDIS_AUTH'])) {
-            $params['password'] = $_ENV['REDIS_AUTH'];
-        }
-
-        // Only disable timeout for worker processes, not web requests
-        $options = [];
-        if (PHP_SAPI === 'cli') {
-            $options['read_write_timeout'] = -1;  // Use -1 instead of 0
-        }
-
-        if (($params['scheme'] ?? 'tcp') === 'tls') {
+        $options = ['read_write_timeout' => 0];
+        if ($tls) {
             $options['ssl'] = [
                 'verify_peer'      => false,
                 'verify_peer_name' => false,
@@ -66,18 +73,19 @@ return [
 
     /* ----------------------------- Queue -------------------------------- */
     MailQueue::class => function ($c) {
-        // Check if we should use the dev queue
-        if (!empty($_ENV['DEV_INLINE_QUEUE'])) {
-            return new DevInlineMailQueue(
-                $c->get(MailSender::class)
-            );
+        // Allow turning on inline mode only if explicitly requested
+        $inline = filter_var(getenv('DEV_INLINE_QUEUE') ?: '', FILTER_VALIDATE_BOOLEAN);
+        if ($inline) {
+            return new DevInlineMailQueue($c->get(MailSender::class));
         }
 
-        // Default: Redis Streams queue
+        $stream = getenv('MAIL_STREAM') ?: 'mail:outbound';
+        $group  = getenv('MAIL_GROUP')  ?: 'senders';
+
         return new PredisStreamsMailQueue(
             $c->get(PredisClient::class),
-            stream: $_ENV['MAIL_STREAM'] ?? 'mail:outbound',
-            group:  $_ENV['MAIL_GROUP']  ?? 'senders',
+            stream: $stream,
+            group:  $group,
         );
     },
 
