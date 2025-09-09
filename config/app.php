@@ -37,19 +37,14 @@ return [
 
     /* -------------------------- Redis (Predis) -------------------------- */
     PredisClient::class => function () {
-        $url      = getenv('REDIS_URL') ?: '';
-        $host     = getenv('REDIS_HOST') ?: '127.0.0.1';
-        $port     = (int)(getenv('REDIS_PORT') ?: 6379);
-        $db       = (int)(getenv('REDIS_DB')   ?: 0);
-        $username = getenv('REDIS_USERNAME') ?: '';
-        $password = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
-        $scheme   = getenv('REDIS_SCHEME') ?: '';
-        $tls      = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
-
-        // If a URL is provided and no separate creds are set, let Predis parse it.
-        if ($url !== '' && $username === '' && $password === '') {
-            return new PredisClient($url, ['read_write_timeout' => 0]);
-        }
+        // Discrete vars only (ignore REDIS_URL)
+        $host     = $_ENV['REDIS_HOST']     ?? '127.0.0.1';
+        $port     = (int)($_ENV['REDIS_PORT'] ?? 6379);
+        $db       = (int)($_ENV['REDIS_DB']   ?? 0);
+        $username = $_ENV['REDIS_USERNAME'] ?? '';
+        $password = $_ENV['REDIS_AUTH']     ?? ($_ENV['REDIS_PASSWORD'] ?? '');
+        $scheme   = $_ENV['REDIS_SCHEME']   ?? 'tcp';
+        $tls      = $scheme === 'tls' || $scheme === 'rediss' || (($_ENV['REDIS_TLS'] ?? '') === '1');
 
         $params = [
             'scheme'   => $tls ? 'tls' : 'tcp',
@@ -57,7 +52,7 @@ return [
             'port'     => $port,
             'database' => $db,
         ];
-        if ($username !== '') $params['username'] = $username; // ACL user
+        if ($username !== '') $params['username'] = $username; // ACL
         if ($password !== '') $params['password'] = $password; // AUTH
 
         $options = ['read_write_timeout' => 0];
@@ -68,8 +63,19 @@ return [
             ];
         }
 
-        return new PredisClient($params, $options);
+        $client = new PredisClient($params, $options);
+
+        // Fail fast if connect/AUTH is wrong
+        try {
+            $client->executeRaw(['PING']);
+        } catch (\Throwable $e) {
+            error_log('[Redis] Predis connect/auth failed: '.$e->getMessage());
+            throw $e;
+        }
+
+        return $client;
     },
+
 
     /* ----------------------------- Queue -------------------------------- */
     MailQueue::class => function ($c) {
