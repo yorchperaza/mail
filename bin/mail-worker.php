@@ -9,17 +9,6 @@ use Predis\Client as PredisClient;
 
 require __DIR__ . '/../vendor/autoload.php';
 
-putenv('DB_HOST=34.9.43.102');
-putenv('DB_USER=mailmonkeys');
-putenv('DB_PASS=t3mp0r4lAllyson#22');
-putenv('DB_DATABASE=ml_mail');
-
-// Also set in $_ENV and $_SERVER
-$_ENV['DB_HOST'] = '34.9.43.102';
-$_ENV['DB_USER'] = 'mailmonkeys';
-$_ENV['DB_PASS'] = 't3mp0r4lAllyson#22';
-$_ENV['DB_DATABASE'] = 'ml_mail';
-
 /**
  * Load environment variables before building the container.
  * Uses vlucas/phpdotenv if present; otherwise a tiny safe loader.
@@ -46,6 +35,17 @@ if (class_exists(Dotenv::class)) {
         }
     }
 }
+
+putenv('DB_HOST=34.9.43.102');
+putenv('DB_USER=mailmonkeys');
+putenv('DB_PASS=t3mp0r4lAllyson#22');
+putenv('DB_DATABASE=ml_mail');
+
+// Also set in $_ENV and $_SERVER
+$_ENV['DB_HOST'] = '34.9.43.102';
+$_ENV['DB_USER'] = 'mailmonkeys';
+$_ENV['DB_PASS'] = 't3mp0r4lAllyson#22';
+$_ENV['DB_DATABASE'] = 'ml_mail';
 
 // Build the app/container (now sees DB_*, REDIS_*, SMTP_* from .env)
 $wrap = require __DIR__ . '/../bootstrap.php';
