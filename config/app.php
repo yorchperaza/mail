@@ -16,6 +16,12 @@ use MonkeysLegion\Query\QueryBuilder;
 use Predis\Client as PredisClient;
 use MonkeysLegion\Database\MySQL\Connection as MySqlConnection;
 
+$env = function(string $k, $default = null) {
+    if (array_key_exists($k, $_ENV) && $_ENV[$k] !== '') return $_ENV[$k];
+    $v = getenv($k);
+    return ($v !== false && $v !== '') ? $v : $default;
+};
+
 return [
 
     MySqlConnection::class => function () {
@@ -36,15 +42,16 @@ return [
     },
 
     /* -------------------------- Redis (Predis) -------------------------- */
-    PredisClient::class => function () {
-        // Discrete vars only (no REDIS_URL)
-        $host   = getenv('REDIS_HOST')   ?: '127.0.0.1';
-        $port   = (int)(getenv('REDIS_PORT') ?: 6379);
-        $db     = (int)(getenv('REDIS_DB')   ?: 0);
-        $user   = getenv('REDIS_USERNAME') ?: '';
-        $pass   = getenv('REDIS_AUTH')     ?: (getenv('REDIS_PASSWORD') ?: '');
-        $scheme = getenv('REDIS_SCHEME')   ?: 'tcp';
-        $tls    = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
+    /* -------------------------- Redis (Predis) -------------------------- */
+    PredisClient::class => function () use ($env) {
+        // Discrete vars only (ignore REDIS_URL)
+        $scheme = (string) $env('REDIS_SCHEME', 'tcp');
+        $host   = (string) $env('REDIS_HOST',   '127.0.0.1');
+        $port   = (int)    $env('REDIS_PORT',   6379);
+        $db     = (int)    $env('REDIS_DB',     0);
+        $user   = (string) $env('REDIS_USERNAME', '');
+        $pass   = (string) $env('REDIS_AUTH',     (string) $env('REDIS_PASSWORD', ''));
+        $tls    = ($scheme === 'tls' || $scheme === 'rediss' || $env('REDIS_TLS', '') === '1');
 
         $params = [
             'scheme'   => $tls ? 'tls' : 'tcp',
@@ -52,26 +59,18 @@ return [
             'port'     => $port,
             'database' => $db,
         ];
-        if ($user !== '') $params['username'] = $user;  // ACL user (optional)
-        if ($pass !== '') $params['password'] = $pass;  // AUTH (required if Redis has a password)
+        if ($user !== '') $params['username'] = $user;  // Redis 6+ ACL
+        if ($pass !== '') $params['password'] = $pass;  // AUTH
 
         $options = ['read_write_timeout' => 0];
         if ($tls) {
-            $options['ssl'] = [
-                'verify_peer'      => false,
-                'verify_peer_name' => false,
-            ];
+            $options['ssl'] = ['verify_peer' => false, 'verify_peer_name' => false];
         }
 
         $client = new PredisClient($params, $options);
 
-        // Fail fast (this will only succeed if AUTH was included)
-        try {
-            $client->executeRaw(['PING']);
-        } catch (\Throwable $e) {
-            error_log('[Redis] Predis connect/auth failed: '.$e->getMessage());
-            throw $e;
-        }
+        // Surface bad auth immediately instead of later during XADD
+        $client->executeRaw(['PING']);
 
         return $client;
     },
@@ -112,7 +111,8 @@ return [
         $c->get(QueryBuilder::class),
         $c->get(MailQueue::class),
         $c->get(MailSender::class),
-        null,  // Let the service create its own Redis connection if needed
+        // ⬇️ pass the DI Predis client here (NOT null)
+        $c->get(PredisClient::class),
         3600
     ),
 
