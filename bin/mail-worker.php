@@ -7,6 +7,35 @@ use App\Service\Ports\MailQueue;
 use Predis\Client as PredisClient;
 
 require __DIR__ . '/../vendor/autoload.php';
+
+/**
+ * Load environment variables before building the container.
+ * Uses vlucas/phpdotenv if present; otherwise a tiny safe loader.
+ */
+$root = dirname(__DIR__);
+if (class_exists(\Dotenv\Dotenv::class)) {
+    // Unsafe allows existing env to win; safeLoad won't throw if file is missing
+    \Dotenv\Dotenv::createUnsafeImmutable($root)->safeLoad();
+} else {
+    $envFile = $root.'/.env';
+    if (is_readable($envFile)) {
+        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+            if ($line === '' || $line[0] === '#' || !str_contains($line, '=')) { continue; }
+            [$k, $v] = explode('=', $line, 2);
+            $k = trim($k);
+            $v = trim($v);
+            // strip surrounding quotes if any
+            if ((str_starts_with($v, '"') && str_ends_with($v, '"')) || (str_starts_with($v, "'") && str_ends_with($v, "'"))) {
+                $v = substr($v, 1, -1);
+            }
+            putenv("{$k}={$v}");
+            $_ENV[$k] = $v;
+            $_SERVER[$k] = $v;
+        }
+    }
+}
+
+// Build the app/container (now sees DB_*, REDIS_*, SMTP_* from .env)
 $wrap = require __DIR__ . '/../bootstrap.php';
 /** @var Psr\Container\ContainerInterface $container */
 $container = $wrap->getContainer();
@@ -16,10 +45,9 @@ set_error_handler(static function($s,$m,$f,$l){ logerr("[worker][PHP] {$m} @ {$f
 set_exception_handler(static function(Throwable $e){ logerr("[worker][FATAL] {$e->getMessage()} @ {$e->getFile()}:{$e->getLine()}"); logerr($e->getTraceAsString()); exit(255); });
 
 // ---- resolve services ----
-/** @var MailQueue $queue */   $queue   = $container->get(MailQueue::class);
+/** @var MailQueue $queue */           $queue   = $container->get(MailQueue::class);
 /** @var OutboundMailService $service */ $service = $container->get(OutboundMailService::class);
 
-// ---- redis client (container -> env -> build) ----
 // ---- redis client (build ONLY from discrete env; ignore REDIS_URL) ----
 $redis = null;
 
@@ -33,9 +61,6 @@ $user     = getenv('REDIS_USERNAME') ?: '';
 $pass     = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
 $hasAuth  = $pass !== '' ? 'yes' : 'no';
 fwrite(STDERR, "[worker][redis] host={$host} port={$port} db={$db} tls=".($tls?'yes':'no')." auth={$hasAuth}\n");
-
-// If the container already has a client, DO NOT use it (it may have been built from REDIS_URL).
-// We will always build our own client from the discrete env above.
 
 // phpredis preferred if installed
 if (class_exists(\Redis::class)) {
@@ -237,7 +262,6 @@ while (true) {
             $payload = null;
 
             // UPDATED: Check 'json' field first (from PredisStreamsMailQueue)
-            // PredisStreamsMailQueue stores in 'json' field
             if (isset($fields['json']) && is_string($fields['json'])) {
                 $payload = json_decode($fields['json'], true);
                 logerr("[worker] extracted payload from 'json' field");
