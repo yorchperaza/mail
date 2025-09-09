@@ -794,10 +794,11 @@ final class OutboundMailService
         // Prefer REDIS_URL, else assemble from separate vars
         $url = getenv('REDIS_URL');
         if (!$url || trim($url) === '') {
-            $host = getenv('REDIS_HOST') ?: '127.0.0.1';
+            // IMPORTANT: Use your actual Redis server IP as fallback
+            $host = getenv('REDIS_HOST') ?: '10.0.0.164';  // Changed from 127.0.0.1
             $port = getenv('REDIS_PORT') ?: '6379';
             $db   = getenv('REDIS_DB')   ?: '0';
-            $auth = getenv('REDIS_AUTH') ?: '';
+            $auth = getenv('REDIS_AUTH') ?: 'S3cureRedisPa55!';  // Added password fallback
             $scheme = ((getenv('REDIS_SCHEME') ?: '') === 'rediss' || getenv('REDIS_TLS') === '1') ? 'rediss' : 'redis';
             $url = sprintf('%s://%s%s:%s/%s',
                 $scheme,
@@ -807,17 +808,26 @@ final class OutboundMailService
         }
 
         $parts = parse_url($url) ?: [];
-        $host  = $parts['host'] ?? '127.0.0.1';
+        $host  = $parts['host'] ?? '10.0.0.164';  // Changed from 127.0.0.1
         $port  = (int)($parts['port'] ?? 6379);
         $db    = isset($parts['path']) ? (int)trim($parts['path'], '/') : 0;
 
         // Support ACL username + password (REDIS_USERNAME / REDIS_AUTH as fallback)
         $user = isset($parts['user']) ? rawurldecode($parts['user']) : (getenv('REDIS_USERNAME') ?: null);
-        $pass = isset($parts['pass']) ? rawurldecode($parts['pass']) : (getenv('REDIS_AUTH') ?: null);
+        $pass = isset($parts['pass']) ? rawurldecode($parts['pass']) : (getenv('REDIS_AUTH') ?: 'S3cureRedisPa55!');  // Added fallback
 
         if (class_exists(\Redis::class)) {
             $r = new \Redis();
-            $r->connect($host, $port, 1.5);
+            // Add error handling for connection
+            try {
+                $connected = $r->connect($host, $port, 1.5);
+                if (!$connected) {
+                    throw new \RuntimeException("Failed to connect to Redis at {$host}:{$port}");
+                }
+            } catch (\RedisException $e) {
+                error_log("[Redis] Connection failed: {$e->getMessage()}");
+                throw new \RuntimeException("Redis connection failed: " . $e->getMessage());
+            }
 
             if (is_string($pass) && $pass !== '') {
                 // Redis 6+ ACL support: prefer [$user, $pass] if a user is provided
@@ -838,7 +848,7 @@ final class OutboundMailService
         }
 
         // Predis fallback (DSN works with recent Predis)
-        return new Predis($url);
+        return new Predis($url, ['read_write_timeout' => -1]);
     }
 
 
