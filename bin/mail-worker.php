@@ -20,54 +20,98 @@ set_exception_handler(static function(Throwable $e){ logerr("[worker][FATAL] {$e
 /** @var OutboundMailService $service */ $service = $container->get(OutboundMailService::class);
 
 // ---- redis client (container -> env -> build) ----
+// ---- redis client (build ONLY from discrete env; ignore REDIS_URL) ----
 $redis = null;
-if (method_exists($container,'has') && $container->has(\Redis::class)) {
-    /** @var \Redis $redis */ $redis = $container->get(\Redis::class);
-} elseif (method_exists($container,'has') && $container->has(PredisClient::class)) {
-    /** @var PredisClient $redis */ $redis = $container->get(PredisClient::class);
-} else {
-    $url = getenv('REDIS_URL');
-    if (!$url || trim($url)==='') {
-        $host = getenv('REDIS_HOST') ?: '127.0.0.1';
-        $port = (int)(getenv('REDIS_PORT') ?: 6379);
-        $db   = (int)(getenv('REDIS_DB')   ?: 0);
-        $auth = getenv('REDIS_AUTH') ?: '';
-        if (class_exists(\Redis::class)) {
-            $r = new \Redis();
-            $r->connect($host,$port,1.5);
-            if ($auth!=='') {
-                $user = getenv('REDIS_USERNAME') ?: null;
-                $user ? $r->auth([$user,$auth]) : $r->auth($auth);
-            }
-            if ($db>0) $r->select($db);
-            $redis = $r;
-        } else {
-            $redis = new PredisClient(sprintf('redis://%s%s:%d/%d',
-                    $auth!==''?(':'.rawurlencode($auth).'@'):'', $host,$port,$db));
-        }
-    } else {
-        if (class_exists(\Redis::class)) {
-            $p = parse_url($url) ?: [];
-            $host = $p['host'] ?? '127.0.0.1';
-            $port = (int)($p['port'] ?? 6379);
-            $db   = isset($p['path']) ? (int)trim($p['path'],'/') : 0;
-            $user = isset($p['user']) ? rawurldecode($p['user']) : (getenv('REDIS_USERNAME') ?: null);
-            $pass = isset($p['pass']) ? rawurldecode($p['pass']) : (getenv('REDIS_AUTH') ?: null);
-            $r = new \Redis();
-            $r->connect($host,$port,1.5);
-            if (is_string($pass) && $pass!=='') { $user ? $r->auth([$user,$pass]) : $r->auth($pass); }
-            if ($db>0) $r->select($db);
-            $redis = $r;
-        } else {
-            $redis = new PredisClient($url);
+
+// Log what we’re about to use (without secrets)
+$scheme   = getenv('REDIS_SCHEME') ?: ''; // 'tcp' | 'tls' | 'rediss'
+$tls      = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
+$host     = getenv('REDIS_HOST') ?: '127.0.0.1';
+$port     = (int)(getenv('REDIS_PORT') ?: 6379);
+$db       = (int)(getenv('REDIS_DB')   ?: 0);
+$user     = getenv('REDIS_USERNAME') ?: '';
+$pass     = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
+$hasAuth  = $pass !== '' ? 'yes' : 'no';
+fwrite(STDERR, "[worker][redis] host={$host} port={$port} db={$db} tls=".($tls?'yes':'no')." auth={$hasAuth}\n");
+
+// If the container already has a client, DO NOT use it (it may have been built from REDIS_URL).
+// We will always build our own client from the discrete env above.
+
+// phpredis preferred if installed
+if (class_exists(\Redis::class)) {
+    $ctx = null;
+    if ($tls) {
+        $ctx = stream_context_create([
+                'ssl' => [
+                        'verify_peer'      => false,
+                        'verify_peer_name' => false,
+                ],
+        ]);
+    }
+
+    $r = new \Redis();
+    $ok = @$r->connect($host, $port, 2.5, null, 0, 0, $ctx);
+    if (!$ok) {
+        fwrite(STDERR, "[worker][redis] phpredis connect FAILED to {$host}:{$port}\n");
+        exit(1);
+    }
+
+    if ($pass !== '') {
+        $authOk = $user !== '' ? @$r->auth([$user, $pass]) : @$r->auth($pass);
+        if (!$authOk) {
+            fwrite(STDERR, "[worker][redis] phpredis AUTH failed (user=".($user!==''?'set':'<default>').")\n");
+            exit(1);
         }
     }
+
+    if ($db > 0) {
+        $selOk = @$r->select($db);
+        if (!$selOk) {
+            fwrite(STDERR, "[worker][redis] phpredis SELECT {$db} failed\n");
+            exit(1);
+        }
+    }
+
+    // For blocking XREADGROUP
+    $r->setOption(\Redis::OPT_READ_TIMEOUT, -1);
+    $redis = $r;
+} else {
+    // Predis fallback (parameters only, no URL)
+    /** @var PredisClient $redis */
+    $params = [
+            'scheme'   => $tls ? 'tls' : 'tcp',
+            'host'     => $host,
+            'port'     => $port,
+            'database' => $db,
+    ];
+    if ($user !== '')   { $params['username'] = $user; } // ACL
+    if ($pass !== '')   { $params['password'] = $pass; } // AUTH
+
+    $options = ['read_write_timeout' => 0];
+    if ($tls) {
+        $options['ssl'] = [
+                'verify_peer'      => false,
+                'verify_peer_name' => false,
+        ];
+    }
+
+    $redis = new PredisClient($params, $options);
+
+    // Touch the connection once to surface auth errors immediately:
+    try { $redis->ping(); } catch (\Throwable $e) {
+        fwrite(STDERR, "[worker][redis] Predis connect/AUTH failed: ".$e->getMessage()."\n");
+        exit(1);
+    }
 }
-if (!$redis) { logerr("[worker] No Redis client available."); exit(1); }
+
+if (!$redis) { fwrite(STDERR, "[worker] No Redis client available.\n"); exit(1); }
 
 // ---- stream/group/consumer + tuning ----
-$stream   = method_exists($queue,'getStream') ? $queue->getStream() : (getenv('MAIL_STREAM') ?: 'mail:outbound');
-$group    = method_exists($queue,'getGroup')  ? $queue->getGroup()  : (getenv('MAIL_GROUP')  ?: 'senders');
+$streamEnv = getenv('MAIL_STREAM') ?: '';
+$groupEnv  = getenv('MAIL_GROUP')  ?: '';
+
+$stream   = $streamEnv !== '' ? $streamEnv : (method_exists($queue,'getStream') ? $queue->getStream() : 'mail:outbound');
+$group    = $groupEnv  !== '' ? $groupEnv  : (method_exists($queue,'getGroup')  ? $queue->getGroup()  : 'senders');
 $consumer = (gethostname() ?: 'consumer').'-'.getmypid();
 
 $blockMs     = (int)(getenv('MAIL_BLOCK_MS')      ?: 5000);
