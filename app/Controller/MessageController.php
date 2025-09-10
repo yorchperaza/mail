@@ -144,6 +144,10 @@ final class MessageController
         $headers  = isset($body['headers']) && is_array($body['headers']) ? $this->sanitizeHeaders($body['headers']) : null;
         $tracking = isset($body['tracking']) && is_array($body['tracking']) ? $body['tracking'] : [];
 
+        // ✅ DEFAULT tracking ON unless explicitly disabled
+        $opensEnabled  = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
+        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
+
         $attachments = [];
         if (!empty($body['attachments']) && is_array($body['attachments'])) {
             foreach ($body['attachments'] as $att) {
@@ -160,7 +164,7 @@ final class MessageController
         $dryRun = (bool)($body['dryRun'] ?? false);
         $queue  = (bool)($body['queue']  ?? false);
 
-        // ---- Persist Message (queued/preview scaffold)
+        // ---- Persist Message scaffold
         /** @var \App\Repository\MessageRepository $messageRepo */
         $messageRepo = $this->repos->getRepository(Message::class);
 
@@ -174,27 +178,28 @@ final class MessageController
             ->setHtml_body($html)
             ->setText_body($text)
             ->setHeaders($headers)
-            ->setOpen_tracking(isset($tracking['opens']) ? (bool)$tracking['opens'] : null)
-            ->setClick_tracking(isset($tracking['clicks']) ? (bool)$tracking['clicks'] : null)
+            ->setOpen_tracking($opensEnabled)      // <- default true
+            ->setClick_tracking($clicksEnabled)    // <- default true
             ->setAttachments(!empty($attachments) ? $attachments : null)
             ->setCreated_at($nowUtc)
             ->setQueued_at($nowUtc)
             ->setFinal_state($dryRun ? 'preview' : ($queue ? 'queued' : 'queued'));
         $messageRepo->save($msg);
 
-        // Persist recipients (and generate per-recipient track_token/rid)
+        // Persist recipients and generate rids
         $recipients = $this->persistRecipients($msg, $to, $cc, $bcc);
 
-        // Local helpers for tracking HTML
+        // ---- Tracking helpers using PUBLIC BASE URL derived from request
+        $base = $this->publicBaseFromRequest($request) ?? 'https://smtp.monkeysmail.com';
+
         $b64url = static function (string $s): string {
             return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
         };
-        $trackingPixelTag = static function (string $rid): string {
-            return '<img src="https://smtp.monkeysmail.com/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
+        $trackingPixelTag = static function (string $rid, string $base): string {
+            return '<img src="'.$base.'/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
         };
-        $rewriteLinksWithRid = static function (string $htmlIn, string $rid) use ($b64url): string {
+        $rewriteLinksWithRid = static function (string $htmlIn, string $rid, string $base) use ($b64url): string {
             if ($htmlIn === '') return $htmlIn;
-            $base = 'https://smtp.monkeysmail.com';
             return preg_replace_callback(
                 '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
                 function($m) use ($base, $rid, $b64url) {
@@ -206,7 +211,7 @@ final class MessageController
             ) ?? $htmlIn;
         };
 
-        // ---- Preview (no send)
+        // ---- Preview
         if ($dryRun) {
             return new JsonResponse([
                 'status'  => 'preview',
@@ -230,7 +235,7 @@ final class MessageController
             ]);
         }
 
-        // ---- Queue to Redis (unchanged)
+        // ---- Queue path unchanged (uses the same base/rewrites)
         if ($queue) {
             $jobs = [];
             foreach (['to','cc','bcc'] as $type) {
@@ -245,14 +250,18 @@ final class MessageController
 
                     $rid = (string)($row['track_token'] ?? '');
 
-                    // Per-recipient HTML with tracking
                     $htmlForThisRcpt = $html;
-                    if ($msg->getClick_tracking()) {
-                        $htmlForThisRcpt = $rewriteLinksWithRid($htmlForThisRcpt, $rid);
+                    if ($clicksEnabled && $htmlForThisRcpt !== '') {
+                        $htmlForThisRcpt = $rewriteLinksWithRid($htmlForThisRcpt, $rid, $base);
                     }
-                    if ($msg->getOpen_tracking()) {
-                        $htmlForThisRcpt .= $trackingPixelTag($rid);
+                    if ($opensEnabled && $htmlForThisRcpt !== '') {
+                        $htmlForThisRcpt .= $trackingPixelTag($rid, $base);
                     }
+
+                    $jobHeaders = ($headers ?? []);
+                    $jobHeaders['X-MM-RID']    = $rid;
+                    $jobHeaders['X-MM-Opens']  = $opensEnabled ? '1' : '0';
+                    $jobHeaders['X-MM-Clicks'] = $clicksEnabled ? '1' : '0';
 
                     $jobs[] = [
                         'message_id' => $msg->getId(),
@@ -262,15 +271,15 @@ final class MessageController
                             'to'      => [$email],
                             'cc'      => [],
                             'bcc'     => [],
-                            'headers' => $headers ?? [],
+                            'headers' => $jobHeaders,
                         ],
                         'payload'    => [
-                            'fromEmail' => $fromEmail,
-                            'fromName'  => $fromName,
-                            'replyTo'   => $replyTo,
-                            'subject'   => $subject,
-                            'text'      => $text,
-                            'html'      => $htmlForThisRcpt,
+                            'fromEmail'   => $fromEmail,
+                            'fromName'    => $fromName,
+                            'replyTo'     => $replyTo,
+                            'subject'     => $subject,
+                            'text'        => $text,
+                            'html'        => $htmlForThisRcpt,
                             'attachments' => $attachments,
                         ],
                     ];
@@ -299,15 +308,13 @@ final class MessageController
             ], 202);
         }
 
-        // ---- Immediate SMTP send (per-recipient so each gets its own rid)
+        // ---- Immediate SMTP per-recipient (with tracking + debug headers)
         $errors   = [];
         $sent     = 0;
         $lastMid  = null;
 
         foreach (['to','cc','bcc'] as $type) {
             foreach ($recipients[$type] as $email) {
-
-                // Fetch this recipient's rid
                 $row = $this->qb->duplicate()
                     ->select(['track_token'])
                     ->from('messagerecipients')
@@ -318,16 +325,19 @@ final class MessageController
 
                 $rid = (string)($row['track_token'] ?? '');
 
-                // Build per-recipient HTML
                 $htmlForRcpt = $html;
-                if ($msg->getClick_tracking()) {
-                    $htmlForRcpt = $rewriteLinksWithRid($htmlForRcpt, $rid);
+                if ($clicksEnabled && $htmlForRcpt !== '') {
+                    $htmlForRcpt = $rewriteLinksWithRid($htmlForRcpt, $rid, $base);
                 }
-                if ($msg->getOpen_tracking()) {
-                    $htmlForRcpt .= $trackingPixelTag($rid);
+                if ($opensEnabled && $htmlForRcpt !== '') {
+                    $htmlForRcpt .= $trackingPixelTag($rid, $base);
                 }
 
-                // Single-recipient envelope
+                $perHeaders = ($headers ?? []);
+                $perHeaders['X-MM-RID']    = $rid;
+                $perHeaders['X-MM-Opens']  = $opensEnabled ? '1' : '0';
+                $perHeaders['X-MM-Clicks'] = $clicksEnabled ? '1' : '0';
+
                 $env = [
                     'fromEmail'   => $fromEmail,
                     'fromName'    => $fromName,
@@ -338,7 +348,7 @@ final class MessageController
                     'subject'     => $subject,
                     'text'        => $text,
                     'html'        => $htmlForRcpt,
-                    'headers'     => $headers ?? [],
+                    'headers'     => $perHeaders,
                     'attachments' => $attachments,
                 ];
 
@@ -358,11 +368,11 @@ final class MessageController
             $msg->setSent_at($now);
         }
         if ($lastMid) {
-            $msg->setMessage_id($lastMid); // optional: store last generated Message-ID
+            $msg->setMessage_id($lastMid);
         }
         $msg->setFinal_state(
-            $sent === 0               ? 'failed'  :
-                (count($errors) > 0       ? 'partial' : 'sent')
+            $sent === 0         ? 'failed'  :
+                (count($errors) > 0 ? 'partial' : 'sent')
         );
         $messageRepo->save($msg);
 
@@ -380,6 +390,22 @@ final class MessageController
             'errors'  => $errors,
             'message' => $this->shapeMessage($msg),
         ], 201);
+    }
+
+    /**
+     * Build a public base URL (scheme + host[:port]) from the incoming request,
+     * falling back to your configured domain if proxies don’t pass headers.
+     */
+    private function publicBaseFromRequest(ServerRequestInterface $r): ?string
+    {
+        $headers = $r->getHeaders();
+        $proto = $r->getHeaderLine('X-Forwarded-Proto') ?: $r->getHeaderLine('X-Proto') ?: ($r->getUri()->getScheme() ?: 'https');
+        $host  = $r->getHeaderLine('X-Forwarded-Host')  ?: $r->getHeaderLine('Host')      ?: $r->getUri()->getHost();
+        if ($host === '') return null;
+        // Optional forwarded port
+        $port  = $r->getHeaderLine('X-Forwarded-Port') ?: $r->getUri()->getPort();
+        $portS = $port && !in_array((int)$port, [80,443], true) ? ':' . (int)$port : '';
+        return sprintf('%s://%s%s', $proto, $host, $portS);
     }
 
     /* =========================================================================
