@@ -47,11 +47,11 @@ $_ENV['DB_USER'] = 'mailmonkeys';
 $_ENV['DB_PASS'] = 't3mp0r4lAllyson#22';
 $_ENV['DB_DATABASE'] = 'ml_mail';
 
-$_ENV['SMTP_HOST'] = '127.0.0.1';  // Changed from smtp.monkeysmail.com
-$_ENV['SMTP_PORT'] = '25';         // Use port 25 for local delivery
-$_ENV['SMTP_USERNAME'] = '';       // No auth needed for localhost
-$_ENV['SMTP_PASSWORD'] = '';       // No auth needed for localhost
-$_ENV['SMTP_SECURE'] = '';         // No TLS for localhost
+$_ENV['SMTP_HOST'] = '127.0.0.1';
+$_ENV['SMTP_PORT'] = '25';
+$_ENV['SMTP_SECURE'] = '';  // Empty string
+$_ENV['SMTP_USERNAME'] = '';
+$_ENV['SMTP_PASSWORD'] = '';
 
 // Build the app/container (now sees DB_*, REDIS_*, SMTP_* from .env)
 $wrap = require __DIR__ . '/../bootstrap.php';
