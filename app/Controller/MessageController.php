@@ -18,23 +18,45 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
 use MonkeysLegion\Http\Message\JsonResponse;
+use MonkeysLegion\Http\Message\Response;
 use MonkeysLegion\Query\QueryBuilder;
+use MonkeysLegion\Repository\EntityRepository;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
+use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
+use MonkeysLegion\Http\Message\Stream;
 
 // PHPMailer
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception as PHPMailerException;
 
+
 final class MessageController
 {
+    /** @var \Redis|null */
+    private ?\Redis $redis = null;
+    private string $redisDsn;
+
+    /** @var EntityRepository */
+    private $messageRepo;
+    /** @var EntityRepository */
+    private $messageRecipientRepo;
+    /** @var EntityRepository */
+    private $messageEventRepo;
+
     public function __construct(
         private RepositoryFactory $repos,
         private QueryBuilder      $qb,
         private OutboundMailService $mailService,
-    ) {}
+        string $redisDsn = 'redis://:S3cureRedisPa55!@10.0.0.164:6379/0',
+    ) {
+        $this->messageRepo          = $this->repos->getRepository(Message::class);
+        $this->messageRecipientRepo = $this->repos->getRepository(MessageRecipient::class);
+        $this->messageEventRepo     = $this->repos->getRepository(MessageEvent::class);
+        $this->redisDsn             = $redisDsn;
+    }
 
     /* =========================================================================
      * JWT entrypoint — send as a user within a company
@@ -1278,6 +1300,256 @@ final class MessageController
     {
         $map = $this->loadRecipientsForMessageIds([$messageId]);
         return $map[$messageId] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]];
+    }
+
+    private function mkStream(): Stream
+    {
+        $h = fopen('php://temp', 'r+');        // in-memory temp stream
+        return new Stream($h);
+    }
+
+    #[Route(methods: 'GET', path: '/t/o/{rid}.gif')]
+    public function trackOpen(ServerRequestInterface $request): ResponseInterface
+    {
+        $rid = (string)($request->getAttribute('rid') ?? '');
+        $this->trackEventSafe($rid, 'opened', $request);
+
+        // 1x1 transparent GIF
+        $gif = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+
+        $body = $this->mkStream();
+        $resp = new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'image/gif',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ]
+        );
+        $resp->getBody()->write($gif);
+        return $resp;
+    }
+
+    #[Route(methods: 'GET', path: '/t/c/{rid}')]
+    public function trackClick(ServerRequestInterface $request): ResponseInterface
+    {
+        $rid  = (string)($request->getAttribute('rid') ?? '');
+        $uEnc = (string)($request->getQueryParams()['u'] ?? '');
+        $url  = $this->b64urlDecode($uEnc) ?: '/';
+
+        $this->trackEventSafe($rid, 'clicked', $request, ['url' => $url]);
+
+        $resp = new Response($this->mkStream(), 302, ['Location' => $url]);
+        return $resp;
+    }
+
+    #[Route(methods: 'GET', path: '/t/u/{rid}')]
+    public function unsubscribe(ServerRequestInterface $request): ResponseInterface
+    {
+        $rid    = (string)($request->getAttribute('rid') ?? '');
+        $reason = (string)($request->getQueryParams()['reason'] ?? 'unsubscribed');
+
+        $this->trackEventSafe($rid, $reason, $request);
+
+        $body = $this->mkStream();
+        $resp = new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'text/html; charset=utf-8',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ]
+        );
+        $resp->getBody()->write('<!doctype html><html><body><p>You are unsubscribed.</p></body></html>');
+        return $resp;
+    }
+
+    /** base64url decoder used by /t/c */
+    private function b64urlDecode(string $s): ?string
+    {
+        if ($s === '') return null;
+        $s = strtr($s, '-_', '+/');
+        $pad = strlen($s) % 4;
+        if ($pad) $s .= str_repeat('=', 4 - $pad);
+        $out = base64_decode($s, true);
+        return $out === false ? null : $out;
+    }
+
+
+    private function trackEventSafe(string $rid, string $type, ServerRequestInterface $r, array $extra = []): void
+    {
+        try {
+            if ($rid === '') return;
+
+            // idempotency key per recipient+type(+url host)
+            $ua = $r->getHeaderLine('User-Agent');
+            $ip = $r->getServerParams()['REMOTE_ADDR'] ?? '';
+            $meta = array_merge($extra, [
+                'ua' => $ua,
+                'ip' => $ip,
+            ]);
+
+            // Resolve MessageRecipient by rid (see section 2 — token scheme)
+            [$messageId, $recipientId] = $this->resolveByRid($rid);
+            if ($messageId <= 0 || $recipientId <= 0) return;
+
+            // Dedupe via Redis (5 minutes for clicks, 24h for opens)
+            $ttl = $type === 'opened' ? 86400 : 300;
+            $idKey = 'ml:trk:' . $type . ':' . $rid . (isset($extra['url']) ? ':' . md5($extra['url']) : '');
+            $didWrite = $this->trackingDedup($idKey, $ttl);
+            if (!$didWrite) return;
+
+            // Persist durable event
+            $this->appendEvent($messageId, $recipientId, $type, $meta);
+        } catch (\Throwable $e) {
+            error_log("trackEventSafe error: " . $e->getMessage());
+        }
+    }
+
+    private function trackingDedup(string $key, int $ttl): bool
+    {
+        try {
+            $r = $this->getRedis();
+            if (!$r) return true; // no redis → don't block event logging
+
+            // SET key 1 NX EX <ttl>
+            $ok = $r->set($key, '1', ['nx', 'ex' => $ttl]);
+            return (bool)$ok;
+        } catch (\Throwable) {
+            return true; // if Redis errors, allow write once
+        }
+    }
+
+
+    /**
+     * @return array{0:int,1:int} [messageId, recipientId] or [0,0] if not found
+     */
+    private function resolveByRid(string $rid): array
+    {
+        if ($rid === '') return [0, 0];
+
+        /** @var \App\Entity\MessageRecipient|null $rec */
+        $rec = $this->messageRecipientRepo->findOneBy(['track_token' => $rid]);
+        if (!$rec) return [0, 0];
+
+        // Derive message id robustly
+        $mid = 0;
+        if (method_exists($rec, 'getMessage') && $rec->getMessage()) {
+            $mid = (int)$rec->getMessage()->getId();
+        } elseif (method_exists($rec, 'getMessage_id')) {
+            $mid = (int)$rec->getMessage_id();
+        }
+
+        $ridInt = method_exists($rec, 'getId') ? (int)$rec->getId() : 0;
+        return [$mid, $ridInt];
+    }
+
+
+    private function appendEvent(int $messageId, int $recipientId, string $type, array $meta): void
+    {
+        if ($messageId <= 0 || $recipientId <= 0) {
+            // avoid "Expected parameter of type 'int', 'null' provided"
+            return;
+        }
+
+        $ev = new MessageEvent();
+
+        // Set message / recipient (handle both relation and raw FK styles)
+        if (method_exists($ev, 'setMessageId')) {
+            $ev->setMessageId($messageId);
+        } elseif (method_exists($ev, 'setMessage')) {
+            /** @var \App\Entity\Message|null $msg */
+            $msg = $this->messageRepo->find($messageId);
+            if ($msg) $ev->setMessage($msg);
+        }
+
+        if (method_exists($ev, 'setRecipientId')) {
+            $ev->setRecipientId($recipientId);
+        } elseif (method_exists($ev, 'setRecipient')) {
+            /** @var \App\Entity\MessageRecipient|null $mr */
+            $mr = $this->messageRecipientRepo->find($recipientId);
+            if ($mr) $ev->setRecipient($mr);
+        }
+
+        // Set type
+        if (method_exists($ev, 'setType')) {
+            $ev->setType($type);
+        } elseif (method_exists($ev, 'setEvent_type')) {
+            $ev->setEvent_type($type);
+        }
+
+        // Set metadata (array or JSON)
+        if (method_exists($ev, 'setMeta')) {
+            $ev->setMeta($meta);
+        } elseif (method_exists($ev, 'setMeta_json')) {
+            $ev->setMeta_json(json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        }
+
+        // Timestamp
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        if (method_exists($ev, 'setCreatedAt'))       $ev->setCreatedAt($now);
+        elseif (method_exists($ev, 'setCreated_at'))  $ev->setCreated_at($now);
+
+        // Persist
+        $this->messageEventRepo->save($ev);
+
+        // OPTIONAL: publish to Redis pub/sub for live dashboards
+        try {
+            if ($r = $this->getRedis()) {
+                $r->publish('ml:events', json_encode([
+                    'type'       => $type,
+                    'message_id' => $messageId,
+                    'recipient'  => $recipientId,
+                    'meta'       => $meta,
+                    'ts'         => time(),
+                ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            }
+        } catch (\Throwable) {}
+    }
+
+
+    private function getRedis(): ?\Redis
+    {
+        if ($this->redis instanceof \Redis) {
+            return $this->redis;
+        }
+
+        if ($this->redisDsn === '') {
+            return null;
+        }
+
+        $parts = parse_url($this->redisDsn);
+        if (!$parts || !isset($parts['host'])) {
+            return null;
+        }
+
+        $host = $parts['host'];
+        $port = isset($parts['port']) ? (int)$parts['port'] : 6379;
+        $pass = $parts['pass'] ?? null;
+        $db   = 0;
+
+        if (isset($parts['path'])) {
+            $dbStr = ltrim($parts['path'], '/');
+            if ($dbStr !== '' && ctype_digit($dbStr)) {
+                $db = (int)$dbStr;
+            }
+        }
+
+        try {
+            $r = new \Redis();
+            $r->connect($host, $port, 2.0);
+            if ($pass) {
+                $r->auth($pass);
+            }
+            if ($db) {
+                $r->select($db);
+            }
+
+            $this->redis = $r;
+            return $this->redis;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
 }
