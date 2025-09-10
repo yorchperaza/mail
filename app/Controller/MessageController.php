@@ -25,6 +25,7 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Random\RandomException;
 use RuntimeException;
 use MonkeysLegion\Http\Message\Stream;
 
@@ -113,6 +114,7 @@ final class MessageController
     /**
      * @throws \DateMalformedStringException
      * @throws \JsonException
+     * @throws RandomException
      */
     private function handleSend(ServerRequestInterface $request, Company $company, Domain $domain): JsonResponse
     {
@@ -1934,7 +1936,9 @@ final class MessageController
         return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
     }
 
-    /** create recipients + track tokens and return [ 'to'=>[], 'cc'=>[], 'bcc'=>[] ] of plain emails */
+    /** create recipients + track tokens and return [ 'to'=>[], 'cc'=>[], 'bcc'=>[] ] of plain emails
+     * @throws RandomException
+     */
     private function persistRecipients(Message $msg, array $to, array $cc, array $bcc): array
     {
         /** @var EntityRepository $recRepo */
@@ -1951,7 +1955,7 @@ final class MessageController
 
                 // rid/track token: random, URL-safe
                 $rid = bin2hex(random_bytes(16));            // 32 hex chars
-                if (method_exists($rec, 'setTrack_token')) { $rec->setTrack_token($rid); }
+                $rec->setTrack_token($rid);
 
                 $recRepo->save($rec);
             }
