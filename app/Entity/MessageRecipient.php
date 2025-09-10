@@ -20,36 +20,34 @@ class MessageRecipient
 
     #[Field(type: 'string', nullable: true)]
     public ?string $type = null;
-    
     #[Field(type: 'string', length: 320, nullable: true)]
     public ?string $email = null;
 
     #[Field(type: 'string', nullable: true)]
     public ?string $name = null;
-    
     #[Field(type: 'string', nullable: true)]
     public ?string $status = null;
 
     #[Field(type: 'string', nullable: true)]
     public ?string $last_smtp_code = null;
-    
     #[Field(type: 'string', length: 512, nullable: true)]
     public ?string $last_smtp_msg = null;
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $delivered_at = null;
-    
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $bounced_at = null;
 
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $complained_at = null;
-    
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $deferred_at = null;
 
-    #[manyToOne(targetEntity: Message::class, inversedBy: 'messageRecipients')]
+    #[ManyToOne(targetEntity: Message::class, inversedBy: 'messageRecipients')]
     public ?Message $message = null;
+    
+    #[Field(type: 'string', nullable: true)]
+    public ?string $track_token = null;
 
     public function __construct()
     {
@@ -184,6 +182,17 @@ class MessageRecipient
     public function removeMessage(): self
     {
         $this->message = null;
+        return $this;
+    }
+
+    public function getTrack_token(): ?string
+    {
+        return $this->track_token;
+    }
+
+    public function setTrack_token(?string $track_token): self
+    {
+        $this->track_token = $track_token;
         return $this;
     }
 }
