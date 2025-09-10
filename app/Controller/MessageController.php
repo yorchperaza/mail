@@ -1941,23 +1941,23 @@ final class MessageController
      */
     private function persistRecipients(Message $msg, array $to, array $cc, array $bcc): array
     {
-        /** @var EntityRepository $recRepo */
-        $recRepo = $this->messageRecipientRepo;
-
         $buckets = ['to' => $to, 'cc' => $cc, 'bcc' => $bcc];
 
         foreach ($buckets as $type => $list) {
             foreach ($list as $email) {
-                $rec = new MessageRecipient();
-                $rec->setMessage($msg);
-                $rec->setType($type);
-                $rec->setEmail($email);
+                // Generate track token FIRST
+                $rid = bin2hex(random_bytes(16));
 
-                // rid/track token: random, URL-safe
-                $rid = bin2hex(random_bytes(16));            // 32 hex chars
-                $rec->setTrack_token($rid);
+                // Use the correct insert method
+                $recipientId = $this->qb->duplicate()->insert('messagerecipient', [
+                    'message_id' => $msg->getId(),
+                    'type' => $type,
+                    'email' => $email,
+                    'track_token' => $rid,
+                    'status' => 'pending'
+                ]);
 
-                $recRepo->save($rec);
+                error_log("Saved recipient: id={$recipientId}, email={$email}, type={$type}, token={$rid}");
             }
         }
 
