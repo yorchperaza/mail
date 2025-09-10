@@ -18,6 +18,9 @@ use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
 use Throwable;
+use MonkeysLegion\Http\Message\Response;
+use MonkeysLegion\Http\Message\Stream;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * MonkeysMail — Public API (API Key) send endpoints
@@ -661,4 +664,303 @@ final class ApiSendController
             'resetAt'   => $resetAt->format(DateTimeInterface::ATOM),
         ];
     }
+
+    // =========================== Tracking Endpoints ============================
+
+    use MonkeysLegion\Http\Message\Response;
+    use MonkeysLegion\Http\Message\Stream;
+    use Psr\Http\Message\ResponseInterface;
+
+// 1x1 transparent GIF stream helper
+    private function mkStream(): Stream {
+        $h = fopen('php://temp', 'r+');
+        return new Stream($h);
+    }
+
+    /** base64url decoder used by /t/c */
+    private function b64urlDecode(string $s): ?string {
+        if ($s === '') return null;
+        $s = strtr($s, '-_', '+/');
+        $pad = strlen($s) % 4;
+        if ($pad) $s .= str_repeat('=', 4 - $pad);
+        $out = base64_decode($s, true);
+        return $out === false ? null : $out;
+    }
+
+    #[Route(methods: 'GET', path: '/t/o/{rid}.gif')]
+    public function trackOpen(ServerRequestInterface $request): ResponseInterface {
+        $rid = (string)($request->getAttribute('rid') ?? '');
+        error_log("Track open attempt for RID: " . $rid);
+
+        $this->trackEventSafe($rid, 'opened', $request);
+
+        $gif = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+        $body = $this->mkStream();
+        $body->write($gif);
+
+        return new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'image/gif',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma'        => 'no-cache',
+                'Expires'       => '0',
+            ]
+        );
+    }
+
+    #[Route(methods: 'GET', path: '/t/c/{rid}')]
+    public function trackClick(ServerRequestInterface $request): ResponseInterface {
+        $rid  = (string)($request->getAttribute('rid') ?? '');
+        $uEnc = (string)($request->getQueryParams()['u'] ?? '');
+        $url  = $this->b64urlDecode($uEnc) ?: 'https://monkeysmail.com';
+
+        error_log("Track click attempt for RID: {$rid}, URL: {$url}");
+
+        $this->trackEventSafe($rid, 'clicked', $request, ['url' => $url]);
+
+        return new Response(
+            $this->mkStream(),
+            302,
+            ['Location' => $url, 'Cache-Control' => 'no-cache']
+        );
+    }
+
+    #[Route(methods: 'GET', path: '/t/u/{rid}')]
+    public function unsubscribe(ServerRequestInterface $request): ResponseInterface {
+        $rid    = (string)($request->getAttribute('rid') ?? '');
+        $reason = (string)($request->getQueryParams()['reason'] ?? 'unsubscribed');
+
+        $this->trackEventSafe($rid, $reason, $request);
+
+        $body = $this->mkStream();
+        $resp = new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'text/html; charset=utf-8',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ]
+        );
+        $resp->getBody()->write(
+            '<!doctype html><html><body><p>You are unsubscribed.</p></body></html>'
+        );
+        return $resp;
+    }
+
+// ======================== Tracking Core + Helpers =========================
+
+    /** Resolve best-effort client IP from common proxy headers or REMOTE_ADDR. */
+    private function getClientIp(ServerRequestInterface $request): string {
+        foreach (['X-Forwarded-For','X-Real-IP','CF-Connecting-IP','X-Client-IP'] as $h) {
+            $ip = $request->getHeaderLine($h);
+            if ($ip !== '') {
+                $ip = trim(explode(',', $ip)[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
+        }
+        return $request->getServerParams()['REMOTE_ADDR'] ?? '0.0.0.0';
+    }
+
+    /**
+     * Top-level event tracker with Redis dedupe (non-blocking) and DB fallback.
+     * $type: 'opened' | 'clicked' | 'unsubscribed' | custom string
+     */
+    private function trackEventSafe(string $rid, string $type, ServerRequestInterface $r, array $extra = []): void {
+        try {
+            if ($rid === '') {
+                error_log("trackEventSafe: Empty RID");
+                return;
+            }
+
+            $ua = $r->getHeaderLine('User-Agent');
+            $ip = $this->getClientIp($r);
+            $referer = $r->getHeaderLine('Referer');
+
+            $meta = $extra + [
+                    'ua' => $ua,
+                    'ip' => $ip,
+                    'referer' => $referer,
+                    'timestamp' => time(),
+                ];
+
+            [$messageId, $recipientId] = $this->resolveByRid($rid);
+            if ($messageId <= 0 || $recipientId <= 0) {
+                error_log("trackEventSafe: RID not found -> {$rid}");
+                return;
+            }
+
+            // Deduplicate: opens ~1h; clicks ~5m; else ~5m
+            $ttl = match ($type) {
+                'opened'       => 3600,
+                'clicked'      => 300,
+                'unsubscribed' => 300,
+                default        => 300,
+            };
+            $dedupKey = $this->buildDedupKey($type, $rid, $extra);
+            if (!$this->attemptDedup($dedupKey, $ttl)) {
+                error_log("Event deduped: {$dedupKey}");
+                return;
+            }
+
+            $this->persistTrackingEvent($messageId, $recipientId, $type, $meta);
+            $this->updateTrackingStats($messageId, $type);
+            $this->publishTrackingEvent($messageId, $recipientId, $type, $meta);
+
+        } catch (\Throwable $e) {
+            error_log("trackEventSafe ERROR: ".$e->getMessage()."\n".$e->getTraceAsString());
+        }
+    }
+
+    /** Build dedupe key; for clicks also hash the host. */
+    private function buildDedupKey(string $type, string $rid, array $extra): string {
+        $key = "ml:trk:{$type}:{$rid}";
+        if ($type === 'clicked' && isset($extra['url'])) {
+            $host = parse_url((string)$extra['url'], PHP_URL_HOST) ?: 'unknown';
+            $key .= ':' . md5($host);
+        }
+        return $key;
+    }
+
+    /** Try Redis SET NX EX; on error/unavailable => allow event (no blocking). */
+    private function attemptDedup(string $key, int $ttl): bool {
+        try {
+            $r = $this->getRedis();
+            if (!$r) return true;
+            return (bool)$r->set($key, '1', ['nx', 'ex' => $ttl]);
+        } catch (\Throwable $e) {
+            error_log("Dedup Redis error (allowing): ".$e->getMessage());
+            return true;
+        }
+    }
+
+    /** Persist one row into messageevents via QueryBuilder. */
+    private function persistTrackingEvent(int $messageId, int $recipientId, string $type, array $meta): void {
+        if ($messageId <= 0 || $recipientId <= 0) return;
+
+        try {
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+            // Use QueryBuilder::insert(table, data) — returns inserted id, no execute() call.
+            $this->qb->duplicate()->insert('messageevent', [
+                'message_id'   => $messageId,
+                'recipient_id' => $recipientId,
+                'event_type'   => $type,
+                'meta_json'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                'created_at'   => $now->format('Y-m-d H:i:s'),
+            ]);
+
+            error_log("Event saved: {$type} msg={$messageId} rcpt={$recipientId}");
+        } catch (\Throwable $e) {
+            error_log("persistTrackingEvent ERROR: " . $e->getMessage());
+        }
+    }
+
+
+    /** Optional: increment message-level counters. */
+    private function updateTrackingStats(int $messageId, string $type): void {
+        try {
+            // Whitelist to avoid SQL injection in the raw SET
+            $column = match ($type) {
+                'opened'       => 'open_count',
+                'clicked'      => 'click_count',
+                'unsubscribed' => 'unsubscribe_count',
+                default        => null,
+            };
+
+            if ($column === null) return;
+
+            // Use custom() for a raw increment; WHERE is added via ->where(...)
+            $this->qb->duplicate()
+                ->custom("UPDATE message SET {$column} = {$column} + 1")
+                ->where('id', '=', $messageId)
+                ->execute();
+
+        } catch (\Throwable $e) {
+            error_log("updateTrackingStats ERROR: " . $e->getMessage());
+        }
+    }
+
+
+    /** Optional: publish live events via Redis pub/sub (non-blocking). */
+    private function publishTrackingEvent(int $messageId, int $recipientId, string $type, array $meta): void {
+        try {
+            $r = $this->getRedis();
+            if (!$r) return;
+            $payload = json_encode([
+                'type'        => $type,
+                'message_id'  => $messageId,
+                'recipient_id'=> $recipientId,
+                'meta'        => $meta,
+                'ts'          => time(),
+            ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            $r->publish('ml:events', $payload);
+        } catch (\Throwable $e) {
+            error_log("publishTrackingEvent ERROR: ".$e->getMessage());
+        }
+    }
+
+    /** Resolve (message_id, recipient_id) by per-recipient tracking token (rid). */
+    private function resolveByRid(string $rid): array {
+        if ($rid === '') return [0, 0];
+        try {
+            $row = $this->qb->duplicate()
+                ->select(['id', 'message_id'])
+                ->from('messagerecipient')               // <-- ensure table name matches your schema
+                ->where('track_token', '=', $rid)
+                ->fetchOne();
+
+            if (!$row) {
+                error_log("resolveByRid: token not found: {$rid}");
+                return [0, 0];
+            }
+            return [(int)($row['message_id'] ?? 0), (int)($row['id'] ?? 0)];
+        } catch (\Throwable $e) {
+            error_log("resolveByRid ERROR: ".$e->getMessage());
+            return [0, 0];
+        }
+    }
+
+// ------------------------------ Redis ---------------------------------
+
+    /** Cached Redis connection from REDIS_URL / REDIS_DSN (redis://:pass@host:port/db). */
+    private ?\Redis $redisConn = null;
+
+    private function getRedis(): ?\Redis {
+        if ($this->redisConn instanceof \Redis) {
+            try { $this->redisConn->ping(); return $this->redisConn; }
+            catch (\Throwable) { $this->redisConn = null; }
+        }
+        $dsn = $_ENV['REDIS_URL'] ?? $_ENV['REDIS_DSN'] ?? '';
+        if ($dsn === '') {
+            error_log("getRedis: no DSN");
+            return null;
+        }
+        $u = parse_url($dsn);
+        if (!$u || !isset($u['host'])) {
+            error_log("getRedis: invalid DSN");
+            return null;
+        }
+        try {
+            $r = new \Redis();
+            $host = $u['host'];
+            $port = (int)($u['port'] ?? 6379);
+            $ok = $r->connect($host, $port, 2.0);
+            if (!$ok) return null;
+            if (isset($u['pass']) && $u['pass'] !== '') $r->auth($u['pass']);
+            if (isset($u['path'])) {
+                $db = ltrim($u['path'], '/');
+                if ($db !== '' && ctype_digit($db)) $r->select((int)$db);
+            }
+            $this->redisConn = $r;
+            return $this->redisConn;
+        } catch (\Throwable $e) {
+            error_log("getRedis ERROR: ".$e->getMessage());
+            return null;
+        }
+    }
+
 }
