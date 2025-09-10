@@ -1952,7 +1952,6 @@ final class MessageController
                 // rid/track token: random, URL-safe
                 $rid = bin2hex(random_bytes(16));            // 32 hex chars
                 if (method_exists($rec, 'setTrack_token')) { $rec->setTrack_token($rid); }
-                elseif (method_exists($rec, 'setTrackToken')) { $rec->setTrackToken($rid); }
 
                 $recRepo->save($rec);
             }
