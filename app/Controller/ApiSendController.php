@@ -18,6 +18,9 @@ use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
 use Throwable;
+use MonkeysLegion\Http\Message\Response;
+use MonkeysLegion\Http\Message\Stream;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * MonkeysMail — Public API (API Key) send endpoints
@@ -38,6 +41,9 @@ final class ApiSendController
     /* ---------------------------------------------------------------------
      * Small helpers (JSON error + body decode)
      * ------------------------------------------------------------------- */
+    /**
+     * @throws \JsonException
+     */
     private function jsonError(int $status, string $code, string $message, array $extra = []): JsonResponse
     {
         return new JsonResponse(['error' => $code, 'message' => $message] + $extra, $status);
