@@ -223,6 +223,21 @@ final class OutboundMailService
     private function getDirectDbConnection(): \PDO
     {
         static $pdo = null;
+        static $lastPing = 0;
+
+        $now = time();
+
+        // Check connection every 30 seconds
+        if ($pdo !== null && ($now - $lastPing) > 30) {
+            try {
+                $pdo->query('SELECT 1');
+                $lastPing = $now;
+            } catch (\PDOException $e) {
+                error_log('[Mail] DB connection lost, reconnecting: ' . $e->getMessage());
+                $pdo = null;
+            }
+        }
+
         if ($pdo === null) {
             $host = '34.9.43.102';
             $db = 'ml_mail';
@@ -233,9 +248,17 @@ final class OutboundMailService
             $pdo = new \PDO($dsn, $user, $pass, [
                 \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
                 \PDO::ATTR_DEFAULT_FETCH_MODE => \PDO::FETCH_ASSOC,
+                \PDO::ATTR_PERSISTENT => false,  // Don't use persistent connections
             ]);
-            error_log('[Mail] Direct DB connection established');
+
+            // Set timeout to prevent "server has gone away"
+            $pdo->exec("SET SESSION wait_timeout=28800");  // 8 hours
+            $pdo->exec("SET SESSION interactive_timeout=28800");
+
+            $lastPing = $now;
+            error_log('[Mail] DB connection established');
         }
+
         return $pdo;
     }
 
@@ -243,77 +266,158 @@ final class OutboundMailService
     {
         error_log('[Mail] processJob start payload='.json_encode($job));
         $id = (int)($job['message_id'] ?? 0);
-        if ($id <= 0) { error_log('[Mail] processJob missing message_id'); return; }
-
-        // DIRECT DATABASE QUERY
-        $pdo = $this->getDirectDbConnection();
-        $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
-        $stmt->execute([$id]);
-        $msgData = $stmt->fetch();
-
-        if (!$msgData) {
-            error_log('[Mail] processJob message not found id='.$id);
+        if ($id <= 0) {
+            error_log('[Mail] processJob missing message_id');
             return;
         }
 
-        // Get envelope from job
-        $envelope = (array)($job['envelope'] ?? []);
+        try {
+            // Get fresh connection
+            $pdo = $this->getDirectDbConnection();
 
-        // Build email data
-        $emailData = [
-            'from_email' => $envelope['fromEmail'] ?? $msgData['from_email'],  // Use envelope first
-            'from_name' => $envelope['fromName'] ?? $msgData['from_name'],
-            'reply_to' => $envelope['replyTo'] ?? $msgData['reply_to'],
-            'subject' => $msgData['subject'],
-            'html_body' => $msgData['html_body'],
-            'text_body' => $msgData['text_body'],
-            'to' => $envelope['to'] ?? [],
-            'cc' => $envelope['cc'] ?? [],
-            'bcc' => $envelope['bcc'] ?? [],
-        ];
+            // Get message
+            $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
+            $stmt->execute([$id]);
+            $msgData = $stmt->fetch();
 
-        error_log('[Mail] Sending email from=' . $emailData['from_email'] . ' to=' . json_encode($emailData['to']));
+            if (!$msgData) {
+                error_log('[Mail] processJob message not found id='.$id);
+                return;
+            }
 
-        // Check if sendRaw method exists, if not use the regular send method
-        if (method_exists($this->sender, 'sendRaw')) {
-            $res = $this->sender->sendRaw($emailData);
-        } else {
-            // Fallback to creating a Message object for the original send method
-            $msg = new \App\Entity\Message();
-            $msg->setId($id);
-            $msg->setFrom_email($emailData['from_email']);
-            $msg->setFrom_name($emailData['from_name']);
-            $msg->setReply_to($emailData['reply_to']);
-            $msg->setSubject($emailData['subject']);
-            $msg->setHtml_body($emailData['html_body']);
-            $msg->setText_body($emailData['text_body']);
+            // Get envelope from job
+            $envelope = (array)($job['envelope'] ?? []);
 
-            $res = $this->sender->send($msg, $envelope);
+            // Get tracking settings
+            $opensEnabled = (bool)($msgData['open_tracking'] ?? false);
+            $clicksEnabled = (bool)($msgData['click_tracking'] ?? false);
+
+            // Get ALL recipients with their tracking tokens
+            $recipientStmt = $pdo->prepare('
+            SELECT email, type, track_token 
+            FROM messagerecipient 
+            WHERE message_id = ?
+        ');
+            $recipientStmt->execute([$id]);
+            $recipients = $recipientStmt->fetchAll();
+
+            // Build recipient map with tokens
+            $recipientTokens = [];
+            foreach ($recipients as $recipient) {
+                $email = $recipient['email'];
+                $token = $recipient['track_token'];
+                if ($email && $token) {
+                    $recipientTokens[$email] = $token;
+                }
+            }
+
+            error_log('[Mail] Found ' . count($recipientTokens) . ' recipients with tokens');
+
+            // For single recipient messages, inject tracking into HTML
+            $htmlBody = $msgData['html_body'];
+            if (count($envelope['to']) === 1 && count($envelope['cc']) === 0 && count($envelope['bcc']) === 0) {
+                // Single recipient - we can inject tracking
+                $recipientEmail = $envelope['to'][0];
+                $trackToken = $recipientTokens[$recipientEmail] ?? null;
+
+                if ($trackToken && $htmlBody) {
+                    $base = 'https://smtp.monkeysmail.com';
+
+                    // Add click tracking
+                    if ($clicksEnabled) {
+                        $htmlBody = preg_replace_callback(
+                            '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
+                            function($m) use ($base, $trackToken) {
+                                $url = $m[2];
+                                $encoded = rtrim(strtr(base64_encode($url), '+/', '-_'), '=');
+                                return $m[1] . $base . '/t/c/' . $trackToken . '?u=' . $encoded . $m[3];
+                            },
+                            $htmlBody
+                        );
+                    }
+
+                    // Add open tracking pixel
+                    if ($opensEnabled) {
+                        $pixel = '<img src="' . $base . '/t/o/' . $trackToken . '.gif" width="1" height="1" style="display:none" alt=""/>';
+                        $htmlBody .= $pixel;
+                    }
+
+                    error_log('[Mail] Tracking injected for ' . $recipientEmail . ' with token ' . $trackToken);
+                }
+            } else if (count($recipientTokens) > 1) {
+                // Multiple recipients - we should queue separate jobs for each
+                // For now, log a warning
+                error_log('[Mail] WARNING: Multiple recipients in single job - tracking will only work for individual sends');
+            }
+
+            // Build email data with tracking-enabled HTML
+            $emailData = [
+                'from_email' => $envelope['fromEmail'] ?? $msgData['from_email'],
+                'from_name' => $envelope['fromName'] ?? $msgData['from_name'],
+                'reply_to' => $envelope['replyTo'] ?? $msgData['reply_to'],
+                'subject' => $msgData['subject'],
+                'html_body' => $htmlBody,  // Use tracking-enabled HTML
+                'text_body' => $msgData['text_body'],
+                'to' => $envelope['to'] ?? [],
+                'cc' => $envelope['cc'] ?? [],
+                'bcc' => $envelope['bcc'] ?? [],
+            ];
+
+            // Handle attachments if present
+            if (!empty($msgData['attachments'])) {
+                $attachments = is_string($msgData['attachments'])
+                    ? json_decode($msgData['attachments'], true)
+                    : $msgData['attachments'];
+                $emailData['attachments'] = $attachments;
+            }
+
+            error_log('[Mail] Sending email from=' . $emailData['from_email'] . ' to=' . json_encode($emailData['to']));
+
+            // Send the email
+            if (method_exists($this->sender, 'sendRaw')) {
+                $res = $this->sender->sendRaw($emailData);
+            } else {
+                $msg = new \App\Entity\Message();
+                $msg->setId($id);
+                $msg->setFrom_email($emailData['from_email']);
+                $msg->setFrom_name($emailData['from_name']);
+                $msg->setReply_to($emailData['reply_to']);
+                $msg->setSubject($emailData['subject']);
+                $msg->setHtml_body($emailData['html_body']);
+                $msg->setText_body($emailData['text_body']);
+
+                $res = $this->sender->send($msg, $envelope);
+            }
+
+            error_log('[Mail] Send result: ' . json_encode($res));
+
+            // Update message status
+            $now = date('Y-m-d H:i:s');
+            $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
+            $messageId = $res['message_id'] ?? null;
+
+            if ($messageId) {
+                $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ?, message_id = ? WHERE id = ?');
+                $updateStmt->execute([$status, $now, $messageId, $id]);
+            } else {
+                $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ? WHERE id = ?');
+                $updateStmt->execute([$status, $now, $id]);
+            }
+
+            // Update recipients status
+            $recipientStmt = $pdo->prepare('UPDATE messagerecipient SET status = ? WHERE message_id = ?');
+            $recipientStmt->execute([$status, $id]);
+
+            error_log(sprintf('[Mail] processJob completed status=%s id=%d', $status, $id));
+
+        } catch (\PDOException $e) {
+            error_log('[Mail] processJob DB error: ' . $e->getMessage());
+            throw $e;  // Re-throw to trigger retry
+        } catch (\Throwable $e) {
+            error_log('[Mail] processJob unexpected error: ' . $e->getMessage());
+            throw $e;
         }
-
-        error_log('[Mail] Send result: ' . json_encode($res));
-
-        // Update message status
-        $now = date('Y-m-d H:i:s');
-        $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
-        $messageId = $res['message_id'] ?? null;
-
-        if ($messageId) {
-            $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ?, message_id = ? WHERE id = ?');
-            $updateStmt->execute([$status, $now, $messageId, $id]);
-        } else {
-            $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ? WHERE id = ?');
-            $updateStmt->execute([$status, $now, $id]);
-        }
-
-        // Update recipients status
-        $recipientStmt = $pdo->prepare('UPDATE messagerecipient SET status = ? WHERE message_id = ?');
-        $recipientStmt->execute([$status, $id]);
-
-        error_log(sprintf('[Mail] processJob completed status=%s id=%d error=%s',
-            $status, $id, $res['error'] ?? 'none'));
     }
-
     /* ----------------------- helpers ----------------------- */
 
     private function normalizeEmails(array $list): array
@@ -370,12 +474,20 @@ final class OutboundMailService
         $rRepo = $this->repos->getRepository(MessageRecipient::class);
 
         $save = function(string $email, string $type) use ($msg, $status, $rRepo) {
-            $r = new MessageRecipient()
+            // Generate tracking token for each recipient
+            $trackToken = bin2hex(random_bytes(16));  // 32 character hex token
+
+            $r = (new MessageRecipient())
                 ->setMessage($msg)
                 ->setType($type)
                 ->setEmail($email)
-                ->setStatus($status);
+                ->setStatus($status)
+                ->setTrack_token($trackToken);  // Set the tracking token!
+
             $rRepo->save($r);
+
+            error_log(sprintf('[Mail] Recipient saved: email=%s, type=%s, token=%s',
+                $email, $type, $trackToken));
         };
 
         foreach ($to as $e)  { $save($e, 'to'); }

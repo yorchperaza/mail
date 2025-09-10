@@ -18,6 +18,9 @@ use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
 use Throwable;
+use MonkeysLegion\Http\Message\Response;
+use MonkeysLegion\Http\Message\Stream;
+use Psr\Http\Message\ResponseInterface;
 
 /**
  * MonkeysMail — Public API (API Key) send endpoints
@@ -660,5 +663,212 @@ final class ApiSendController
             'remaining' => $limit - ($current + $units),
             'resetAt'   => $resetAt->format(DateTimeInterface::ATOM),
         ];
+    }
+
+    // ======================== Tracking Endpoints ============================
+
+    #[Route(methods: 'GET', path: '/t/o/{rid}.gif')]
+    public function trackOpen(ServerRequestInterface $request): ResponseInterface {
+        $rid = (string)($request->getAttribute('rid') ?? '');
+        error_log("Track open attempt for RID: " . $rid);
+
+        $this->trackEventSafe($rid, 'opened', $request);
+
+        $gif = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+        $body = $this->mkStream();
+        $body->write($gif);
+
+        return new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'image/gif',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma'        => 'no-cache',
+                'Expires'       => '0',
+            ]
+        );
+    }
+
+    #[Route(methods: 'GET', path: '/t/c/{rid}')]
+    public function trackClick(ServerRequestInterface $request): ResponseInterface {
+        $rid  = (string)($request->getAttribute('rid') ?? '');
+        $uEnc = (string)($request->getQueryParams()['u'] ?? '');
+        $url  = $this->b64urlDecode($uEnc) ?: 'https://monkeysmail.com';
+
+        error_log("Track click attempt for RID: {$rid}, URL: {$url}");
+
+        $this->trackEventSafe($rid, 'clicked', $request, ['url' => $url]);
+
+        return new Response(
+            $this->mkStream(),
+            302,
+            ['Location' => $url, 'Cache-Control' => 'no-cache']
+        );
+    }
+
+    #[Route(methods: 'GET', path: '/t/u/{rid}')]
+    public function unsubscribe(ServerRequestInterface $request): ResponseInterface {
+        $rid    = (string)($request->getAttribute('rid') ?? '');
+        $reason = (string)($request->getQueryParams()['reason'] ?? 'unsubscribed');
+
+        $this->trackEventSafe($rid, $reason, $request);
+
+        $body = $this->mkStream();
+        $resp = new Response(
+            $body,
+            200,
+            [
+                'Content-Type'  => 'text/html; charset=utf-8',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+            ]
+        );
+        $resp->getBody()->write(
+            '<!doctype html><html><body><p>You are unsubscribed.</p></body></html>'
+        );
+        return $resp;
+    }
+
+// ======================== Tracking Helpers =========================
+
+    private function mkStream(): Stream {
+        $h = fopen('php://temp', 'r+');
+        return new Stream($h);
+    }
+
+    private function b64urlDecode(string $s): ?string {
+        if ($s === '') return null;
+        $s = strtr($s, '-_', '+/');
+        $pad = strlen($s) % 4;
+        if ($pad) $s .= str_repeat('=', 4 - $pad);
+        $out = base64_decode($s, true);
+        return $out === false ? null : $out;
+    }
+
+    private function getClientIp(ServerRequestInterface $request): string {
+        foreach (['X-Forwarded-For','X-Real-IP','CF-Connecting-IP','X-Client-IP'] as $h) {
+            $ip = $request->getHeaderLine($h);
+            if ($ip !== '') {
+                $ip = trim(explode(',', $ip)[0]);
+                if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                    return $ip;
+                }
+            }
+        }
+        return $request->getServerParams()['REMOTE_ADDR'] ?? '0.0.0.0';
+    }
+
+    private function trackEventSafe(string $rid, string $type, ServerRequestInterface $r, array $extra = []): void {
+        try {
+            if ($rid === '') {
+                error_log("trackEventSafe: Empty RID");
+                return;
+            }
+
+            $ua = $r->getHeaderLine('User-Agent');
+            $ip = $this->getClientIp($r);
+            $referer = $r->getHeaderLine('Referer');
+
+            $meta = $extra + [
+                    'ua' => $ua,
+                    'ip' => $ip,
+                    'referer' => $referer,
+                    'timestamp' => time(),
+                ];
+
+            error_log("Tracking event: type={$type}, rid={$rid}, ip={$ip}");
+
+            [$messageId, $recipientId] = $this->resolveByRid($rid);
+
+            if ($messageId <= 0 || $recipientId <= 0) {
+                error_log("trackEventSafe: Could not resolve message/recipient for RID: {$rid}");
+                return;
+            }
+
+            // Skip dedup for testing
+            $skipDedup = true;
+
+            if (!$skipDedup) {
+                $ttl = match ($type) {
+                    'opened' => 3600,
+                    'clicked' => 300,
+                    default => 300,
+                };
+                $dedupKey = $this->buildDedupKey($type, $rid, $extra);
+                if (!$this->attemptDedup($dedupKey, $ttl)) {
+                    error_log("Event deduped: {$dedupKey}");
+                    return;
+                }
+            }
+
+            $this->persistTrackingEvent($messageId, $recipientId, $type, $meta);
+            error_log("Successfully tracked event: type={$type}, message={$messageId}, recipient={$recipientId}");
+
+        } catch (\Throwable $e) {
+            error_log("trackEventSafe ERROR: " . $e->getMessage());
+        }
+    }
+
+    private function resolveByRid(string $rid): array {
+        if ($rid === '') return [0, 0];
+        try {
+            $rows = $this->qb->duplicate()
+                ->select(['id', 'message_id'])
+                ->from('messagerecipient')
+                ->where('track_token', '=', $rid)
+                ->limit(1)
+                ->fetchAll();
+
+            $row = $rows[0] ?? null;
+            if (!$row) {
+                error_log("resolveByRid: token not found: {$rid}");
+                return [0, 0];
+            }
+
+            $messageId = (int)($row['message_id'] ?? 0);
+            $recipientId = (int)($row['id'] ?? 0);
+            error_log("resolveByRid: found msg={$messageId}, rcpt={$recipientId} for token={$rid}");
+
+            return [$messageId, $recipientId];
+
+        } catch (\Throwable $e) {
+            error_log("resolveByRid ERROR: ".$e->getMessage());
+            return [0, 0];
+        }
+    }
+
+    private function persistTrackingEvent(int $messageId, int $recipientId, string $type, array $meta): void {
+        if ($messageId <= 0 || $recipientId <= 0) {
+            error_log("persistTrackingEvent: Invalid IDs");
+            return;
+        }
+
+        try {
+            $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+            $insertId = $this->qb->duplicate()->insert('messageevent', [
+                'message_id'   => $messageId,
+                'recipient_id' => $recipientId,
+                'event_type'   => $type,
+                'meta_json'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                'created_at'   => $now->format('Y-m-d H:i:s'),
+            ]);
+            error_log("Event saved: type={$type}, msg={$messageId}, rcpt={$recipientId}, insertId={$insertId}");
+        } catch (\Throwable $e) {
+            error_log("persistTrackingEvent ERROR: " . $e->getMessage());
+        }
+    }
+
+    private function buildDedupKey(string $type, string $rid, array $extra): string {
+        $key = "ml:trk:{$type}:{$rid}";
+        if ($type === 'clicked' && isset($extra['url'])) {
+            $host = parse_url((string)$extra['url'], PHP_URL_HOST) ?: 'unknown';
+            $key .= ':' . md5($host);
+        }
+        return $key;
+    }
+
+    private function attemptDedup(string $key, int $ttl): bool {
+        // For now, allow all events (no Redis dedup)
+        return true;
     }
 }
