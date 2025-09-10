@@ -247,7 +247,7 @@ final class OutboundMailService
 
         // DIRECT DATABASE QUERY
         $pdo = $this->getDirectDbConnection();
-        $stmt = $pdo->prepare('SELECT * FROM messages WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
         $stmt->execute([$id]);
         $msgData = $stmt->fetch();
 
