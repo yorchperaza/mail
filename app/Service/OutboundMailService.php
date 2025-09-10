@@ -247,7 +247,7 @@ final class OutboundMailService
 
         // DIRECT DATABASE QUERY
         $pdo = $this->getDirectDbConnection();
-        $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT * FROM messages WHERE id = ?');
         $stmt->execute([$id]);
         $msgData = $stmt->fetch();
 
@@ -261,9 +261,9 @@ final class OutboundMailService
 
         // Build email data
         $emailData = [
-            'from_email' => $msgData['from_email'],
-            'from_name' => $msgData['from_name'],
-            'reply_to' => $msgData['reply_to'],
+            'from_email' => $envelope['fromEmail'] ?? $msgData['from_email'],  // Use envelope first
+            'from_name' => $envelope['fromName'] ?? $msgData['from_name'],
+            'reply_to' => $envelope['replyTo'] ?? $msgData['reply_to'],
             'subject' => $msgData['subject'],
             'html_body' => $msgData['html_body'],
             'text_body' => $msgData['text_body'],
@@ -272,17 +272,46 @@ final class OutboundMailService
             'bcc' => $envelope['bcc'] ?? [],
         ];
 
-        // Send using the sender service (which has the SMTP properties)
-        $res = $this->sender->sendRaw($emailData);
+        error_log('[Mail] Sending email from=' . $emailData['from_email'] . ' to=' . json_encode($emailData['to']));
+
+        // Check if sendRaw method exists, if not use the regular send method
+        if (method_exists($this->sender, 'sendRaw')) {
+            $res = $this->sender->sendRaw($emailData);
+        } else {
+            // Fallback to creating a Message object for the original send method
+            $msg = new \App\Entity\Message();
+            $msg->setId($id);
+            $msg->setFrom_email($emailData['from_email']);
+            $msg->setFrom_name($emailData['from_name']);
+            $msg->setReply_to($emailData['reply_to']);
+            $msg->setSubject($emailData['subject']);
+            $msg->setHtml_body($emailData['html_body']);
+            $msg->setText_body($emailData['text_body']);
+
+            $res = $this->sender->send($msg, $envelope);
+        }
+
+        error_log('[Mail] Send result: ' . json_encode($res));
 
         // Update message status
         $now = date('Y-m-d H:i:s');
         $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
+        $messageId = $res['message_id'] ?? null;
 
-        $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ? WHERE id = ?');
-        $updateStmt->execute([$status, $now, $id]);
+        if ($messageId) {
+            $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ?, message_id = ? WHERE id = ?');
+            $updateStmt->execute([$status, $now, $messageId, $id]);
+        } else {
+            $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ? WHERE id = ?');
+            $updateStmt->execute([$status, $now, $id]);
+        }
 
-        error_log(sprintf('[Mail] processJob completed status=%s id=%d', $status, $id));
+        // Update recipients status
+        $recipientStmt = $pdo->prepare('UPDATE messagerecipient SET status = ? WHERE message_id = ?');
+        $recipientStmt->execute([$status, $id]);
+
+        error_log(sprintf('[Mail] processJob completed status=%s id=%d error=%s',
+            $status, $id, $res['error'] ?? 'none'));
     }
 
     /* ----------------------- helpers ----------------------- */
