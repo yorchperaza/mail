@@ -404,7 +404,7 @@ final class ApiSendController
             ->where('lg.hash', '=', $listHash)
             ->andWhere('lg.company_id', '=', $companyId)
             ->andWhere('c.company_id', '=', $companyId)
-            ->andWhere('c.email', 'IS NOT', null)
+            ->whereNotNull('c.email')
             ->fetchAll();
 
         $emails = [];
@@ -435,9 +435,9 @@ final class ApiSendController
             ->where('s.hash', '=', $segmentHash)
             ->andWhere('s.company_id', '=', $companyId)
             ->andWhere('c.company_id', '=', $companyId)
-            ->andWhere('c.email', 'IS NOT', null)
-            ->andWhere('c.unsubscribed_at', 'IS', null)
-            ->andWhere('c.bounced_at', 'IS', null)
+            ->whereNotNull('c.email')
+            ->whereNull('c.unsubscribed_at')
+            ->whereNull('c.bounced_at')
             ->fetchAll();
 
         $emails = [];
@@ -847,14 +847,14 @@ final class ApiSendController
 
         try {
             $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-            $this->qb->duplicate()->insert('messageevent', [   // <-- plural
+            $insertId = $this->qb->duplicate()->insert('messageevent', [
                 'message_id'   => $messageId,
                 'recipient_id' => $recipientId,
                 'event_type'   => $type,
                 'meta_json'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                 'created_at'   => $now->format('Y-m-d H:i:s'),
             ]);
-
+            if ($insertId <= 0) { error_log("persistTrackingEvent: insert returned id=0"); }
             error_log("Event saved: {$type} msg={$messageId} rcpt={$recipientId}");
         } catch (\Throwable $e) {
             error_log("persistTrackingEvent ERROR: " . $e->getMessage());
