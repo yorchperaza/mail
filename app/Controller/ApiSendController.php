@@ -18,9 +18,6 @@ use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
 use Throwable;
-use MonkeysLegion\Http\Message\Response;
-use MonkeysLegion\Http\Message\Stream;
-use Psr\Http\Message\ResponseInterface;
 
 /**
  * MonkeysMail — Public API (API Key) send endpoints
@@ -843,9 +840,7 @@ final class ApiSendController
 
         try {
             $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-
-            // Use QueryBuilder::insert(table, data) — returns inserted id, no execute() call.
-            $this->qb->duplicate()->insert('messageevent', [
+            $this->qb->duplicate()->insert('messageevent', [   // <-- plural
                 'message_id'   => $messageId,
                 'recipient_id' => $recipientId,
                 'event_type'   => $type,
@@ -860,22 +855,20 @@ final class ApiSendController
     }
 
 
+
     /** Optional: increment message-level counters. */
     private function updateTrackingStats(int $messageId, string $type): void {
         try {
-            // Whitelist to avoid SQL injection in the raw SET
             $column = match ($type) {
                 'opened'       => 'open_count',
                 'clicked'      => 'click_count',
                 'unsubscribed' => 'unsubscribe_count',
                 default        => null,
             };
-
             if ($column === null) return;
 
-            // Use custom() for a raw increment; WHERE is added via ->where(...)
             $this->qb->duplicate()
-                ->custom("UPDATE message SET {$column} = {$column} + 1")
+                ->custom("UPDATE message SET {$column} = {$column} + 1") // <-- plural
                 ->where('id', '=', $messageId)
                 ->execute();
 
@@ -883,6 +876,7 @@ final class ApiSendController
             error_log("updateTrackingStats ERROR: " . $e->getMessage());
         }
     }
+
 
 
     /** Optional: publish live events via Redis pub/sub (non-blocking). */
@@ -907,12 +901,14 @@ final class ApiSendController
     private function resolveByRid(string $rid): array {
         if ($rid === '') return [0, 0];
         try {
-            $row = $this->qb->duplicate()
+            $rows = $this->qb->duplicate()
                 ->select(['id', 'message_id'])
-                ->from('messagerecipient')               // <-- ensure table name matches your schema
+                ->from('messagerecipient')
                 ->where('track_token', '=', $rid)
-                ->fetchOne();
+                ->limit(1)
+                ->fetchAll();
 
+            $row = $rows[0] ?? null;
             if (!$row) {
                 error_log("resolveByRid: token not found: {$rid}");
                 return [0, 0];
@@ -923,6 +919,7 @@ final class ApiSendController
             return [0, 0];
         }
     }
+
 
 // ------------------------------ Redis ---------------------------------
 
