@@ -160,7 +160,7 @@ final class MessageController
         $dryRun = (bool)($body['dryRun'] ?? false);
         $queue  = (bool)($body['queue']  ?? false);
 
-        // ---- Persist Message (queued/preview)
+        // ---- Persist Message (queued/preview scaffold)
         /** @var \App\Repository\MessageRepository $messageRepo */
         $messageRepo = $this->repos->getRepository(Message::class);
 
@@ -182,16 +182,36 @@ final class MessageController
             ->setFinal_state($dryRun ? 'preview' : ($queue ? 'queued' : 'queued'));
         $messageRepo->save($msg);
 
+        // Persist recipients (and generate per-recipient track_token/rid)
+        $recipients = $this->persistRecipients($msg, $to, $cc, $bcc);
+
+        // Local helpers for tracking HTML
+        $b64url = static function (string $s): string {
+            return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+        };
+        $trackingPixelTag = static function (string $rid): string {
+            return '<img src="https://smtp.monkeysmail.com/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
+        };
+        $rewriteLinksWithRid = static function (string $htmlIn, string $rid) use ($b64url): string {
+            if ($htmlIn === '') return $htmlIn;
+            $base = 'https://smtp.monkeysmail.com';
+            return preg_replace_callback(
+                '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
+                function($m) use ($base, $rid, $b64url) {
+                    $orig  = $m[2];
+                    $redir = $base.'/t/c/'.$rid.'?u='.$b64url($orig);
+                    return $m[1].$redir.$m[3];
+                },
+                $htmlIn
+            ) ?? $htmlIn;
+        };
+
         // ---- Preview (no send)
         if ($dryRun) {
             return new JsonResponse([
                 'status'  => 'preview',
                 'message' => $this->shapeMessage($msg),
-                'smtp'    => [
-                    'host' => 'smtp.monkeysmail.com',
-                    'port' => 587,
-                    'secure' => 'STARTTLS',
-                ],
+                'smtp'    => ['host' => 'smtp.monkeysmail.com', 'port' => 587, 'secure' => 'STARTTLS'],
                 'envelope' => [
                     'from' => $fromName ? sprintf('%s <%s>', $fromName, $fromEmail) : $fromEmail,
                     'to'   => $to,
@@ -203,23 +223,66 @@ final class MessageController
                 'text'    => $text,
                 'html'    => $html,
                 'attachments' => array_map(fn($a) => [
-                    'filename' => $a['filename'],
+                    'filename'    => $a['filename'],
                     'contentType' => $a['contentType'],
-                    'length' => strlen($a['content']),
+                    'length'      => strlen($a['content']),
                 ], $attachments),
             ]);
         }
 
-        // ---- Queue to Redis instead of immediate SMTP (optional)
+        // ---- Queue to Redis (unchanged)
         if ($queue) {
-            $queued = $this->enqueueToRedis('mail:outbound', [
-                    'message_id' => $msg->getId(),
-                    'company_id' => $company->getId(),
-                    'created_at' => $nowUtc->format(DATE_ATOM),
-                ] + $body);
+            $jobs = [];
+            foreach (['to','cc','bcc'] as $type) {
+                foreach ($recipients[$type] as $email) {
+                    $row = $this->qb->duplicate()
+                        ->select(['track_token'])
+                        ->from('messagerecipients')
+                        ->where('message_id', '=', (int)$msg->getId())
+                        ->andWhere('email', '=', $email)
+                        ->andWhere('type', '=', $type)
+                        ->fetchOne();
 
-            if (!$queued) {
-                // If queue fails, keep the message, but reflect failure
+                    $rid = (string)($row['track_token'] ?? '');
+
+                    // Per-recipient HTML with tracking
+                    $htmlForThisRcpt = $html;
+                    if ($msg->getClick_tracking()) {
+                        $htmlForThisRcpt = $rewriteLinksWithRid($htmlForThisRcpt, $rid);
+                    }
+                    if ($msg->getOpen_tracking()) {
+                        $htmlForThisRcpt .= $trackingPixelTag($rid);
+                    }
+
+                    $jobs[] = [
+                        'message_id' => $msg->getId(),
+                        'company_id' => $company->getId(),
+                        'created_at' => $nowUtc->format(DATE_ATOM),
+                        'envelope'   => [
+                            'to'      => [$email],
+                            'cc'      => [],
+                            'bcc'     => [],
+                            'headers' => $headers ?? [],
+                        ],
+                        'payload'    => [
+                            'fromEmail' => $fromEmail,
+                            'fromName'  => $fromName,
+                            'replyTo'   => $replyTo,
+                            'subject'   => $subject,
+                            'text'      => $text,
+                            'html'      => $htmlForThisRcpt,
+                            'attachments' => $attachments,
+                        ],
+                    ];
+                }
+            }
+
+            $ok = true;
+            foreach ($jobs as $job) {
+                $ok = $this->enqueueToRedis('mail:outbound', $job) && $ok;
+            }
+
+            if (!$ok) {
                 $msg->setFinal_state('queue_failed');
                 $messageRepo->save($msg);
                 return new JsonResponse([
@@ -231,46 +294,91 @@ final class MessageController
 
             return new JsonResponse([
                 'status'  => 'queued',
-                'queue'   => 'mail:outbound',
+                'queued'  => count($jobs),
                 'message' => $this->shapeMessage($msg),
             ], 202);
         }
 
-        // ---- Immediate SMTP send via PHPMailer
-        $sendResult = $this->smtpSend($msg, [
-            'fromEmail'   => $fromEmail,
-            'fromName'    => $fromName,
-            'replyTo'     => $replyTo,
-            'to'          => $to,
-            'cc'          => $cc,
-            'bcc'         => $bcc,
-            'subject'     => $subject,
-            'text'        => $text,
-            'html'        => $html,
-            'headers'     => $headers ?? [],
-            'attachments' => $attachments,
-        ]);
+        // ---- Immediate SMTP send (per-recipient so each gets its own rid)
+        $errors   = [];
+        $sent     = 0;
+        $lastMid  = null;
+
+        foreach (['to','cc','bcc'] as $type) {
+            foreach ($recipients[$type] as $email) {
+
+                // Fetch this recipient's rid
+                $row = $this->qb->duplicate()
+                    ->select(['track_token'])
+                    ->from('messagerecipients')
+                    ->where('message_id', '=', (int)$msg->getId())
+                    ->andWhere('email', '=', $email)
+                    ->andWhere('type', '=', $type)
+                    ->fetchOne();
+
+                $rid = (string)($row['track_token'] ?? '');
+
+                // Build per-recipient HTML
+                $htmlForRcpt = $html;
+                if ($msg->getClick_tracking()) {
+                    $htmlForRcpt = $rewriteLinksWithRid($htmlForRcpt, $rid);
+                }
+                if ($msg->getOpen_tracking()) {
+                    $htmlForRcpt .= $trackingPixelTag($rid);
+                }
+
+                // Single-recipient envelope
+                $env = [
+                    'fromEmail'   => $fromEmail,
+                    'fromName'    => $fromName,
+                    'replyTo'     => $replyTo,
+                    'to'          => [$email],
+                    'cc'          => [],
+                    'bcc'         => [],
+                    'subject'     => $subject,
+                    'text'        => $text,
+                    'html'        => $htmlForRcpt,
+                    'headers'     => $headers ?? [],
+                    'attachments' => $attachments,
+                ];
+
+                $res = $this->smtpSend($msg, $env);
+                if (!($res['ok'] ?? false)) {
+                    $errors[] = $email . ': ' . ($res['error'] ?? 'unknown');
+                } else {
+                    $sent++;
+                    $lastMid = $res['message_id'] ?? $lastMid;
+                }
+            }
+        }
 
         // Update DB state
-        $msg->setSent_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
-        $msg->setFinal_state($sendResult['ok'] ? 'sent' : 'failed');
-        if (!empty($sendResult['message_id'])) {
-            $msg->setMessage_id($sendResult['message_id']);
+        $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        if ($sent > 0) {
+            $msg->setSent_at($now);
         }
+        if ($lastMid) {
+            $msg->setMessage_id($lastMid); // optional: store last generated Message-ID
+        }
+        $msg->setFinal_state(
+            $sent === 0               ? 'failed'  :
+                (count($errors) > 0       ? 'partial' : 'sent')
+        );
         $messageRepo->save($msg);
 
-        if (!$sendResult['ok']) {
+        if ($sent === 0) {
             return new JsonResponse([
                 'status'  => 'error',
-                'error'   => $sendResult['error'] ?? 'Unknown SMTP error',
+                'errors'  => $errors,
                 'message' => $this->shapeMessage($msg),
             ], 502);
         }
 
         return new JsonResponse([
-            'status'        => 'sent',
-            'messageId'     => $sendResult['message_id'] ?? null,
-            'message'       => $this->shapeMessage($msg),
+            'status'  => (count($errors) > 0 ? 'partial' : 'sent'),
+            'sent'    => $sent,
+            'errors'  => $errors,
+            'message' => $this->shapeMessage($msg),
         ], 201);
     }
 
@@ -1551,5 +1659,90 @@ final class MessageController
             return null;
         }
     }
+
+    /** base64url */
+    private function b64url(string $s): string {
+        return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
+    }
+
+    /** create recipients + track tokens and return [ 'to'=>[], 'cc'=>[], 'bcc'=>[] ] of plain emails */
+    private function persistRecipients(Message $msg, array $to, array $cc, array $bcc): array
+    {
+        /** @var EntityRepository $recRepo */
+        $recRepo = $this->messageRecipientRepo;
+
+        $buckets = ['to' => $to, 'cc' => $cc, 'bcc' => $bcc];
+
+        foreach ($buckets as $type => $list) {
+            foreach ($list as $email) {
+                $rec = new MessageRecipient();
+                $rec->setMessage($msg);
+                $rec->setType($type);
+                $rec->setEmail($email);
+
+                // rid/track token: random, URL-safe
+                $rid = bin2hex(random_bytes(16));            // 32 hex chars
+                if (method_exists($rec, 'setTrack_token')) { $rec->setTrack_token($rid); }
+                elseif (method_exists($rec, 'setTrackToken')) { $rec->setTrackToken($rid); }
+
+                $recRepo->save($rec);
+            }
+        }
+
+        return ['to' => $to, 'cc' => $cc, 'bcc' => $bcc];
+    }
+
+    /** Build tracking pixel tag */
+    private function trackingPixelTag(string $rid): string
+    {
+        // Use your public base URL (no auth, GET)
+        $base = 'https://smtp.monkeysmail.com';
+        return '<img src="'.$base.'/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
+    }
+
+    /** Rewrite links inside HTML for click tracking */
+    private function rewriteLinksWithRid(string $html, string $rid): string
+    {
+        $base = 'https://smtp.monkeysmail.com';
+        return preg_replace_callback(
+            '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
+            function($m) use ($base, $rid) {
+                $orig = $m[2];
+                $redir = $base.'/t/c/'.$rid.'?u='.$this->b64url($orig);
+                return $m[1].$redir.$m[3];
+            },
+            $html
+        );
+    }
+
+    /** Inject pixel + link-rewrite per-recipient; returns map rid => renderedHtml */
+    private function renderPerRecipientHtml(Message $msg, array $recipientsByType): array
+    {
+        $html = (string)($msg->getHtml_body() ?? '');
+        $withClicks = (bool)$msg->getClick_tracking();
+        $withOpens  = (bool)$msg->getOpen_tracking();
+
+        // Load all MessageRecipient rows we just created for this message
+        $rows = $this->qb->duplicate()
+            ->select(['id','email','type','track_token'])
+            ->from('messagerecipients')
+            ->where('message_id', '=', (int)$msg->getId())
+            ->fetchAll();
+
+        $out = []; // rid => html
+        foreach ($rows as $r) {
+            $rid  = (string)$r['track_token'];
+            $h = $html;
+            if ($withClicks && $h !== '') {
+                $h = $this->rewriteLinksWithRid($h, $rid);
+            }
+            if ($withOpens && $h !== '') {
+                $h .= $this->trackingPixelTag($rid);
+            }
+            $out[$rid] = $h;
+        }
+        return $out;
+    }
+
 
 }
