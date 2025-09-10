@@ -774,48 +774,48 @@ final class ApiSendController
      * $type: 'opened' | 'clicked' | 'unsubscribed' | custom string
      */
     private function trackEventSafe(string $rid, string $type, ServerRequestInterface $r, array $extra = []): void {
+        error_log("=== trackEventSafe START ===");
+        error_log("RID: {$rid}, Type: {$type}");
+
         try {
             if ($rid === '') {
-                error_log("trackEventSafe: Empty RID");
+                error_log("FAIL: Empty RID");
                 return;
             }
 
-            $ua = $r->getHeaderLine('User-Agent');
-            $ip = $this->getClientIp($r);
-            $referer = $r->getHeaderLine('Referer');
-
-            $meta = $extra + [
-                    'ua' => $ua,
-                    'ip' => $ip,
-                    'referer' => $referer,
-                    'timestamp' => time(),
-                ];
-
+            // Log resolution attempt
+            error_log("Attempting to resolve RID...");
             [$messageId, $recipientId] = $this->resolveByRid($rid);
+            error_log("Resolved: messageId={$messageId}, recipientId={$recipientId}");
+
             if ($messageId <= 0 || $recipientId <= 0) {
-                error_log("trackEventSafe: RID not found -> {$rid}");
+                error_log("FAIL: Invalid IDs");
                 return;
             }
 
-            // Deduplicate: opens ~1h; clicks ~5m; else ~5m
+            // Log dedup attempt
             $ttl = match ($type) {
-                'opened'       => 3600,
-                'clicked'      => 300,
-                'unsubscribed' => 300,
-                default        => 300,
+                'opened' => 3600,
+                'clicked' => 300,
+                default => 300,
             };
             $dedupKey = $this->buildDedupKey($type, $rid, $extra);
+            error_log("Dedup key: {$dedupKey}, TTL: {$ttl}");
+
             if (!$this->attemptDedup($dedupKey, $ttl)) {
-                error_log("Event deduped: {$dedupKey}");
+                error_log("FAIL: Event deduplicated");
                 return;
             }
 
-            $this->persistTrackingEvent($messageId, $recipientId, $type, $meta);
-            $this->updateTrackingStats($messageId, $type);
-            $this->publishTrackingEvent($messageId, $recipientId, $type, $meta);
+            // Log persistence attempt
+            error_log("Attempting to persist event...");
+            $this->persistTrackingEvent($messageId, $recipientId, $type, $extra);
+            error_log("=== trackEventSafe SUCCESS ===");
 
         } catch (\Throwable $e) {
-            error_log("trackEventSafe ERROR: ".$e->getMessage()."\n".$e->getTraceAsString());
+            error_log("=== trackEventSafe ERROR ===");
+            error_log($e->getMessage());
+            error_log($e->getTraceAsString());
         }
     }
 
