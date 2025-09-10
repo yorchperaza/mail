@@ -244,7 +244,7 @@ final class MessageController
                 foreach ($recipients[$type] as $email) {
                     $row = $this->qb->duplicate()
                         ->select(['track_token'])
-                        ->from('messagerecipients')
+                        ->from('messagerecipient')
                         ->where('message_id', '=', (int)$msg->getId())
                         ->andWhere('email', '=', $email)
                         ->andWhere('type', '=', $type)
@@ -319,7 +319,7 @@ final class MessageController
             foreach ($recipients[$type] as $email) {
                 $row = $this->qb->duplicate()
                     ->select(['track_token'])
-                    ->from('messagerecipients')
+                    ->from('messagerecipient')
                     ->where('message_id', '=', (int)$msg->getId())
                     ->andWhere('email', '=', $email)
                     ->andWhere('type', '=', $type)
@@ -1408,7 +1408,7 @@ final class MessageController
         error_log('01 recipents');
         $qb = $this->qb->duplicate()
             ->select(['mr.message_id','mr.type','mr.email'])
-            ->from('messagerecipients', 'mr')
+            ->from('messagerecipient', 'mr')
             ->whereIn('mr.message_id', $messageIds);
 
         $rows = $qb->fetchAll();
@@ -1704,7 +1704,7 @@ final class MessageController
             // Direct query approach for better reliability
             $row = $this->qb->duplicate()
                 ->select(['id', 'message_id'])
-                ->from('messagerecipients')
+                ->from('messagerecipient')
                 ->where('track_token', '=', $rid)
                 ->fetchOne();
 
@@ -1923,7 +1923,7 @@ final class MessageController
         // Load all MessageRecipient rows we just created for this message
         $rows = $this->qb->duplicate()
             ->select(['id','email','type','track_token'])
-            ->from('messagerecipients')
+            ->from('messagerecipient')
             ->where('message_id', '=', (int)$msg->getId())
             ->fetchAll();
 
