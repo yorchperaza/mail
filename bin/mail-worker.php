@@ -47,11 +47,13 @@ $_ENV['DB_USER'] = 'mailmonkeys';
 $_ENV['DB_PASS'] = 't3mp0r4lAllyson#22';
 $_ENV['DB_DATABASE'] = 'ml_mail';
 
-$_ENV['SMTP_HOST'] = '127.0.0.1';
-$_ENV['SMTP_PORT'] = '25';
-$_ENV['SMTP_SECURE'] = '';  // Empty string
-$_ENV['SMTP_USERNAME'] = '';
-$_ENV['SMTP_PASSWORD'] = '';
+// SMTP settings - must be set BEFORE bootstrap.php
+$_ENV['SMTP_HOST'] = 'smtp.monkeysmail.com';
+$_ENV['SMTP_PORT'] = '587';
+$_ENV['SMTP_SECURE'] = 'tls';
+$_ENV['SMTP_USERNAME'] = 'smtpuser';
+$_ENV['SMTP_PASSWORD'] = 'S3cureP@ssw0rd';
+$_ENV['SMTP_TIMEOUT'] = '15';
 
 // Build the app/container (now sees DB_*, REDIS_*, SMTP_* from .env)
 $wrap = require __DIR__ . '/../bootstrap.php';
