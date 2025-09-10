@@ -669,12 +669,13 @@ final class ApiSendController
     }
 
     // =========================== Tracking Endpoints ============================
-
-    use MonkeysLegion\Http\Message\Response;
-    use MonkeysLegion\Http\Message\Stream;
-    use Psr\Http\Message\ResponseInterface;
-
-// 1x1 transparent GIF stream helper
+    /**
+     * Resolve messageId and recipientId by RID (returns [0,0] if not found).
+     * Tables used (your naming):
+     *   - message_recipient (id, message_id, recipient_id, rid, ...)
+     *   - messages (id, company_id, domain_id, ...)
+     *   - contacts (id, company_id, email, ...)
+     */
     private function mkStream(): Stream {
         $h = fopen('php://temp', 'r+');
         return new Stream($h);
