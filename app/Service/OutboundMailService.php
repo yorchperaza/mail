@@ -247,7 +247,7 @@ final class OutboundMailService
 
         // DIRECT DATABASE QUERY
         $pdo = $this->getDirectDbConnection();
-        $stmt = $pdo->prepare('SELECT * FROM messages WHERE id = ?');
+        $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
         $stmt->execute([$id]);
         $msgData = $stmt->fetch();
 
@@ -279,7 +279,7 @@ final class OutboundMailService
         $now = date('Y-m-d H:i:s');
         $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
 
-        $updateStmt = $pdo->prepare('UPDATE messages SET final_state = ?, sent_at = ? WHERE id = ?');
+        $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ? WHERE id = ?');
         $updateStmt->execute([$status, $now, $id]);
 
         error_log(sprintf('[Mail] processJob completed status=%s id=%d', $status, $id));
