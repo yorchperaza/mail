@@ -47,6 +47,9 @@ class User
 
     #[OneToOne(targetEntity: Media::class, inversedBy: 'user')]
     public ?Media $media = null;
+    
+    #[Field(type: 'datetime', nullable: true)]
+    public ?\DateTimeImmutable $lastActivityAt = null;
 
     public function __construct()
     {
@@ -115,7 +118,8 @@ class User
         return $this->status;
     }
 
-    public function setStatus(?bool $status): self {
+    public function setStatus(?bool $status): self
+    {
         $this->status = $status === null ? null : (bool) $status;
         return $this;
     }
@@ -195,6 +199,17 @@ class User
     public function removeMedia(): self
     {
         $this->media = null;
+        return $this;
+    }
+
+    public function getLastActivityAt(): ?\DateTimeImmutable
+    {
+        return $this->lastActivityAt;
+    }
+
+    public function setLastActivityAt(?\DateTimeImmutable $lastActivityAt): self
+    {
+        $this->lastActivityAt = $lastActivityAt;
         return $this;
     }
 }

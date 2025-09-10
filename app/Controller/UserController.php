@@ -553,4 +553,62 @@ final class UserController
 
         return new JsonResponse($payload);
     }
+
+    /**
+     * POST /auth/heartbeat
+     *
+     * - Bumps lastActivityAt for authenticated users.
+     * - Always returns 204 so sendBeacon/keepalive don’t retry.
+     * @throws \JsonException
+     */
+    #[Route(methods: 'POST', path: '/auth/heartbeat')]
+    public function heartbeat(ServerRequestInterface $request): JsonResponse
+    {
+        try {
+            $userId = (int)$request->getAttribute('user_id', 0);
+            if ($userId > 0) {
+                $userRepo = $this->repos->getRepository(User::class);
+                /** @var User|null $user */
+                $user = $userRepo->find($userId);
+                if ($user) {
+                    // Debounce writes: only persist if older than N seconds (e.g., 120s)
+                    $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+                    $prev = $user->getLastActivityAt();
+                    $shouldWrite = !$prev || ($now->getTimestamp() - $prev->getTimestamp() >= 120);
+
+                    if ($shouldWrite) {
+                        $user->setLastActivityAt($now);
+                        $userRepo->save($user);
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            // swallow errors; heartbeat must never explode the client
+        }
+
+        return new JsonResponse(null, 204);
+    }
+
+    /**
+     * POST /auth/refresh
+     *
+     * Stateless sliding session:
+     *  - Requires a valid Authorization: Bearer <access_jwt> (not yet expired)
+     *  - Returns a fresh short-lived access token { token }
+     *  - No refresh cookies or server storage needed
+     * @throws \JsonException
+     */
+    #[Route(methods: 'POST', path: '/auth/refresh')]
+    public function refresh(ServerRequestInterface $request): JsonResponse
+    {
+        $userId = (int)$request->getAttribute('user_id', 0);
+        if ($userId <= 0) {
+            throw new RuntimeException('Unauthorized', 401);
+        }
+
+        // 30 minutes by default; adjust if you like
+        $newToken = $this->auth->refreshAccessForUser($userId, 1800);
+
+        return new JsonResponse(['token' => $newToken], 200);
+    }
 }
