@@ -847,9 +847,9 @@ final class ApiSendController
             $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
             $insertId = $this->qb->duplicate()->insert('messageevent', [
                 'message_id'   => $messageId,
-                'event_type'   => $type,
-                'meta_json'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                'created_at'   => $now->format('Y-m-d H:i:s'),
+                'event'   => $type,
+                'payload'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                'occurred_at'   => $now->format('Y-m-d H:i:s'),
             ]);
             error_log("Event saved: type={$type}, msg={$messageId}, insertId={$insertId}");
         } catch (\Throwable $e) {
