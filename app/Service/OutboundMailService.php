@@ -153,27 +153,58 @@ final class OutboundMailService
             return $response;
         }
 
-        // ---------- enqueue job ----------
-        $job = [
-            'message_id' => $msg->getId(),
-            'company_id' => $company->getId(),
-            'domain_id'  => $domain->getId(),
-            'envelope'   => [
-                'to'          => $to,
-                'cc'          => $cc,
-                'bcc'         => $bcc,
-                'headers'     => $headers ?? [],
-                // These were missing - PhpMailerMailSender needs them:
-                'fromEmail'   => $msg->getFrom_email(),
-                'fromName'    => $msg->getFrom_name(),
-                'replyTo'     => $msg->getReply_to(),
-            ],
-            'created_at' => $nowUtc->format(DATE_ATOM),
-        ];
+        // ---------- enqueue individual jobs per recipient for tracking ----------
+        // Collect all recipients with their types
+        $allRecipients = [];
+        foreach ($to as $email) {
+            $allRecipients[] = ['email' => $email, 'type' => 'to'];
+        }
+        foreach ($cc as $email) {
+            $allRecipients[] = ['email' => $email, 'type' => 'cc'];
+        }
+        foreach ($bcc as $email) {
+            $allRecipients[] = ['email' => $email, 'type' => 'bcc'];
+        }
 
-        $entryId = $this->queue->enqueue($job);
-        error_log(sprintf('[Mail] enqueue result ok=%s entryId=%s', $entryId ? 'true' : 'false', (string)$entryId));
-        if (!$entryId) {
+        // Create and enqueue separate job for each recipient
+        $queuedCount = 0;
+        $failedCount = 0;
+        $entryIds = [];
+
+        foreach ($allRecipients as $recipient) {
+            $recipientJob = [
+                'message_id' => $msg->getId(),
+                'company_id' => $company->getId(),
+                'domain_id'  => $domain->getId(),
+                'envelope'   => [
+                    // Only ONE recipient per job to enable tracking injection
+                    'to'          => $recipient['type'] === 'to' ? [$recipient['email']] : [],
+                    'cc'          => $recipient['type'] === 'cc' ? [$recipient['email']] : [],
+                    'bcc'         => $recipient['type'] === 'bcc' ? [$recipient['email']] : [],
+                    'headers'     => $headers ?? [],
+                    'fromEmail'   => $msg->getFrom_email(),
+                    'fromName'    => $msg->getFrom_name(),
+                    'replyTo'     => $msg->getReply_to(),
+                ],
+                'created_at' => $nowUtc->format(DATE_ATOM),
+            ];
+
+            $entryId = $this->queue->enqueue($recipientJob);
+
+            if ($entryId) {
+                $queuedCount++;
+                $entryIds[] = $entryId;
+                error_log(sprintf('[Mail] Enqueued job for %s: %s (entryId=%s)',
+                    $recipient['type'], $recipient['email'], $entryId));
+            } else {
+                $failedCount++;
+                error_log(sprintf('[Mail] Failed to enqueue for %s: %s',
+                    $recipient['type'], $recipient['email']));
+            }
+        }
+
+        // Check if any jobs were queued
+        if ($queuedCount === 0) {
             $msg->setFinal_state('queue_failed');
             $messageRepo->save($msg);
             $this->addMessageEvent($msg, 'queue_failed');
@@ -186,16 +217,19 @@ final class OutboundMailService
             return $response;
         }
 
+        // Log queue status
+        error_log(sprintf('[Mail] Queue results: %d queued, %d failed out of %d total recipients',
+            $queuedCount, $failedCount, $rcptCount));
+
         // ✅ Increment monthly at enqueue time (per *queued* recipients)
-        $rcptCount = count($to) + count($cc) + count($bcc);
-        error_log(sprintf('[RateLimit][inc][enqueue] will inc monthly by rcpts=%d', $rcptCount));
-        $this->incMonthlyCount($company, $nowUtc, $rcptCount);
+        error_log(sprintf('[RateLimit][inc][enqueue] will inc monthly by rcpts=%d', $queuedCount));
+        $this->incMonthlyCount($company, $nowUtc, $queuedCount);
 
         // ✅ FIX: Also increment daily usage at enqueue time (per *queued* recipients)
         // Using 'sent' field for now since 'queued' might not exist in your DB
-        error_log(sprintf('[Usage][inc][enqueue] will inc daily sent by rcpts=%d', $rcptCount));
+        error_log(sprintf('[Usage][inc][enqueue] will inc daily sent by rcpts=%d', $queuedCount));
         try {
-            $this->upsertUsage($company, $nowUtc, ['sent' => $rcptCount]);
+            $this->upsertUsage($company, $nowUtc, ['sent' => $queuedCount]);
             error_log('[Usage][inc][enqueue] daily usage updated successfully');
         } catch (\Throwable $e) {
             error_log(sprintf('[Usage][inc][enqueue][ERROR] Failed to update daily usage: %s at %s:%d',
@@ -208,7 +242,9 @@ final class OutboundMailService
         $response = [
             'status'  => 'queued',
             'queue'   => $this->queue->getStream(),
-            'entryId' => $entryId,
+            'entryIds' => $entryIds,  // Return all entry IDs
+            'queued'  => $queuedCount,
+            'failed'  => $failedCount,
             'message' => $this->shapeMessage($msg),
         ];
 
@@ -474,20 +510,26 @@ final class OutboundMailService
         $rRepo = $this->repos->getRepository(MessageRecipient::class);
 
         $save = function(string $email, string $type) use ($msg, $status, $rRepo) {
-            // Generate tracking token for each recipient
-            $trackToken = bin2hex(random_bytes(16));  // 32 character hex token
+            $trackToken = bin2hex(random_bytes(16));
+
+            // Add verification log
+            if (empty($trackToken)) {
+                error_log('[CRITICAL] Failed to generate tracking token!');
+                return;
+            }
 
             $r = (new MessageRecipient())
                 ->setMessage($msg)
                 ->setType($type)
                 ->setEmail($email)
                 ->setStatus($status)
-                ->setTrack_token($trackToken);  // Set the tracking token!
+                ->setTrack_token($trackToken);
 
             $rRepo->save($r);
 
-            error_log(sprintf('[Mail] Recipient saved: email=%s, type=%s, token=%s',
-                $email, $type, $trackToken));
+            // Verify it was saved
+            error_log(sprintf('[Mail] Recipient saved: id=%d, email=%s, type=%s, token=%s',
+                $r->getId(), $email, $type, $trackToken));
         };
 
         foreach ($to as $e)  { $save($e, 'to'); }
