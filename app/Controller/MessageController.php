@@ -1200,13 +1200,13 @@ final class MessageController
 
         /** @var \App\Repository\MessageRepository $msgRepo */
         $msgRepo = $this->repos->getRepository(Message::class);
-
+        error_log('Using MessageRepository class: ' . get_class($msgRepo));
         // Try normalized first
         $msg = $msgRepo->findOneBy([
             'message_id' => $normalized,
             'company_id' => $company,
         ]);
-
+        error_log('Message lookup result: ' . ($msg ? 'found id=' . $msg->getId() : 'not found'));
         // Fallback: some systems store without angle brackets
         if (!$msg && str_starts_with($normalized, '<') && str_ends_with($normalized, '>')) {
             $without = substr($normalized, 1, -1);
@@ -1220,7 +1220,17 @@ final class MessageController
             throw new \RuntimeException('Message not found', 404);
         }
 
-        return new JsonResponse($this->shapeMessageDetailFromEntity($msg));
+        $include = strtolower((string)($request->getQueryParams()['include'] ?? ''));
+        $resp = $this->shapeMessageDetailFromEntity($msg);
+
+        if (in_array($include, ['events','all'], true)) {
+            $filters = $this->parseEventFilters($request->getQueryParams());
+            $events  = $this->queryMessageEvents((int)$msg->getId(), $filters);
+            $resp['events']     = $this->formatEventsResponse($events, $filters)['items'];
+            $resp['aggregates'] = $events['aggregates'];
+        }
+
+        return new JsonResponse($resp);
     }
 
 
@@ -1601,10 +1611,9 @@ final class MessageController
 
             // Direct database insert for reliability
             $this->qb->duplicate()
-                ->insertInto('messageevents')
+                ->insertInto('messageevent')
                 ->values([
                     'message_id' => $messageId,
-                    'recipient_id' => $recipientId,
                     'event_type' => $type,
                     'meta_json' => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
                     'created_at' => $now->format('Y-m-d H:i:s')
@@ -1635,7 +1644,6 @@ final class MessageController
                 $payload = json_encode([
                     'type' => $type,
                     'message_id' => $messageId,
-                    'recipient_id' => $recipientId,
                     'meta' => $meta,
                     'timestamp' => time()
                 ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -1942,5 +1950,164 @@ final class MessageController
         return $out;
     }
 
+    #[Route(methods: 'GET', path: '/companies/{hash}/messages/{id}/events')]
+    public function getEventsByMessageId(ServerRequestInterface $request): JsonResponse
+    {
+        $userId  = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+
+        $messageId = (int)$request->getAttribute('id', 0);
+        if ($messageId <= 0) throw new RuntimeException('Invalid message id', 400);
+
+        // Ensure the message belongs to the company
+        /** @var \App\Repository\MessageRepository $msgRepo */
+        $msgRepo = $this->repos->getRepository(Message::class);
+        $msg = $msgRepo->findOneBy(['id' => $messageId, 'company_id' => $company]);
+        if (!$msg) throw new RuntimeException('Message not found', 404);
+
+        $filters = $this->parseEventFilters($request->getQueryParams());
+        $data    = $this->queryMessageEvents($messageId, $filters);
+
+        return new JsonResponse($this->formatEventsResponse($data, $filters));
+    }
+
+    #[Route(methods: 'GET', path: '/companies/{hash}/messages/message-id/{messageId}/events')]
+    public function getEventsByMessageIdHeader(ServerRequestInterface $request): JsonResponse
+    {
+        $userId  = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+
+        $raw = (string)$request->getAttribute('messageId', '');
+        if ($raw === '') throw new RuntimeException('Invalid Message-ID', 400);
+
+        $normalized = $this->normalizeMessageIdFromPath($raw);
+
+        /** @var \App\Repository\MessageRepository $msgRepo */
+        $msgRepo = $this->repos->getRepository(Message::class);
+
+        $msg = $msgRepo->findOneBy(['message_id' => $normalized, 'company_id' => $company])
+            ?: (str_starts_with($normalized, '<') && str_ends_with($normalized, '>')
+                ? $msgRepo->findOneBy(['message_id' => substr($normalized,1,-1), 'company_id' => $company])
+                : null);
+
+        if (!$msg) throw new RuntimeException('Message not found', 404);
+
+        $filters = $this->parseEventFilters($request->getQueryParams());
+        $data    = $this->queryMessageEvents((int)$msg->getId(), $filters);
+
+        return new JsonResponse($this->formatEventsResponse($data, $filters));
+    }
+
+    private function parseEventFilters(array $q): array
+    {
+        return [
+            'type'      => $this->trimOrNull($q['type'] ?? null),          // e.g. opened|clicked|delivered|bounced|unsubscribed
+            'recipient' => $this->trimOrNull($q['recipient'] ?? null),     // email substring
+            'since'     => $this->parseDateOrDateTime($q['since'] ?? null),
+            'until'     => $this->parseDateOrDateTime($q['until'] ?? null, true),
+            'order'     => in_array(strtolower($q['order'] ?? 'desc'), ['asc','desc'], true) ? strtolower($q['order']) : 'desc',
+            'page'      => max(1, (int)($q['page'] ?? 1)),
+            'per_page'  => min(200, max(1, (int)($q['perPage'] ?? 50))),
+            // optional: include aggregates only (no items)
+            'only_agg'  => in_array(strtolower($q['onlyAgg'] ?? ''), ['1','true','yes'], true),
+        ];
+    }
+
+    private function queryMessageEvents(int $messageId, array $f): array
+    {
+        $qb = $this->qb->duplicate()
+            ->select([
+                'me.id',
+                'me.message_id',
+                'me.event       AS event_type',   // alias to normalize
+                'me.payload     AS meta_json',
+                'me.occurred_at AS created_at',
+                // if you DO have this column on the old table, keep it; else drop it:
+                'me.recipient_email AS recipient_email',
+            ])
+            ->from('messageevent', 'me')
+            ->where('me.message_id', '=', $messageId);
+
+        if ($f['type'])  $qb->andWhere('me.event', '=', $f['type']);
+        if ($f['since']) $qb->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
+        if ($f['until']) $qb->andWhere('me.occurred_at', '<',  $f['until']->format('Y-m-d H:i:s'));
+
+        // recipient filter only if the column exists; otherwise skip
+        if (!empty($f['recipient'])) {
+            $qb->whereLike('me.recipient_email', '%'.$f['recipient'].'%');
+        }
+
+        $total = $qb->count();
+
+        $qb->orderBy('me.occurred_at', $f['order'])
+            ->paginate($f['page'], $f['per_page']);
+
+        $rows = $f['only_agg'] ? [] : $qb->fetchAll();
+
+        // Aggregates per type (no join)
+        $aggQ = $this->qb->duplicate()
+            ->select(['me.event AS event_type', 'COUNT(*) AS cnt'])
+            ->from('messageevent', 'me')
+            ->where('me.message_id', '=', $messageId);
+
+        if ($f['since']) $aggQ->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
+        if ($f['until']) $aggQ->andWhere('me.occurred_at', '<',  $f['until']->format('Y-m-d H:i:s'));
+        if (!empty($f['recipient'])) $aggQ->andWhere('me.recipient_email', 'LIKE', '%'.$f['recipient'].'%');
+
+        $aggQ->groupBy('me.event');
+        $aggRows = $aggQ->fetchAll();
+
+        $agg = [];
+        foreach ($aggRows as $r) $agg[(string)$r['event_type']] = (int)$r['cnt'];
+
+        return [
+            'total'      => $total,
+            'page'       => $f['page'],
+            'per_page'   => $f['per_page'],
+            'order'      => $f['order'],
+            'items'      => $rows,
+            'aggregates' => $agg,
+        ];
+    }
+
+
+    private function formatEventsResponse(array $data, array $filters): array
+    {
+        $items = array_map(function(array $r) {
+            $meta = null;
+            if (isset($r['meta_json']) && is_string($r['meta_json'])) {
+                $dec = json_decode($r['meta_json'], true);
+                if (json_last_error() === JSON_ERROR_NONE) $meta = $dec;
+            }
+            return [
+                'id'        => (int)$r['id'],
+                'type'      => (string)$r['event_type'],
+                'at'        => $this->toIso8601((string)$r['created_at']),
+                'recipient' => [
+                    'id'    => isset($r['recipient_id']) ? (int)$r['recipient_id'] : null,
+                    'email' => isset($r['recipient_email']) ? (string)$r['recipient_email'] : null,
+                ],
+                'meta'      => $meta,
+            ];
+        }, $data['items']);
+
+        return [
+            'meta' => [
+                'page'      => $data['page'],
+                'perPage'   => $data['per_page'],
+                'total'     => $data['total'],
+                'order'     => $data['order'],
+                'filters'   => [
+                    'type'      => $filters['type'],
+                    'recipient' => $filters['recipient'],
+                    'since'     => $filters['since']?->format(DATE_ATOM),
+                    'until'     => $filters['until']?->format(DATE_ATOM),
+                    'onlyAgg'   => $filters['only_agg'] ?? false,
+                ],
+            ],
+            'aggregates' => $data['aggregates'],   // e.g. {"opened": 10, "clicked": 3, ...}
+            'items'      => $items,
+        ];
+    }
 
 }
