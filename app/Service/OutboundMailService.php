@@ -79,7 +79,9 @@ final class OutboundMailService
             count($to), count($cc), count($bcc), $rcptCount));
 
         $headers     = isset($payload['headers']) && is_array($payload['headers']) ? $this->sanitizeHeaders($payload['headers']) : null;
-        $tracking    = isset($payload['tracking']) && is_array($payload['tracking']) ? $payload['tracking'] : [];
+        $tracking = is_array($payload['tracking'] ?? null) ? $payload['tracking'] : [];
+        $opensEnabled  = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
+        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
         $attachments = $this->normalizeAttachments($payload['attachments'] ?? []);
         $dryRun = (bool)($payload['dryRun'] ?? false);
 
@@ -117,8 +119,8 @@ final class OutboundMailService
             ->setHtml_body($html)
             ->setText_body($text)
             ->setHeaders($headers)
-            ->setOpen_tracking(isset($tracking['opens']) ? (bool)$tracking['opens'] : null)
-            ->setClick_tracking(isset($tracking['clicks']) ? (bool)$tracking['clicks'] : null)
+            ->setOpen_tracking($opensEnabled)
+            ->setClick_tracking($clicksEnabled)
             ->setAttachments(!empty($attachments) ? $attachments : null)
             ->setCreated_at($nowUtc)
             ->setQueued_at($nowUtc)
@@ -357,7 +359,7 @@ final class OutboundMailService
                 $trackToken = $recipientTokens[$recipientEmail] ?? null;
 
                 if ($trackToken && $htmlBody) {
-                    $base = 'https://smtp.monkeysmail.com';
+                    $base = getenv('TRACK_BASE_URL') ?: 'https://smtp.monkeysmail.com';
 
                     // Add click tracking
                     if ($clicksEnabled) {
@@ -374,8 +376,18 @@ final class OutboundMailService
 
                     // Add open tracking pixel
                     if ($opensEnabled) {
-                        $pixel = '<img src="' . $base . '/t/o/' . $trackToken . '.gif" width="1" height="1" style="display:none" alt=""/>';
-                        $htmlBody .= $pixel;
+                        $pixelUrl = $base . '/t/o/' . $trackToken; // <- extensionless
+                        $pixel = '<img src="' . $pixelUrl . '" width="1" height="1" alt="" ' .
+                            'style="display:block;border:0;outline:none;text-decoration:none;width:1px;height:1px;max-width:1px;opacity:0;" />';
+
+                        if (is_string($htmlBody) && $htmlBody !== '') {
+                            // Try to place before </body>; fallback to append
+                            $count = 0;
+                            $htmlBody = preg_replace('/<\/body\s*>/i', $pixel . '</body>', $htmlBody, 1, $count);
+                            if ($count === 0) {
+                                $htmlBody .= $pixel;
+                            }
+                        }
                     }
 
                     error_log('[Mail] Tracking injected for ' . $recipientEmail . ' with token ' . $trackToken);
