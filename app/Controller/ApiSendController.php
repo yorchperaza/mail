@@ -694,29 +694,22 @@ final class ApiSendController
 //    }
 
 // Legacy .gif route (keep it, but also allow HEAD)
-    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}')]
+    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}.gif')]
     public function trackOpen(ServerRequestInterface $request): ResponseInterface {
         $rid = (string)($request->getAttribute('rid') ?? '');
-        error_log("Track open attempt for RID: " . $rid . " method=" . $request->getMethod());
-
         $this->trackEventSafe($rid, 'opened', $request);
 
         $gif  = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
         $body = $this->mkStream(); $body->write($gif);
 
-        return new Response(
-            $body,
-            200,
-            [
-                'Content-Type'   => 'image/gif',
-                'Cache-Control'  => 'no-store, no-cache, must-revalidate, max-age=0',
-                'Pragma'         => 'no-cache',
-                'Expires'        => '0',
-                'Content-Length' => (string)strlen($gif),
-            ]
-        );
+        return new Response($body, 200, [
+            'Content-Type'   => 'image/gif',
+            'Cache-Control'  => 'no-store, no-cache, must-revalidate, max-age=0',
+            'Pragma'         => 'no-cache',
+            'Expires'        => '0',
+            'Content-Length' => (string)strlen($gif),
+        ]);
     }
-
 
     #[Route(methods: 'GET', path: '/t/c/{rid}')]
     public function trackClick(ServerRequestInterface $request): ResponseInterface {
