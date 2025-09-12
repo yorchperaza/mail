@@ -786,60 +786,47 @@ final class ApiSendController
 
     private function trackEventSafe(string $rid, string $type, ServerRequestInterface $r, array $extra = []): void {
         try {
-            if ($rid === '') {
-                error_log("trackEventSafe: Empty RID");
-                return;
-            }
+            if ($rid === '') { error_log("trackEventSafe: Empty RID"); return; }
 
             $ua = $r->getHeaderLine('User-Agent');
             $ip = $this->getClientIp($r);
             $referer = $r->getHeaderLine('Referer');
 
-            $meta = $extra + [
-                    'ua' => $ua,
-                    'ip' => $ip,
-                    'referer' => $referer,
-                    'timestamp' => time(),
-                ];
-
-            error_log("Tracking event: type={$type}, rid={$rid}, ip={$ip}");
-
-            [$messageId, $recipientId] = $this->resolveByRid($rid);
+            [$messageId, $recipientId, $recipientEmail] = $this->resolveByRid($rid);
 
             if ($messageId <= 0 || $recipientId <= 0) {
                 error_log("trackEventSafe: Could not resolve message/recipient for RID: {$rid}");
                 return;
             }
 
-            // Skip dedup for testing
-            $skipDedup = true;
+            // Enrich payload
+            $meta = $extra + [
+                    'ua'        => $ua,
+                    'ip'        => $ip,
+                    'referer'   => $referer,
+                    'timestamp' => time(),
+                    'rid'       => $rid,
+                    'recipient' => [
+                        'id'    => $recipientId,
+                        'email' => $recipientEmail,
+                    ],
+                ];
 
-            if (!$skipDedup) {
-                $ttl = match ($type) {
-                    'opened' => 3600,
-                    'clicked' => 300,
-                    default => 300,
-                };
-                $dedupKey = $this->buildDedupKey($type, $rid, $extra);
-                if (!$this->attemptDedup($dedupKey, $ttl)) {
-                    error_log("Event deduped: {$dedupKey}");
-                    return;
-                }
-            }
-
-            $this->persistTrackingEvent($messageId, $recipientId, $type, $meta);
-            error_log("Successfully tracked event: type={$type}, message={$messageId}, recipient={$recipientId}");
+            // (optional dedup skipped per your flag)
+            $this->persistTrackingEvent($messageId, $recipientId, $recipientEmail, $type, $meta);
+            error_log("Successfully tracked event: type={$type}, message={$messageId}, recipient={$recipientId} ({$recipientEmail})");
 
         } catch (\Throwable $e) {
             error_log("trackEventSafe ERROR: " . $e->getMessage());
         }
     }
 
+
     private function resolveByRid(string $rid): array {
-        if ($rid === '') return [0, 0];
+        if ($rid === '') return [0, 0, ''];
         try {
             $rows = $this->qb->duplicate()
-                ->select(['id', 'message_id'])
+                ->select(['id', 'message_id', 'email'])   // 👈 add email
                 ->from('messagerecipient')
                 ->where('track_token', '=', $rid)
                 ->limit(1)
@@ -848,22 +835,30 @@ final class ApiSendController
             $row = $rows[0] ?? null;
             if (!$row) {
                 error_log("resolveByRid: token not found: {$rid}");
-                return [0, 0];
+                return [0, 0, ''];
             }
 
-            $messageId = (int)($row['message_id'] ?? 0);
-            $recipientId = (int)($row['id'] ?? 0);
-            error_log("resolveByRid: found msg={$messageId}, rcpt={$recipientId} for token={$rid}");
+            $messageId     = (int)($row['message_id'] ?? 0);
+            $recipientId   = (int)($row['id'] ?? 0);
+            $recipientMail = (string)($row['email'] ?? '');
+            error_log("resolveByRid: found msg={$messageId}, rcpt={$recipientId}, email={$recipientMail} for token={$rid}");
 
-            return [$messageId, $recipientId];
+            return [$messageId, $recipientId, $recipientMail];
 
         } catch (\Throwable $e) {
             error_log("resolveByRid ERROR: ".$e->getMessage());
-            return [0, 0];
+            return [0, 0, ''];
         }
     }
 
-    private function persistTrackingEvent(int $messageId, int $recipientId, string $type, array $meta): void {
+
+    private function persistTrackingEvent(
+        int $messageId,
+        int $recipientId,
+        string $recipientEmail,
+        string $type,
+        array $meta
+    ): void {
         if ($messageId <= 0 || $recipientId <= 0) {
             error_log("persistTrackingEvent: Invalid IDs");
             return;
@@ -871,17 +866,23 @@ final class ApiSendController
 
         try {
             $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+            // If your table also has recipient_id, add it too. Your entity suggests recipient_email exists.
             $insertId = $this->qb->duplicate()->insert('messageevent', [
-                'message_id'   => $messageId,
-                'event'   => $type,
-                'payload'    => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
-                'occurred_at'   => $now->format('Y-m-d H:i:s'),
+                'message_id'      => $messageId,
+                'event'           => $type,
+                'recipient_email' => $recipientEmail,                                 // 👈 write email
+                // 'recipient_id'  => $recipientId,                                   // 👈 uncomment if column exists
+                'payload'         => json_encode($meta, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+                'occurred_at'     => $now->format('Y-m-d H:i:s'),
             ]);
-            error_log("Event saved: type={$type}, msg={$messageId}, insertId={$insertId}");
+
+            error_log("Event saved: type={$type}, msg={$messageId}, rcptEmail={$recipientEmail}, insertId={$insertId}");
         } catch (\Throwable $e) {
             error_log("persistTrackingEvent ERROR: " . $e->getMessage());
         }
     }
+
 
     private function buildDedupKey(string $type, string $rid, array $extra): string {
         $key = "ml:trk:{$type}:{$rid}";
