@@ -667,16 +667,18 @@ final class ApiSendController
 
     // ======================== Tracking Endpoints ============================
 
-    #[Route(methods: 'GET', path: '/t/o/{rid}')]
+// No-extension version
+    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}')]
     public function trackOpenNoExt(ServerRequestInterface $request): ResponseInterface {
         $rid = (string)($request->getAttribute('rid') ?? '');
-        error_log("Track open (no-ext) attempt for RID: " . $rid);
+        error_log("Track open (no-ext) attempt for RID: " . $rid . " method=" . $request->getMethod());
 
+        // Record the open even on HEAD (important!)
         $this->trackEventSafe($rid, 'opened', $request);
 
-        $gif = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
-        $body = $this->mkStream();
-        $body->write($gif);
+        // Build a 1x1 GIF response; body is harmless on HEAD (server can drop it)
+        $gif  = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+        $body = $this->mkStream(); $body->write($gif);
 
         return new Response(
             $body,
@@ -687,35 +689,34 @@ final class ApiSendController
                 'Pragma'         => 'no-cache',
                 'Expires'        => '0',
                 'Content-Length' => (string)strlen($gif),
-                'Content-Disposition' => 'inline; filename="o.gif"',
             ]
         );
     }
 
-// (keep your existing /t/o/{rid}.gif route, just add Content-Length)
-    #[Route(methods: 'GET', path: '/t/o/{rid}.gif')]
+// Legacy .gif route (keep it, but also allow HEAD)
+    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}.gif')]
     public function trackOpen(ServerRequestInterface $request): ResponseInterface {
         $rid = (string)($request->getAttribute('rid') ?? '');
-        error_log("Track open attempt for RID: " . $rid);
+        error_log("Track open attempt for RID: " . $rid . " method=" . $request->getMethod());
 
         $this->trackEventSafe($rid, 'opened', $request);
 
-        $gif = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
-        $body = $this->mkStream();
-        $body->write($gif);
+        $gif  = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
+        $body = $this->mkStream(); $body->write($gif);
 
         return new Response(
             $body,
             200,
             [
-                'Content-Type'  => 'image/gif',
-                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
-                'Pragma'        => 'no-cache',
-                'Expires'       => '0',
-                'Content-Length'=> (string)strlen($gif),
+                'Content-Type'   => 'image/gif',
+                'Cache-Control'  => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma'         => 'no-cache',
+                'Expires'        => '0',
+                'Content-Length' => (string)strlen($gif),
             ]
         );
     }
+
 
     #[Route(methods: 'GET', path: '/t/c/{rid}')]
     public function trackClick(ServerRequestInterface $request): ResponseInterface {
