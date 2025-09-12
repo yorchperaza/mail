@@ -173,7 +173,7 @@ final class OutboundMailService
         // Create and enqueue separate job for each recipient
         $queuedCount = 0;
         $failedCount = 0;
-        $entryIds = [];
+        $entryIds    = [];
 
         foreach ($allRecipients as $recipient) {
             $recipientJob = [
@@ -182,13 +182,13 @@ final class OutboundMailService
                 'domain_id'  => $domain->getId(),
                 'envelope'   => [
                     // Only ONE recipient per job to enable tracking injection
-                    'to'          => $recipient['type'] === 'to' ? [$recipient['email']] : [],
-                    'cc'          => $recipient['type'] === 'cc' ? [$recipient['email']] : [],
-                    'bcc'         => $recipient['type'] === 'bcc' ? [$recipient['email']] : [],
-                    'headers'     => $headers ?? [],
-                    'fromEmail'   => $msg->getFrom_email(),
-                    'fromName'    => $msg->getFrom_name(),
-                    'replyTo'     => $msg->getReply_to(),
+                    'to'        => $recipient['type'] === 'to'  ? [$recipient['email']]  : [],
+                    'cc'        => $recipient['type'] === 'cc'  ? [$recipient['email']]  : [],
+                    'bcc'       => $recipient['type'] === 'bcc' ? [$recipient['email']]  : [],
+                    'headers'   => $headers ?? [],
+                    'fromEmail' => $msg->getFrom_email(),
+                    'fromName'  => $msg->getFrom_name(),
+                    'replyTo'   => $msg->getReply_to(),
                 ],
                 'created_at' => $nowUtc->format(DATE_ATOM),
             ];
@@ -196,20 +196,32 @@ final class OutboundMailService
             $entryId = $this->queue->enqueue($recipientJob);
 
             if ($entryId) {
-                // already incrementing counters, etc…
+                $queuedCount++;
+                $entryIds[] = $entryId;
+
+                // per-recipient queued event
                 $this->addMessageEvent(
                     $msg,
                     'queued',
                     $recipient['email'],
                     ['rcptType' => $recipient['type'], 'queueEntryId' => $entryId]
                 );
+
+                error_log(sprintf('[Mail] Enqueued job for %s: %s (entryId=%s)',
+                    $recipient['type'], $recipient['email'], $entryId));
             } else {
+                $failedCount++;
+
+                // per-recipient queue_failed event
                 $this->addMessageEvent(
                     $msg,
                     'queue_failed',
                     $recipient['email'],
                     ['rcptType' => $recipient['type']]
                 );
+
+                error_log(sprintf('[Mail] Failed to enqueue for %s: %s',
+                    $recipient['type'], $recipient['email']));
             }
         }
 
