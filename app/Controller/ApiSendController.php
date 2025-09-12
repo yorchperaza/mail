@@ -694,9 +694,11 @@ final class ApiSendController
 //    }
 
 // Legacy .gif route (keep it, but also allow HEAD)
-    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}.gif')]
+// Keep GET
+    #[Route(methods: 'GET', path: '/t/o/{rid}.gif')]
+    #[Route(methods: 'HEAD', path: '/t/o/{rid}.gif')]
     public function trackOpen(ServerRequestInterface $request): ResponseInterface {
-        $rid = (string)($request->getAttribute('rid') ?? '');
+        $rid  = (string)($request->getAttribute('rid') ?? '');
         $type = $request->getMethod() === 'HEAD' ? 'open_proxy' : 'opened';
         $this->trackEventSafe($rid, $type, $request);
 
@@ -709,8 +711,10 @@ final class ApiSendController
             'Pragma'         => 'no-cache',
             'Expires'        => '0',
             'Content-Length' => (string)strlen($gif),
+            'X-Track-Method' => $request->getMethod(), // quick debug header
         ]);
     }
+
 
     #[Route(methods: 'GET', path: '/t/c/{rid}')]
     public function trackClick(ServerRequestInterface $request): ResponseInterface {
