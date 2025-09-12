@@ -132,9 +132,11 @@ final class OutboundMailService
 
         $this->persistRecipients($msg, $to, $cc, $bcc, $dryRun ? 'preview' : 'queued');
         error_log(sprintf('[Mail] recipients persisted message_id=%d', $msg->getId()));
-        $this->addMessageEvent($msg, $dryRun ? 'preview' : 'queued');
 
         if ($dryRun) {
+            foreach ($to as $e)  { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'to']); }
+            foreach ($cc as $e)  { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'cc']); }
+            foreach ($bcc as $e) { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'bcc']); }
             error_log('[Mail] dryRun=true returning preview');
             $response = [
                 'status'  => 'preview',
@@ -194,14 +196,20 @@ final class OutboundMailService
             $entryId = $this->queue->enqueue($recipientJob);
 
             if ($entryId) {
-                $queuedCount++;
-                $entryIds[] = $entryId;
-                error_log(sprintf('[Mail] Enqueued job for %s: %s (entryId=%s)',
-                    $recipient['type'], $recipient['email'], $entryId));
+                // already incrementing counters, etc…
+                $this->addMessageEvent(
+                    $msg,
+                    'queued',
+                    $recipient['email'],
+                    ['rcptType' => $recipient['type'], 'queueEntryId' => $entryId]
+                );
             } else {
-                $failedCount++;
-                error_log(sprintf('[Mail] Failed to enqueue for %s: %s',
-                    $recipient['type'], $recipient['email']));
+                $this->addMessageEvent(
+                    $msg,
+                    'queue_failed',
+                    $recipient['email'],
+                    ['rcptType' => $recipient['type']]
+                );
             }
         }
 
