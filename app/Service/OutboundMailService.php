@@ -378,7 +378,7 @@ final class OutboundMailService
                     $base = getenv('TRACK_BASE_URL') ?: 'https://smtp.monkeysmail.com';
 
                     if ($opensEnabled) {
-                        $pixelUrl = $base . '/t/o/' . rawurlencode($trackToken); // <- no .gif
+                        $pixelUrl = rtrim($base, '/') . '/t/o/' . rawurlencode($trackToken) . '.gif';
                         $pixel = '<img src="' . $pixelUrl . '" width="1" height="1" alt="" ' .
                             'style="display:block;border:0;outline:none;text-decoration:none;width:1px;height:1px;max-width:1px;opacity:0;" />';
 
