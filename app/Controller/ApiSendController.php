@@ -694,7 +694,7 @@ final class ApiSendController
 //    }
 
 // Legacy .gif route (keep it, but also allow HEAD)
-    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}.gif')]
+    #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}')]
     public function trackOpen(ServerRequestInterface $request): ResponseInterface {
         $rid = (string)($request->getAttribute('rid') ?? '');
         error_log("Track open attempt for RID: " . $rid . " method=" . $request->getMethod());
