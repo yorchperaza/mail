@@ -5,7 +5,7 @@ return [
     'allow_origin'  => '*',
 
     // Which methods to permit.
-    'allow_methods' => ['GET','POST','PUT','DELETE','OPTIONS'],
+    'allow_methods' => ['GET','POST','PUT','DELETE','OPTIONS', 'PATCH', 'HEAD'],
 
     // Which request headers browsers may send.
     'allow_headers' => ['Content-Type','Authorization'],
