@@ -335,7 +335,7 @@ final class OutboundMailService
             $envelope = (array)($job['envelope'] ?? []);
 
             // Get tracking settings
-            $opensEnabled = (bool)($msgData['open_tracking'] ?? false);
+            $opensEnabled  = (bool)($msgData['open_tracking'] ?? false);
             $clicksEnabled = (bool)($msgData['click_tracking'] ?? false);
 
             // Get ALL recipients with their tracking tokens
@@ -409,14 +409,14 @@ final class OutboundMailService
             // Build email data with tracking-enabled HTML
             $emailData = [
                 'from_email' => $envelope['fromEmail'] ?? $msgData['from_email'],
-                'from_name' => $envelope['fromName'] ?? $msgData['from_name'],
-                'reply_to' => $envelope['replyTo'] ?? $msgData['reply_to'],
-                'subject' => $msgData['subject'],
-                'html_body' => $htmlBody,  // Use tracking-enabled HTML
-                'text_body' => $msgData['text_body'],
-                'to' => $envelope['to'] ?? [],
-                'cc' => $envelope['cc'] ?? [],
-                'bcc' => $envelope['bcc'] ?? [],
+                'from_name'  => $envelope['fromName'] ?? $msgData['from_name'],
+                'reply_to'   => $envelope['replyTo'] ?? $msgData['reply_to'],
+                'subject'    => $msgData['subject'],
+                'html_body'  => $htmlBody,  // Use tracking-enabled HTML
+                'text_body'  => $msgData['text_body'],
+                'to'         => $envelope['to']  ?? [],
+                'cc'         => $envelope['cc']  ?? [],
+                'bcc'        => $envelope['bcc'] ?? [],
             ];
 
             // Handle attachments if present
@@ -433,8 +433,7 @@ final class OutboundMailService
             if (method_exists($this->sender, 'sendRaw')) {
                 $res = $this->sender->sendRaw($emailData);
             } else {
-                $msg = new \App\Entity\Message();
-                $msg->setId($id);
+                $msg = new Message();
                 $msg->setFrom_email($emailData['from_email']);
                 $msg->setFrom_name($emailData['from_name']);
                 $msg->setReply_to($emailData['reply_to']);
@@ -448,8 +447,8 @@ final class OutboundMailService
             error_log('[Mail] Send result: ' . json_encode($res));
 
             // Update message status
-            $now = date('Y-m-d H:i:s');
-            $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
+            $now       = date('Y-m-d H:i:s');
+            $status    = ($res['ok'] ?? false) ? 'sent' : 'failed';
             $messageId = $res['message_id'] ?? null;
 
             if ($messageId) {
@@ -464,6 +463,28 @@ final class OutboundMailService
             $recipientStmt = $pdo->prepare('UPDATE messagerecipient SET status = ? WHERE message_id = ?');
             $recipientStmt->execute([$status, $id]);
 
+            /* ------------------- NEW: per-recipient event ------------------- */
+            // Determine the single recipient this job targeted
+            $recipientEmail =
+                ($envelope['to'][0]  ?? null) ?:
+                    ($envelope['cc'][0]  ?? null) ?:
+                        ($envelope['bcc'][0] ?? null);
+
+            // Create a thin Message entity with id for the relation
+            $msgEntity = new Message();
+
+            // Persist event with recipient
+            $this->addMessageEvent(
+                $msgEntity,
+                $status,                          // 'sent' or 'failed'
+                $recipientEmail,
+                [
+                    'providerMessageId' => $messageId ?? null,
+                    'error'             => $res['error'] ?? null,
+                ]
+            );
+            /* ---------------------------------------------------------------- */
+
             error_log(sprintf('[Mail] processJob completed status=%s id=%d', $status, $id));
 
         } catch (\PDOException $e) {
@@ -474,6 +495,7 @@ final class OutboundMailService
             throw $e;
         }
     }
+
     /* ----------------------- helpers ----------------------- */
 
     private function normalizeEmails(array $list): array
