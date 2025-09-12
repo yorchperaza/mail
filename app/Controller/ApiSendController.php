@@ -697,7 +697,8 @@ final class ApiSendController
     #[Route(methods: ['GET','HEAD'], path: '/t/o/{rid}.gif')]
     public function trackOpen(ServerRequestInterface $request): ResponseInterface {
         $rid = (string)($request->getAttribute('rid') ?? '');
-        $this->trackEventSafe($rid, 'opened', $request);
+        $type = $request->getMethod() === 'HEAD' ? 'open_proxy' : 'opened';
+        $this->trackEventSafe($rid, $type, $request);
 
         $gif  = base64_decode('R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==');
         $body = $this->mkStream(); $body->write($gif);
