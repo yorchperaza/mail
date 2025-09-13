@@ -364,11 +364,7 @@ final class InboundMessageController
 
             $primaryRcpt = $rcpts[0];
 
-            // 1) store file
-            $path = $this->storeRaw($mime);
-            $this->lg($rid, "Stored MIME", ['path' => $path]);
-
-            // 2) parse headers
+            // 1) parse minimal headers + auth results
             [$fromHdr, $subject, $dkim, $dmarc, $arc] = $this->parseFromMime($mime);
             if ($authResults) {
                 [$dkim2, $dmarc2, $arc2] = $this->parseAuthResultsString($authResults);
@@ -376,28 +372,102 @@ final class InboundMessageController
                 $dmarc = $dmarc2 ?? $dmarc;
                 $arc   = $arc2   ?? $arc;
             }
-            $this->lg($rid, "Parsed headers", [
-                'from' => $fromHdr, 'subject' => $subject,
-                'dkim' => $dkim, 'dmarc' => $dmarc, 'arc' => $arc
-            ]);
+            $top = $this->parseTopHeaders($mime); // ['map'=>[], 'raw'=>string]
+            $headers = $top['map'];
 
-            // 3) resolve domain/company
+            // 2) resolve domain/company
             [$domain, $company, $domainPart] = $this->resolveDomainAndCompanyByRcpt($primaryRcpt);
             $this->lg($rid, "Resolved domain/company", [
                 'rcpt' => $primaryRcpt, 'domainPart' => $domainPart,
                 'domainId' => $domain?->getId(), 'companyId' => $company?->getId()
             ]);
-
             if (!$domain || !$company) {
-                // If you want to park instead of reject, comment the next line and set $domain/$company to nulls.
                 throw new RuntimeException("Unknown inbound domain '{$domainPart}'", 404);
             }
 
-            // 4) save DB
+            // 3) load + sort routes (priority asc, newest first within same priority)
+            /** @var \App\Repository\InboundRouteRepository $routeRepo */
+            $routeRepo = $this->repos->getRepository(\App\Entity\InboundRoute::class);
+            $allRoutes = array_values(array_filter(
+                $routeRepo->findBy([]),
+                fn($r2) => $r2->getCompany()?->getId() === $company->getId()
+            ));
+            $routes = $this->sortRoutes($allRoutes);
+
+            // TLS info (optional; LMTP/SMTP proxy can set it)
+            $tls = null;
+            $xtls = $r->getHeaderLine('X-Transport-TLS');
+            if ($xtls !== '') $tls = $this->boolish($xtls);
+
+            // 4) evaluate routes
+            $ctx = [
+                'companyId'  => $company->getId(),
+                'domainId'   => $domain->getId(),
+                'rcpts'      => array_map('strtolower', $rcpts),
+                'sender'     => strtolower(trim((string)($fromHdr ?? $mailFrom ?? ''))),
+                'headers'    => $headers,
+                'spam_score' => $spamScore,
+                'dkim'       => $dkim,  // 'pass'|'fail'|'none'|null
+                'tls'        => $tls,   // true|false|null
+            ];
+
+            $shouldStore   = false;
+            $storeNotifies = [];
+            $forwards      = [];
+            $matchedIds    = [];
+
+            foreach ($routes as $route) {
+                if (!$this->routeMatches($route, $ctx)) continue;
+
+                $matchedIds[] = $route->getId();
+                $action = strtolower((string)$route->getAction());
+                $dest   = $route->getDestination() ?? [];
+
+                if ($action === 'store') {
+                    $shouldStore = true;
+                    $notify = (array)($dest['notify'] ?? []);
+                    foreach ($notify as $u) {
+                        $u = trim((string)$u);
+                        if ($u !== '') $storeNotifies[] = $u;
+                    }
+                    continue;
+                }
+
+                if ($action === 'forward') {
+                    $to = (array)($dest['to'] ?? []);
+                    foreach ($to as $d) {
+                        $d = trim((string)$d);
+                        if ($d !== '') $forwards[] = $d;
+                    }
+                    continue;
+                }
+
+                if ($action === 'stop') {
+                    break; // stop evaluating further routes
+                }
+            }
+
+            // 5) perform non-store side effects (placeholders)
+            if (!empty($forwards)) {
+                $this->lg($rid, "Forward placeholders", ['to' => $forwards]);
+                // TODO: queue SMTP/webhook forwards
+            }
+
+            if (!$shouldStore) {
+                // Nothing asked to be stored → acknowledge without persisting
+                $this->lg($rid, "NO STORE (204)", ['matched' => $matchedIds]);
+                return new JsonResponse(null, 204);
+            }
+
+            // 6) store raw + DB only now (follows your original code)
+            $path = $this->storeRaw($mime);
+
+            $this->lg($rid, "Stored MIME", ['path' => $path]);
+
             /** @var \App\Repository\InboundMessageRepository $repo */
             $repo = $this->repos->getRepository(InboundMessage::class);
 
-            $msg = (new InboundMessage())
+            $msg = new InboundMessage()
                 ->setCompany($company)
                 ->setDomain($domain)
                 ->setFrom_email($fromHdr ?? $mailFrom)
@@ -410,24 +480,30 @@ final class InboundMessageController
                 ->setReceived_at(new \DateTimeImmutable($receivedAt ?: 'now', new \DateTimeZone('UTC')));
 
             $repo->save($msg);
-            $this->lg($rid, "DB saved", ['msgId' => $msg->getId()]);
+            $this->lg($rid, "DB saved", ['msgId' => $msg->getId(), 'matchedRoutes' => $matchedIds]);
+
+            // optional: notify webhooks (non-blocking recommended)
+            foreach ($storeNotifies as $u) {
+                $this->lg($rid, "Notify placeholder", ['url' => $u, 'msgId' => $msg->getId()]);
+            }
 
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
             $this->lg($rid, "OK 201", ['dt_ms' => $dt]);
 
             return new JsonResponse([
-                'id'           => $msg->getId(),
-                'domain'       => $domain->getDomain(),
-                'company_id'   => $company->getId(),
-                'from'         => $msg->getFrom_email(),
-                'subject'      => $msg->getSubject(),
-                'dkim'         => $msg->getDkim_result(),
-                'dmarc'        => $msg->getDmarc_result(),
-                'arc'          => $msg->getArc_result(),
-                'spam_score'   => $msg->getSpam_score(),
-                'raw_mime_ref' => $msg->getRaw_mime_ref(),
-                'received_at'  => $msg->getReceived_at()?->format(\DateTimeInterface::ATOM),
-                'traceId'      => $rid,
+                'id'             => $msg->getId(),
+                'domain'         => $domain->getDomain(),
+                'company_id'     => $company->getId(),
+                'from'           => $msg->getFrom_email(),
+                'subject'        => $msg->getSubject(),
+                'dkim'           => $msg->getDkim_result(),
+                'dmarc'          => $msg->getDmarc_result(),
+                'arc'            => $msg->getArc_result(),
+                'spam_score'     => $msg->getSpam_score(),
+                'raw_mime_ref'   => $msg->getRaw_mime_ref(),
+                'received_at'    => $msg->getReceived_at()?->format(\DateTimeInterface::ATOM),
+                'matched_routes' => $matchedIds,
+                'traceId'        => $rid,
             ], 201);
 
         } catch (\Throwable $e) {
@@ -652,5 +728,114 @@ final class InboundMessageController
             'mime_b64' => base64_encode($mime),
         ]);
     }
+
+    /** @return array{map: array<string,string>, raw: string} */
+    private function parseTopHeaders(string $mime): array
+    {
+        [$rawHdrs] = preg_split("/\r?\n\r?\n/", $mime, 2);
+        $rawHdrs = (string)($rawHdrs ?? '');
+        // unfold
+        $unfolded = preg_replace("/\r?\n[ \t]+/", ' ', $rawHdrs) ?? $rawHdrs;
+        $map = [];
+        foreach (explode("\n", $unfolded) as $line) {
+            if (!str_contains($line, ':')) continue;
+            [$k, $v] = array_map('trim', explode(':', $line, 2));
+            $lk = strtolower($k);
+            // first wins (except Received, but we only need single-value headers for matching)
+            if (!isset($map[$lk])) $map[$lk] = $v;
+        }
+        return ['map' => $map, 'raw' => $unfolded];
+    }
+
+    private function globMatch(string $pattern, string $subject, bool $caseInsensitive = true): bool
+    {
+        // Translate simple * ? globs to regex
+        $re = '/^' . str_replace(['\*','\?'], ['.*','.?'], preg_quote($pattern, '/')) . '$/';
+        return (bool)preg_match($caseInsensitive ? $re.'i' : $re, $subject);
+    }
+
+    /** Normalize boolean-ish header value */
+    private function boolish(string $s): bool
+    {
+        $s = strtolower(trim($s));
+        return in_array($s, ['1','true','on','yes','y'], true);
+    }
+
+    /**
+     * Decide if a single route matches the message + constraints.
+     * @param \App\Entity\InboundRoute $route
+     * @param array $ctx [
+     *   'companyId'=>int,'domainId'=>?int,'rcpts'=>string[],'sender'=>?string,
+     *   'headers'=>array<string,string>, 'spam_score'=>?float, 'dkim'=>'pass|fail|none|null',
+     *   'tls'=>?bool
+     * ]
+     */
+    private function routeMatches(\App\Entity\InboundRoute $route, array $ctx): bool
+    {
+        // domain scope (route domain must match if set)
+        $rid = $route->getDomain()?->getId();
+        if ($rid !== null && $rid !== ($ctx['domainId'] ?? null)) return false;
+
+        // constraints
+        if (($route->getDkim_required() ?? 0) === 1 && ($ctx['dkim'] ?? null) !== 'pass') return false;
+        if (($route->getTls_required()  ?? 0) === 1 && ($ctx['tls']  ?? null) !== true)  return false;
+
+        $thr = $route->getSpam_threshold();
+        if ($thr !== null && ($ctx['spam_score'] ?? INF) > $thr) return false;
+
+        $pat = trim((string)($route->getPattern() ?? ''));
+        if ($pat === '' || $pat === '*') return true;
+
+        // expression types
+        if (str_starts_with($pat, 'header:')) {
+            $expr = substr($pat, 7); // name=value
+            $parts = explode('=', $expr, 2);
+            $name = strtolower(trim($parts[0] ?? ''));
+            $expected = trim($parts[1] ?? '');
+            if ($name === '') return false;
+            $val = $ctx['headers'][$name] ?? null;
+            return $val !== null && $val === $expected;
+        }
+
+        if (str_starts_with($pat, 'rcpt:')) {
+            $glob = trim(substr($pat, 5));
+            if ($glob === '') return false;
+            foreach (($ctx['rcpts'] ?? []) as $rcpt) {
+                if ($this->globMatch($glob, strtolower($rcpt))) return true;
+            }
+            return false;
+        }
+
+        if (str_starts_with($pat, 'sender:')) {
+            $glob = trim(substr($pat, 7));
+            $sender = strtolower((string)($ctx['sender'] ?? ''));
+            return $glob !== '' && $sender !== '' && $this->globMatch($glob, $sender);
+        }
+
+        // unknown pattern → no match
+        return false;
+    }
+
+    /**
+     * Sort routes: lowest priority first. Same priority → newest first.
+     * Priority is read from destination.meta.priority if present; default 0.
+     * @param \App\Entity\InboundRoute[] $routes
+     * @return \App\Entity\InboundRoute[]
+     */
+    private function sortRoutes(array $routes): array
+    {
+        usort($routes, function($a, $b) {
+            $pa = (int)($a->getDestination()['meta']['priority'] ?? 0);
+            $pb = (int)($b->getDestination()['meta']['priority'] ?? 0);
+            if ($pa !== $pb) return $pa <=> $pb; // lower first
+            // same priority → newer first
+            $ta = $a->getCreated_at()?->getTimestamp() ?? 0;
+            $tb = $b->getCreated_at()?->getTimestamp() ?? 0;
+            if ($ta !== $tb) return $tb <=> $ta;
+            return ($b->getId() ?? 0) <=> ($a->getId() ?? 0);
+        });
+        return $routes;
+    }
+
 
 }
