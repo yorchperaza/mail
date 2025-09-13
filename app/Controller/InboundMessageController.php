@@ -245,25 +245,30 @@ final class InboundMessageController
 
     private function parseFromMime(string $mime): array
     {
-        // Split headers/body
-        $parts = preg_split("/\r?\n\r?\n/", $mime, 2);
-        $rawHeaders = $parts[0] ?? '';
-        // unfold folded headers
-        $rawHeaders = preg_replace("/\r?\n[ \t]+/", ' ', $rawHeaders);
+        if (class_exists(\PhpMimeMailParser\Parser::class)) {
+            $p = new \PhpMimeMailParser\Parser();
+            $p->setText($mime);
+            $from    = $p->getHeader('from') ?: null;
+            $subject = $p->getHeader('subject') ?: null;
+            $ar      = $p->getHeader('authentication-results') ?: '';
+            [$dkim, $dmarc, $arc] = $this->parseAuthResultsString($ar);
+            return [$from, $subject, $dkim, $dmarc, $arc];
+        }
 
+        // Minimal dependency-free parser
+        $parts = preg_split("/\r?\n\r?\n/", $mime, 2);
+        $raw = $parts[0] ?? '';
+        $raw = preg_replace("/\r?\n[ \t]+/", ' ', $raw); // unfold
         $from = $subject = $ar = null;
-        foreach (explode("\n", $rawHeaders) as $line) {
-            if (stripos($line, 'From:') === 0) {
-                $from = trim(substr($line, 5));
-            } elseif (stripos($line, 'Subject:') === 0) {
-                $subject = trim(substr($line, 8));
-            } elseif (stripos($line, 'Authentication-Results:') === 0) {
-                $ar = trim(substr($line, 21));
-            }
+        foreach (explode("\n", $raw) as $line) {
+            if (stripos($line, 'From:') === 0)     $from = trim(substr($line, 5));
+            elseif (stripos($line, 'Subject:') === 0) $subject = trim(substr($line, 8));
+            elseif (stripos($line, 'Authentication-Results:') === 0) $ar = trim(substr($line, 21));
         }
         [$dkim, $dmarc, $arc] = $this->parseAuthResultsString($ar ?? '');
         return [$from, $subject, $dkim, $dmarc, $arc];
     }
+
 
     private function resolveDomainAndCompanyByRcpt(?string $rcpt): array
     {
