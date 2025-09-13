@@ -227,11 +227,18 @@ final class InboundMessageController
         $base = '/var/mail/inbound';
         $key  = date('Y/m/d/') . bin2hex(random_bytes(8)) . '.eml';
         $path = $base . '/' . $key;
-        @mkdir(dirname($path), 0775, true);
+        if (!is_dir(dirname($path))) {
+            @mkdir(dirname($path), 0775, true);
+        }
+        if (!is_dir(dirname($path))) {
+            error_log("[inbound] mkdir failed for " . dirname($path));
+            throw new RuntimeException('Failed to prepare storage directory', 500);
+        }
         if (file_put_contents($path, $mime) === false) {
+            error_log("[inbound] file_put_contents failed path=$path");
             throw new RuntimeException('Failed to store raw MIME', 500);
         }
-        return $path; // or return $key if you later use object storage
+        return $path;
     }
 
     private function parseAuthResultsString(string $ar): array
@@ -299,104 +306,152 @@ final class InboundMessageController
     #[Route(methods: 'POST', path: '/inbound/receive')]
     public function receive(ServerRequestInterface $r): JsonResponse
     {
-        $rawBody = (string)$r->getBody();
+        $t0  = microtime(true);
+        $rid = bin2hex(random_bytes(6)); // trace id
 
-        // HMAC protection (enable by setting INBOUND_SECRET)
-        if (!$this->hmacOk($r, $rawBody)) {
-            throw new RuntimeException('Invalid signature', 401);
-        }
+        try {
+            $rawBody = (string)$r->getBody();
+            $ct      = strtolower($r->getHeaderLine('Content-Type'));
+            $this->lg($rid, "START", ['ct' => $ct, 'len' => strlen($rawBody)]);
 
-        $ct = strtolower($r->getHeaderLine('Content-Type'));
-        $mailFrom = null;
-        $rcpts = [];
-        $mime = null;
-        $receivedAt = null;
-        $authResults = null;
-        $spamScore = null;
-
-        if (str_starts_with($ct, 'application/json')) {
-            try {
-                $j = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
-            } catch (\JsonException) {
-                throw new RuntimeException('Invalid JSON', 400);
+            // HMAC (optional)
+            if (!$this->hmacOk($r, $rawBody)) {
+                $this->lg($rid, "HMAC FAIL");
+                throw new RuntimeException('Invalid signature', 401);
             }
-            $mailFrom   = isset($j['mail_from']) ? (string)$j['mail_from'] : null;
-            $rcpts      = isset($j['rcpt_tos']) && is_array($j['rcpt_tos']) ? $j['rcpt_tos'] : [];
-            $mimeB64    = isset($j['mime_b64']) ? (string)$j['mime_b64'] : '';
-            $mime       = $mimeB64 !== '' ? base64_decode($mimeB64, true) : null;
-            $receivedAt = isset($j['received_at']) ? (string)$j['received_at'] : null;
-            $authResults= isset($j['auth_results']) ? (string)$j['auth_results'] : null;
-            $spamScore  = isset($j['spam_score']) && is_numeric($j['spam_score']) ? (float)$j['spam_score'] : null;
-        } elseif (str_starts_with($ct, 'message/rfc822')) {
-            $mime       = $rawBody;
-            $mailFrom   = $r->getHeaderLine('X-Mail-From') ?: null;
-            $rcptHdr    = $r->getHeaderLine('X-Rcpt-To');
-            $rcpts      = $rcptHdr ? array_map('trim', explode(',', $rcptHdr)) : [];
-            $receivedAt = $r->getHeaderLine('X-Received-At') ?: null;
-            $authResults= $r->getHeaderLine('X-Auth-Results') ?: null;
-            $spamScore  = ($v = $r->getHeaderLine('X-Spam-Score')) !== '' ? (float)$v : null;
-        } else {
-            throw new RuntimeException('Unsupported Content-Type', 415);
+            $this->lg($rid, "HMAC OK");
+
+            $mailFrom = null; $rcpts = []; $mime = null; $receivedAt = null;
+            $authResults = null; $spamScore = null;
+
+            if (str_starts_with($ct, 'application/json')) {
+                try {
+                    $j = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
+                } catch (\JsonException $e) {
+                    $this->lg($rid, "JSON parse error", ['msg' => $e->getMessage()]);
+                    throw new RuntimeException('Invalid JSON', 400);
+                }
+                $mailFrom   = isset($j['mail_from']) ? (string)$j['mail_from'] : null;
+                $rcpts      = isset($j['rcpt_tos']) && is_array($j['rcpt_tos']) ? $j['rcpt_tos'] : [];
+                $mimeB64    = isset($j['mime_b64']) ? (string)$j['mime_b64'] : '';
+                $mime       = $mimeB64 !== '' ? base64_decode($mimeB64, true) : null;
+                $receivedAt = isset($j['received_at']) ? (string)$j['received_at'] : null;
+                $authResults= isset($j['auth_results']) ? (string)$j['auth_results'] : null;
+                $spamScore  = isset($j['spam_score']) && is_numeric($j['spam_score']) ? (float)$j['spam_score'] : null;
+                $this->lg($rid, "JSON parsed", ['rcpts' => $rcpts, 'mime_len' => is_string($mime) ? strlen($mime) : 0]);
+            } elseif (str_starts_with($ct, 'message/rfc822')) {
+                $mime       = $rawBody;
+                $mailFrom   = $r->getHeaderLine('X-Mail-From') ?: null;
+                $rcptHdr    = $r->getHeaderLine('X-Rcpt-To');
+                $rcpts      = $rcptHdr ? array_map('trim', explode(',', $rcptHdr)) : [];
+                $receivedAt = $r->getHeaderLine('X-Received-At') ?: null;
+                $authResults= $r->getHeaderLine('X-Auth-Results') ?: null;
+                $spamScore  = ($v = $r->getHeaderLine('X-Spam-Score')) !== '' ? (float)$v : null;
+                $this->lg($rid, "RFC822 parsed", ['rcpts' => $rcpts, 'mime_len' => strlen($mime ?? '')]);
+            } else {
+                $this->lg($rid, "Unsupported CT", ['ct' => $ct]);
+                throw new RuntimeException('Unsupported Content-Type', 415);
+            }
+
+            if (!$mime || !is_string($mime) || $mime === '') {
+                $this->lg($rid, "Missing MIME");
+                throw new RuntimeException('Missing MIME body', 400);
+            }
+            if (empty($rcpts)) {
+                $this->lg($rid, "Missing rcpts");
+                throw new RuntimeException('Missing rcpt_tos / X-Rcpt-To', 400);
+            }
+
+            $primaryRcpt = $rcpts[0];
+
+            // 1) store file
+            $path = $this->storeRaw($mime);
+            $this->lg($rid, "Stored MIME", ['path' => $path]);
+
+            // 2) parse headers
+            [$fromHdr, $subject, $dkim, $dmarc, $arc] = $this->parseFromMime($mime);
+            if ($authResults) {
+                [$dkim2, $dmarc2, $arc2] = $this->parseAuthResultsString($authResults);
+                $dkim  = $dkim2  ?? $dkim;
+                $dmarc = $dmarc2 ?? $dmarc;
+                $arc   = $arc2   ?? $arc;
+            }
+            $this->lg($rid, "Parsed headers", [
+                'from' => $fromHdr, 'subject' => $subject,
+                'dkim' => $dkim, 'dmarc' => $dmarc, 'arc' => $arc
+            ]);
+
+            // 3) resolve domain/company
+            [$domain, $company, $domainPart] = $this->resolveDomainAndCompanyByRcpt($primaryRcpt);
+            $this->lg($rid, "Resolved domain/company", [
+                'rcpt' => $primaryRcpt, 'domainPart' => $domainPart,
+                'domainId' => $domain?->getId(), 'companyId' => $company?->getId()
+            ]);
+
+            if (!$domain || !$company) {
+                // If you want to park instead of reject, comment the next line and set $domain/$company to nulls.
+                throw new RuntimeException("Unknown inbound domain '{$domainPart}'", 404);
+            }
+
+            // 4) save DB
+            /** @var \App\Repository\InboundMessageRepository $repo */
+            $repo = $this->repos->getRepository(InboundMessage::class);
+
+            $msg = (new InboundMessage())
+                ->setCompany($company)
+                ->setDomain($domain)
+                ->setFrom_email($fromHdr ?? $mailFrom)
+                ->setSubject($subject)
+                ->setRaw_mime_ref($path)
+                ->setSpam_score($spamScore)
+                ->setDkim_result($dkim)
+                ->setDmarc_result($dmarc)
+                ->setArc_result($arc)
+                ->setReceived_at(new \DateTimeImmutable($receivedAt ?: 'now', new \DateTimeZone('UTC')));
+
+            $repo->save($msg);
+            $this->lg($rid, "DB saved", ['msgId' => $msg->getId()]);
+
+            $dt = number_format((microtime(true) - $t0) * 1000, 1);
+            $this->lg($rid, "OK 201", ['dt_ms' => $dt]);
+
+            return new JsonResponse([
+                'id'           => $msg->getId(),
+                'domain'       => $domain->getDomain(),
+                'company_id'   => $company->getId(),
+                'from'         => $msg->getFrom_email(),
+                'subject'      => $msg->getSubject(),
+                'dkim'         => $msg->getDkim_result(),
+                'dmarc'        => $msg->getDmarc_result(),
+                'arc'          => $msg->getArc_result(),
+                'spam_score'   => $msg->getSpam_score(),
+                'raw_mime_ref' => $msg->getRaw_mime_ref(),
+                'received_at'  => $msg->getReceived_at()?->format(\DateTimeInterface::ATOM),
+                'traceId'      => $rid,
+            ], 201);
+
+        } catch (\Throwable $e) {
+            $dt = number_format((microtime(true) - $t0) * 1000, 1);
+            $traceTop = explode("\n", $e->getTraceAsString())[0] ?? '';
+            $this->lg($rid, "ERROR", [
+                'code' => $e->getCode(),
+                'msg'  => $e->getMessage(),
+                'at'   => $traceTop,
+                'dt_ms'=> $dt
+            ]);
+
+            $code = ($e->getCode() >= 400 && $e->getCode() <= 599) ? $e->getCode() : 500;
+            return new JsonResponse(['error' => $e->getMessage(), 'traceId' => $rid], $code);
         }
+    }
 
-        if (!$mime || !is_string($mime) || $mime === '') {
-            throw new RuntimeException('Missing MIME body', 400);
+    private function lg(string $rid, string $msg, array $ctx = []): void
+    {
+        // Keep logs compact; don’t log MIME/content
+        foreach ($ctx as $k => $v) {
+            if (is_scalar($v) || $v === null) continue;
+            $ctx[$k] = json_encode($v, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
         }
-        if (empty($rcpts)) {
-            throw new RuntimeException('Missing rcpt_tos / X-Rcpt-To', 400);
-        }
-
-        // Choose first RCPT for domain resolution (extend to multi-recipient fan-out if you want)
-        $primaryRcpt = $rcpts[0];
-
-        // 1) Persist raw MIME to storage
-        $path = $this->storeRaw($mime);
-
-        // 2) Parse headers (From, Subject, AuthResults if not provided explicitly)
-        [$fromHdr, $subject, $dkim, $dmarc, $arc] = $this->parseFromMime($mime);
-        if ($authResults) {
-            [$dkim2, $dmarc2, $arc2] = $this->parseAuthResultsString($authResults);
-            $dkim  = $dkim2  ?? $dkim;
-            $dmarc = $dmarc2 ?? $dmarc;
-            $arc   = $arc2   ?? $arc;
-        }
-
-        // 3) Resolve Domain + Company by RCPT domain
-        [$domain, $company, $domainPart] = $this->resolveDomainAndCompanyByRcpt($primaryRcpt);
-        if (!$domain || !$company) {
-            // If you prefer to accept anyway and park it, remove the error and save with nulls.
-            throw new RuntimeException("Unknown inbound domain '{$domainPart}'", 404);
-        }
-
-        // 4) Build entity
-        $msg = (new InboundMessage())
-            ->setCompany($company)
-            ->setDomain($domain)
-            ->setFrom_email($fromHdr ?? $mailFrom)
-            ->setSubject($subject)
-            ->setRaw_mime_ref($path)
-            ->setSpam_score($spamScore)
-            ->setDkim_result($dkim)
-            ->setDmarc_result($dmarc)
-            ->setArc_result($arc)
-            ->setReceived_at(new \DateTimeImmutable($receivedAt ?: 'now', new \DateTimeZone('UTC')));
-
-        /** @var \App\Repository\InboundMessageRepository $repo */
-        $repo = $this->repos->getRepository(InboundMessage::class);
-        $repo->save($msg);
-
-        return new JsonResponse([
-            'id'           => $msg->getId(),
-            'domain'       => $domain->getDomain(),
-            'company_id'   => $company->getId(),
-            'from'         => $msg->getFrom_email(),
-            'subject'      => $msg->getSubject(),
-            'dkim'         => $msg->getDkim_result(),
-            'dmarc'        => $msg->getDmarc_result(),
-            'arc'          => $msg->getArc_result(),
-            'spam_score'   => $msg->getSpam_score(),
-            'raw_mime_ref' => $msg->getRaw_mime_ref(),
-            'received_at'  => $msg->getReceived_at()?->format(\DateTimeInterface::ATOM),
-        ], 201);
+        error_log("[inbound][$rid] " . $msg . (empty($ctx) ? "" : " " . json_encode($ctx)));
     }
 }
