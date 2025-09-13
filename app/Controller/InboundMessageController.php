@@ -802,7 +802,11 @@ final class InboundMessageController
         if (($route->getDkim_required() ?? 0) === 1 && ($ctx['dkim'] ?? null) !== 'pass') return false;
         if (($route->getTls_required()  ?? 0) === 1 && ($ctx['tls']  ?? null) !== true)  return false;
         $thr = $route->getSpam_threshold();
-        if ($thr !== null && ($ctx['spam_score'] ?? INF) > $thr) return false;
+        $score = $ctx['spam_score'] ?? null;
+        if ($thr !== null && $score !== null && $score > $thr) {
+            $this->lg($rid, "SPAM THRESHOLD BLOCK", ['score' => $score, 'thr' => $thr, 'routeId' => $route->getId()]);
+            return false;
+        }
 
         $pat = trim((string)($route->getPattern() ?? ''));
         if ($pat === '' || $pat === '*') return true;
