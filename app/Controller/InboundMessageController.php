@@ -531,18 +531,19 @@ final class InboundMessageController
             $p->setText($mime);
 
             // Headers of interest
+            $rcv = $p->getHeader('received'); // can be string|array|null
             $headers = [
-                'from'        => $p->getHeader('from') ?: null,
-                'to'          => $p->getHeader('to') ?: null,
-                'cc'          => $p->getHeader('cc') ?: null,
-                'subject'     => $p->getHeader('subject') ?: null,
-                'date'        => $p->getHeader('date') ?: null,
-                'message-id'  => $p->getHeader('message-id') ?: null,
-                'reply-to'    => $p->getHeader('reply-to') ?: null,
-                'return-path' => $p->getHeader('return-path') ?: null,
-                'auth-results'=> $p->getHeader('authentication-results') ?: null,
-                'dkim-signature' => $p->getHeader('dkim-signature') ?: null,
-                'received'    => implode("\n", (array)$p->getHeader('received') ?: []),
+                'from'            => $p->getHeader('from') ?: null,
+                'to'              => $p->getHeader('to') ?: null,
+                'cc'              => $p->getHeader('cc') ?: null,
+                'subject'         => $p->getHeader('subject') ?: null,
+                'date'            => $p->getHeader('date') ?: null,
+                'message-id'      => $p->getHeader('message-id') ?: null,
+                'reply-to'        => $p->getHeader('reply-to') ?: null,
+                'return-path'     => $p->getHeader('return-path') ?: null,
+                'authentication-results' => $p->getHeader('authentication-results') ?: null,
+                'dkim-signature'  => $p->getHeader('dkim-signature') ?: null,
+                'received'        => $rcv === null ? null : (is_array($rcv) ? implode("\n", $rcv) : (string)$rcv),
             ];
 
             // Bodies
@@ -579,10 +580,16 @@ final class InboundMessageController
             if (!str_contains($line, ':')) continue;
             [$k, $v] = array_map('trim', explode(':', $line, 2));
             $lk = strtolower($k);
-            // keep first occurrence; append Received
+
             if ($lk === 'received') {
-                $map['received'] = ($map['received'] ?? '') . ($map['received'] ? "\n" : '') . $v;
-            } elseif (!isset($map[$lk])) {
+                // SAFE append (avoid touching undefined index)
+                $prev = $map['received'] ?? '';
+                $map['received'] = ($prev !== '' ? $prev . "\n" : '') . $v;
+                continue;
+            }
+
+            // keep first occurrence for the rest
+            if (!isset($map[$lk])) {
                 $map[$lk] = $v;
             }
         }
