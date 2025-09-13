@@ -418,6 +418,13 @@ final class InboundMessageController
             $matchedIds    = [];
 
             foreach ($routes as $route) {
+                $this->lg($rid, "EVAL", [
+                    'routeId' => $route->getId(),
+                    'pattern' => $route->getPattern(),
+                    'action'  => $route->getAction(),
+                    'rcpts'   => $ctx['rcpts'],
+                    'sender'  => $ctx['sender'],
+                ]);
                 if (!$this->routeMatches($route, $ctx)) continue;
 
                 $matchedIds[] = $route->getId();
