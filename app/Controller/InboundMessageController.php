@@ -287,7 +287,7 @@ final class InboundMessageController
 
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
-        $domain = $domainPart ? $domainRepo->findOneByDomain($domainPart) : null;
+        $domain = $domainPart ? $domainRepo->findOneBy(['domain' => $domainPart]) : null;
         $company = $domain?->getCompany();
 
         return [$domain, $company, $domainPart];
