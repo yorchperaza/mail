@@ -454,4 +454,196 @@ final class InboundMessageController
         }
         error_log("[inbound][$rid] " . $msg . (empty($ctx) ? "" : " " . json_encode($ctx)));
     }
+
+    /** ------------------- DETAIL ENDPOINT ------------------- */
+    /**
+     * GET /companies/{hash}/inbound-messages/{id}
+     *
+     * Returns detailed info about a single inbound message:
+     *  - basic DB fields (id, subject, spam/auth results, received_at, etc.)
+     *  - parsed headers (from, to, cc, date, message-id, …)
+     *  - body previews (text, html)
+     *  - attachments metadata (name, size, content_type, is_inline, content_id)
+     * @throws \ReflectionException
+     */
+    #[Route(methods: 'GET', path: '/companies/{hash}/inbound-messages/{id}')]
+    public function show(ServerRequestInterface $r): JsonResponse
+    {
+        $uid  = $this->auth($r);
+        $hash = (string)$r->getAttribute('hash');
+        $id   = (int)$r->getAttribute('id');
+        $co   = $this->company($hash, $uid);
+
+        /** @var \App\Repository\InboundMessageRepository $repo */
+        $repo = $this->repos->getRepository(InboundMessage::class);
+
+        /** @var InboundMessage|null $m */
+        $m = $repo->find($id);
+        if (!$m || $m->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Message not found', 404);
+        }
+
+        $path = (string)$m->getRaw_mime_ref();
+        if ($path === '' || !is_file($path)) {
+            throw new RuntimeException('Raw MIME not found on disk', 404);
+        }
+
+        $mime = @file_get_contents($path);
+        if ($mime === false) {
+            throw new RuntimeException('Unable to read raw MIME', 500);
+        }
+
+        // Parse details
+        [$hdrs, $text, $html, $atts] = $this->parseMimeDetails($mime);
+
+        return new JsonResponse([
+            'item' => array_merge($this->shape($m), [
+                'headers' => $hdrs,               // associative array (subset of useful headers)
+                'body' => [
+                    'text' => $this->preview($text, 20000),  // limit ~20KB to keep response light
+                    'html' => $this->preview($html, 20000),
+                ],
+                'attachments' => $atts,           // array of {filename, size, content_type, inline, content_id}
+                // tip: if you later add a raw download route, return its URL here too.
+            ]),
+        ]);
+    }
+
+    /* ------------------- helpers for details ------------------- */
+
+    private function preview(?string $s, int $max): ?string
+    {
+        if ($s === null) return null;
+        if (strlen($s) <= $max) return $s;
+        return substr($s, 0, $max) . "\n…[truncated]";
+    }
+
+    /**
+     * Returns: [headers, text, html, attachments[]]
+     * headers: associative array of interesting headers
+     * attachments: list of arrays with filename,size,content_type,inline,content_id
+     */
+    private function parseMimeDetails(string $mime): array
+    {
+        // If PhpMimeMailParser is available, use it (recommended).
+        if (class_exists(\PhpMimeMailParser\Parser::class)) {
+            $p = new \PhpMimeMailParser\Parser();
+            $p->setText($mime);
+
+            // Headers of interest
+            $headers = [
+                'from'        => $p->getHeader('from') ?: null,
+                'to'          => $p->getHeader('to') ?: null,
+                'cc'          => $p->getHeader('cc') ?: null,
+                'subject'     => $p->getHeader('subject') ?: null,
+                'date'        => $p->getHeader('date') ?: null,
+                'message-id'  => $p->getHeader('message-id') ?: null,
+                'reply-to'    => $p->getHeader('reply-to') ?: null,
+                'return-path' => $p->getHeader('return-path') ?: null,
+                'auth-results'=> $p->getHeader('authentication-results') ?: null,
+                'dkim-signature' => $p->getHeader('dkim-signature') ?: null,
+                'received'    => implode("\n", (array)$p->getHeader('received') ?: []),
+            ];
+
+            // Bodies
+            $text = $p->getMessageBody('text') ?: null;
+            // Use embedded HTML so inline images are CID-resolved (still returns HTML string)
+            $html = $p->getMessageBody('htmlEmbedded') ?: ($p->getMessageBody('html') ?: null);
+
+            // Attachments
+            $atts = [];
+            foreach ($p->getAttachments() as $att) {
+                /** @var \PhpMimeMailParser\Attachment $att */
+                $atts[] = [
+                    'filename'     => $att->getFilename(),
+                    'size'         => $att->getFilesize(),
+                    'content_type' => $att->getContentType(),
+                    'inline'       => (bool)$att->getInline(),
+                    'content_id'   => $att->getContentID(),
+                ];
+            }
+
+            return [$headers, $text, $html, $atts];
+        }
+
+        // ------ Minimal fallback parser (no library) ------
+        // Parse only top-level headers + naive text/html parts
+        $parts = preg_split("/\r?\n\r?\n/", $mime, 2);
+        $rawHdrs = $parts[0] ?? '';
+        $bodyAll = $parts[1] ?? '';
+
+        // Unfold headers
+        $rawHdrs = preg_replace("/\r?\n[ \t]+/", ' ', $rawHdrs);
+        $map = [];
+        foreach (explode("\n", $rawHdrs) as $line) {
+            if (!str_contains($line, ':')) continue;
+            [$k, $v] = array_map('trim', explode(':', $line, 2));
+            $lk = strtolower($k);
+            // keep first occurrence; append Received
+            if ($lk === 'received') {
+                $map['received'] = ($map['received'] ?? '') . ($map['received'] ? "\n" : '') . $v;
+            } elseif (!isset($map[$lk])) {
+                $map[$lk] = $v;
+            }
+        }
+
+        // Super-naive body extraction (works for simple emails; multipart is best with the parser lib)
+        $text = null; $html = null;
+        if (isset($map['content-type']) && str_contains(strtolower($map['content-type']), 'text/html')) {
+            $html = $bodyAll;
+        } else {
+            $text = $bodyAll;
+        }
+
+        return [[
+            'from'        => $map['from']        ?? null,
+            'to'          => $map['to']          ?? null,
+            'cc'          => $map['cc']          ?? null,
+            'subject'     => $map['subject']     ?? null,
+            'date'        => $map['date']        ?? null,
+            'message-id'  => $map['message-id']  ?? null,
+            'reply-to'    => $map['reply-to']    ?? null,
+            'return-path' => $map['return-path'] ?? null,
+            'auth-results'=> $map['authentication-results'] ?? null,
+            'dkim-signature' => $map['dkim-signature'] ?? null,
+            'received'    => $map['received']    ?? null,
+        ], $text, $html, /*attachments*/[]];
+    }
+
+    /**
+     * GET /companies/{hash}/inbound-messages/{id}/raw
+     * Returns {filename, mime_b64}
+     */
+    #[Route(methods: 'GET', path: '/companies/{hash}/inbound-messages/{id}/raw')]
+    public function raw(ServerRequestInterface $r): JsonResponse
+    {
+        $uid  = $this->auth($r);
+        $hash = (string)$r->getAttribute('hash');
+        $id   = (int)$r->getAttribute('id');
+        $co   = $this->company($hash, $uid);
+
+        /** @var \App\Repository\InboundMessageRepository $repo */
+        $repo = $this->repos->getRepository(InboundMessage::class);
+        /** @var InboundMessage|null $m */
+        $m = $repo->find($id);
+        if (!$m || $m->getCompany()?->getId() !== $co->getId()) {
+            throw new RuntimeException('Message not found', 404);
+        }
+
+        $path = (string)$m->getRaw_mime_ref();
+        if ($path === '' || !is_file($path)) {
+            throw new RuntimeException('Raw MIME not found on disk', 404);
+        }
+
+        $mime = @file_get_contents($path);
+        if ($mime === false) {
+            throw new RuntimeException('Unable to read raw MIME', 500);
+        }
+
+        return new JsonResponse([
+            'filename' => basename($path),
+            'mime_b64' => base64_encode($mime),
+        ]);
+    }
+
 }
