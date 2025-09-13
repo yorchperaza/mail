@@ -457,8 +457,14 @@ final class InboundMessageController
 
             // 5) perform non-store side effects (placeholders)
             if (!empty($forwards)) {
-                $this->lg($rid, "Forward placeholders", ['to' => $forwards]);
-                // TODO: queue SMTP/webhook forwards
+                // Add any metadata you want to pass to webhooks
+                $meta = [
+                    'rcpt_tos'     => $rcpts,
+                    'received_at'  => $receivedAt,
+                    'auth_results' => $authResults,
+                    'spam_score'   => $spamScore,
+                ];
+                $this->performForwards($forwards, $mime, $meta, $mailFrom, $rid);
             }
 
             if (!$shouldStore) {
@@ -922,5 +928,128 @@ final class InboundMessageController
         return $routes;
     }
 
+    /** Simple validators */
+    private function isEmail(string $s): bool {
+        return (bool)filter_var($s, FILTER_VALIDATE_EMAIL);
+    }
+    private function isUrl(string $s): bool {
+        return (bool)filter_var($s, FILTER_VALIDATE_URL);
+    }
+
+    /**
+     * Forward the raw MIME via local MTA's sendmail interface.
+     * - $envelopeFrom: use the original MAIL FROM if you have it, fallback to null.
+     * Returns true on success.
+     */
+    private function forwardEmailRaw(string $mime, string $rcpt, ?string $envelopeFrom = null, ?string $rid = null): bool
+    {
+        $sendmail = '/usr/sbin/sendmail';
+        if (!is_file($sendmail) || !is_executable($sendmail)) {
+            $this->lg($rid ?? '-', "FORWARD email FAILED (sendmail missing)", ['rcpt' => $rcpt, 'path' => $sendmail]);
+            return false;
+        }
+
+        // Build command safely
+        $args = [$sendmail, '-oi']; // -oi: ignore single-dot lines
+        if ($envelopeFrom && $envelopeFrom !== '') {
+            $args[] = '-f';
+            $args[] = $envelopeFrom;
+        }
+        $args[] = '--';
+        $args[] = $rcpt;
+
+        $descriptorspec = [
+            0 => ['pipe', 'w'], // stdin
+            1 => ['pipe', 'w'], // stdout
+            2 => ['pipe', 'w'], // stderr
+        ];
+
+        $cmd = implode(' ', array_map('escapeshellarg', $args));
+        $proc = proc_open($cmd, $descriptorspec, $pipes, null, null);
+        if (!\is_resource($proc)) {
+            $this->lg($rid ?? '-', "FORWARD email FAILED (proc_open)", ['rcpt' => $rcpt]);
+            return false;
+        }
+
+        // Write the raw MIME to sendmail's stdin
+        fwrite($pipes[0], $mime);
+        fclose($pipes[0]);
+
+        $stdout = stream_get_contents($pipes[1]); fclose($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]); fclose($pipes[2]);
+        $code = proc_close($proc);
+
+        if ($code !== 0) {
+            $this->lg($rid ?? '-', "FORWARD email FAILED", ['rcpt' => $rcpt, 'code' => $code, 'stderr' => $stderr, 'stdout' => $stdout]);
+            return false;
+        }
+
+        $this->lg($rid ?? '-', "FORWARD email OK", ['rcpt' => $rcpt]);
+        return true;
+    }
+
+    /**
+     * Forward the raw MIME to a webhook URL as JSON.
+     * Body: {mime_b64, received_at?, auth_results?, spam_score?, rcpt_tos?}
+     */
+    private function forwardWebhook(string $mime, string $url, array $meta = [], ?string $rid = null): bool
+    {
+        if (!function_exists('curl_init')) {
+            $this->lg($rid ?? '-', "FORWARD hook FAILED (no cURL)", ['url' => $url]);
+            return false;
+        }
+
+        $payload = array_merge([
+            'mime_b64'      => base64_encode($mime),
+        ], $meta);
+
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+            CURLOPT_POSTFIELDS     => json_encode($payload, JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE),
+        ]);
+
+        $resp = curl_exec($ch);
+        $errno = curl_errno($ch);
+        $code  = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+
+        if ($errno !== 0 || $code < 200 || $code >= 300) {
+            $this->lg($rid ?? '-', "FORWARD hook FAILED", ['url' => $url, 'http' => $code, 'errno' => $errno, 'resp' => (string)$resp]);
+            return false;
+        }
+
+        $this->lg($rid ?? '-', "FORWARD hook OK", ['url' => $url, 'http' => $code]);
+        return true;
+    }
+
+    /**
+     * Fan-out to all forward destinations (email addresses or URLs).
+     * Runs synchronously; consider queueing later if traffic grows.
+     */
+    private function performForwards(array $destinations, string $mime, array $meta, ?string $envelopeFrom, ?string $rid): void
+    {
+        foreach ($destinations as $d) {
+            $d = trim((string)$d);
+            if ($d === '') continue;
+
+            if ($this->isEmail($d)) {
+                $this->forwardEmailRaw($mime, $d, $envelopeFrom, $rid);
+                continue;
+            }
+
+            if ($this->isUrl($d)) {
+                $this->forwardWebhook($mime, $d, $meta, $rid);
+                continue;
+            }
+
+            // Unknown destination type → log and skip
+            $this->lg($rid ?? '-', "FORWARD skipped (unknown dest type)", ['dest' => $d]);
+        }
+    }
 
 }
