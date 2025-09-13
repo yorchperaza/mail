@@ -7,6 +7,7 @@ namespace App\Controller;
 use App\Entity\Company;
 use App\Entity\Domain;
 use App\Entity\InboundMessage;
+use App\Entity\InboundRoute;
 use App\Service\CompanyResolver;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
@@ -387,7 +388,7 @@ final class InboundMessageController
 
             // 3) load + sort routes (priority asc, newest first within same priority)
             /** @var \App\Repository\InboundRouteRepository $routeRepo */
-            $routeRepo = $this->repos->getRepository(\App\Entity\InboundRoute::class);
+            $routeRepo = $this->repos->getRepository(InboundRoute::class);
             $allRoutes = array_values(array_filter(
                 $routeRepo->findBy([]),
                 fn($r2) => $r2->getCompany()?->getId() === $company->getId()
@@ -747,9 +748,20 @@ final class InboundMessageController
         return ['map' => $map, 'raw' => $unfolded];
     }
 
+    private function ci(string $s): string { return mb_strtolower($s); }
+    private function startsWithCI(string $s, string $prefix): bool {
+        return str_starts_with($this->ci($s), $this->ci($prefix));
+    }
+    private function endsWithCI(string $s, string $suffix): bool {
+        $s = $this->ci($s); $suffix = $this->ci($suffix);
+        return $suffix === '' || ($suffix !== '' && str_ends_with($s, $suffix));
+    }
+    private function containsCI(string $s, string $needle): bool {
+        return $needle === '' ? false : str_contains($this->ci($s), $this->ci($needle));
+    }
+
     private function globMatch(string $pattern, string $subject, bool $caseInsensitive = true): bool
     {
-        // Translate simple * ? globs to regex
         $re = '/^' . str_replace(['\*','\?'], ['.*','.?'], preg_quote($pattern, '/')) . '$/';
         return (bool)preg_match($caseInsensitive ? $re.'i' : $re, $subject);
     }
@@ -763,64 +775,126 @@ final class InboundMessageController
 
     /**
      * Decide if a single route matches the message + constraints.
-     * @param \App\Entity\InboundRoute $route
+     * @param InboundRoute $route
      * @param array $ctx [
      *   'companyId'=>int,'domainId'=>?int,'rcpts'=>string[],'sender'=>?string,
      *   'headers'=>array<string,string>, 'spam_score'=>?float, 'dkim'=>'pass|fail|none|null',
      *   'tls'=>?bool
      * ]
      */
-    private function routeMatches(\App\Entity\InboundRoute $route, array $ctx): bool
+    /**
+     * Decide if a single route matches…
+     */
+    private function routeMatches(InboundRoute $route, array $ctx): bool
     {
-        // domain scope (route domain must match if set)
+        // domain scope as before
         $rid = $route->getDomain()?->getId();
         if ($rid !== null && $rid !== ($ctx['domainId'] ?? null)) return false;
 
-        // constraints
+        // constraints as before
         if (($route->getDkim_required() ?? 0) === 1 && ($ctx['dkim'] ?? null) !== 'pass') return false;
         if (($route->getTls_required()  ?? 0) === 1 && ($ctx['tls']  ?? null) !== true)  return false;
-
         $thr = $route->getSpam_threshold();
         if ($thr !== null && ($ctx['spam_score'] ?? INF) > $thr) return false;
 
         $pat = trim((string)($route->getPattern() ?? ''));
         if ($pat === '' || $pat === '*') return true;
 
-        // expression types
-        if (str_starts_with($pat, 'header:')) {
-            $expr = substr($pat, 7); // name=value
-            $parts = explode('=', $expr, 2);
-            $name = strtolower(trim($parts[0] ?? ''));
-            $expected = trim($parts[1] ?? '');
-            if ($name === '') return false;
-            $val = $ctx['headers'][$name] ?? null;
-            return $val !== null && $val === $expected;
+        // ---------- HEADER ----------
+        if (str_starts_with($pat, 'header')) {
+            // header[:op]:name=value
+            // op ∈ ^, $, ~, *  (default exact when omitted)
+            $op = '';
+            $rest = '';
+            if (preg_match('/^header(\^|\$|~|\*):(.+)$/i', $pat, $m)) {
+                $op = $m[1];
+                $rest = $m[2];
+            } elseif (str_starts_with($pat, 'header:')) {
+                $rest = substr($pat, 7);
+            } else {
+                return false;
+            }
+
+            [$name, $expected] = array_map('trim', explode('=', $rest, 2) + [null,null]);
+            if ($name === null || $name === '') return false;
+
+            $val = $ctx['headers'][mb_strtolower($name)] ?? null;
+            if ($val === null) return false;
+
+            return match ($op) {
+                '^' => $this->startsWithCI($val, (string)$expected),
+                '$' => $this->endsWithCI($val, (string)$expected),
+                '~' => $this->containsCI($val, (string)$expected),
+                '*' => $this->globMatch((string)$expected, $val),
+                default => $val === (string)$expected, // exact
+            };
         }
 
-        if (str_starts_with($pat, 'rcpt:')) {
-            $glob = trim(substr($pat, 5));
-            if ($glob === '') return false;
-            foreach (($ctx['rcpts'] ?? []) as $rcpt) {
-                if ($this->globMatch($glob, strtolower($rcpt))) return true;
+        // Collect rcpts/sender lowercased
+        $rcpts  = array_map(fn($x) => mb_strtolower(trim((string)$x)), (array)($ctx['rcpts'] ?? []));
+        $sender = mb_strtolower(trim((string)($ctx['sender'] ?? '')));
+
+        // ---------- RCPT ----------
+        if (str_starts_with($pat, 'rcpt')) {
+            // rcpt^:, rcpt$:, rcpt~:, rcpt:glob, rcpt:exact:
+            $mode = 'glob';
+            $needle = '';
+            if (preg_match('/^rcpt(\^|\$|~):(.+)$/i', $pat, $m)) {
+                $mode = $m[1]; $needle = trim($m[2]);
+            } elseif (str_starts_with($pat, 'rcpt:exact:')) {
+                $mode = 'exact'; $needle = trim(substr($pat, 11));
+            } elseif (str_starts_with($pat, 'rcpt:')) {
+                $mode = 'glob'; $needle = trim(substr($pat, 5));
+            } else {
+                return false;
+            }
+            if ($needle === '') return false;
+
+            foreach ($rcpts as $rcpt) {
+                $match = match ($mode) {
+                    '^' => $this->startsWithCI($rcpt, $needle),
+                    '$' => $this->endsWithCI($rcpt, $needle),
+                    '~' => $this->containsCI($rcpt, $needle),
+                    'exact' => $rcpt === mb_strtolower($needle),
+                    default => $this->globMatch($needle, $rcpt),
+                };
+                if ($match) return true;
             }
             return false;
         }
 
-        if (str_starts_with($pat, 'sender:')) {
-            $glob = trim(substr($pat, 7));
-            $sender = strtolower((string)($ctx['sender'] ?? ''));
-            return $glob !== '' && $sender !== '' && $this->globMatch($glob, $sender);
+        // ---------- SENDER ----------
+        if (str_starts_with($pat, 'sender')) {
+            $mode = 'glob';
+            $needle = '';
+            if (preg_match('/^sender(\^|\$|~):(.+)$/i', $pat, $m)) {
+                $mode = $m[1]; $needle = trim($m[2]);
+            } elseif (str_starts_with($pat, 'sender:exact:')) {
+                $mode = 'exact'; $needle = trim(substr($pat, 13));
+            } elseif (str_starts_with($pat, 'sender:')) {
+                $mode = 'glob'; $needle = trim(substr($pat, 7));
+            } else {
+                return false;
+            }
+            if ($needle === '' || $sender === '') return false;
+
+            return match ($mode) {
+                '^' => $this->startsWithCI($sender, $needle),
+                '$' => $this->endsWithCI($sender, $needle),
+                '~' => $this->containsCI($sender, $needle),
+                'exact' => $sender === mb_strtolower($needle),
+                default => $this->globMatch($needle, $sender),
+            };
         }
 
-        // unknown pattern → no match
-        return false;
+        return false; // unknown pattern
     }
 
     /**
      * Sort routes: lowest priority first. Same priority → newest first.
      * Priority is read from destination.meta.priority if present; default 0.
-     * @param \App\Entity\InboundRoute[] $routes
-     * @return \App\Entity\InboundRoute[]
+     * @param InboundRoute[] $routes
+     * @return InboundRoute[]
      */
     private function sortRoutes(array $routes): array
     {
