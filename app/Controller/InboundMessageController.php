@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\Company;
+use App\Entity\Domain;
 use App\Entity\InboundMessage;
 use App\Service\CompanyResolver;
 use MonkeysLegion\Http\Message\JsonResponse;
@@ -244,14 +245,23 @@ final class InboundMessageController
 
     private function parseFromMime(string $mime): array
     {
-        $p = new Parser();
-        $p->setText($mime);
+        // Split headers/body
+        $parts = preg_split("/\r?\n\r?\n/", $mime, 2);
+        $rawHeaders = $parts[0] ?? '';
+        // unfold folded headers
+        $rawHeaders = preg_replace("/\r?\n[ \t]+/", ' ', $rawHeaders);
 
-        $from    = $p->getHeader('from') ?: null;
-        $subject = $p->getHeader('subject') ?: null;
-        $ar      = $p->getHeader('authentication-results') ?: '';
-        [$dkim, $dmarc, $arc] = $this->parseAuthResultsString($ar);
-
+        $from = $subject = $ar = null;
+        foreach (explode("\n", $rawHeaders) as $line) {
+            if (stripos($line, 'From:') === 0) {
+                $from = trim(substr($line, 5));
+            } elseif (stripos($line, 'Subject:') === 0) {
+                $subject = trim(substr($line, 8));
+            } elseif (stripos($line, 'Authentication-Results:') === 0) {
+                $ar = trim(substr($line, 21));
+            }
+        }
+        [$dkim, $dmarc, $arc] = $this->parseAuthResultsString($ar ?? '');
         return [$from, $subject, $dkim, $dmarc, $arc];
     }
 
