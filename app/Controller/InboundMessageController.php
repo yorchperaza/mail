@@ -9,6 +9,7 @@ use App\Entity\Domain;
 use App\Entity\InboundMessage;
 use App\Entity\InboundRoute;
 use App\Service\CompanyResolver;
+use App\Service\OutboundMailService;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
@@ -22,6 +23,7 @@ final class InboundMessageController
     public function __construct(
         private RepositoryFactory $repos,
         private CompanyResolver   $companyResolver,
+        private OutboundMailService $outbound,
     )
     {
     }
@@ -466,7 +468,7 @@ final class InboundMessageController
                     'auth_results' => $authResults,
                     'spam_score'   => $spamScore,
                 ];
-                $this->performForwards($forwards, $mime, $meta, $mailFrom, $rid);
+                $this->performForwards($forwards, $mime, $meta, $mailFrom, $rid, $company, $domain);
             }
 
             if (!$shouldStore) {
@@ -1119,16 +1121,27 @@ final class InboundMessageController
      * Fan-out to all forward destinations (email addresses or URLs).
      * Runs synchronously; consider queueing later if traffic grows.
      */
-    private function performForwards(array $destinations, string $mime, array $meta, ?string $envelopeFrom, ?string $rid): void
+    private function performForwards(
+        array $destinations,
+        string $mime,
+        array $meta,
+        ?string $envelopeFrom,
+        ?string $rid,
+        Company $company,
+        Domain $domain
+    ): void
     {
+        // You already have company/domain in scope just before calling performForwards()
+        // Pass them in (or store into $meta) so we can route via Outbound.
+        [$headers] = [$this->parseTopHeaders($mime)['map']];
+
         foreach ($destinations as $d) {
             $d = trim((string)$d);
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
-                // parse top headers once (you already have parseTopHeaders)
-                $top = $this->parseTopHeaders($mime);
-                $this->forwardAsNewEmail($mime, $d, $top['map'], $rid);
+                // ⬇ replace PHPMailer path with Outbound
+                $this->forwardViaOutbound($mime, $d, $headers, $company, $domain, $rid);
                 continue;
             }
 
@@ -1137,10 +1150,10 @@ final class InboundMessageController
                 continue;
             }
 
-            // Unknown destination type → log and skip
             $this->lg($rid ?? '-', "FORWARD skipped (unknown dest type)", ['dest' => $d]);
         }
     }
+
 
 
     private function forwardAsNewEmail(string $mime, string $to, array $origHeaders, ?string $rid = null): bool
@@ -1183,4 +1196,48 @@ final class InboundMessageController
             return false;
         }
     }
+
+    private function forwardViaOutbound(
+        string $mime,
+        string $to,
+        array $origHeaders,
+        Company $company,
+        Domain $domain,
+        ?string $traceId = null
+    ): void {
+        $origFrom    = $origHeaders['from']    ?? '';
+        $origSubject = $origHeaders['subject'] ?? '(no subject)';
+
+        $payload = [
+            'from' => [
+                // choose a domain you sign for; subdomain is fine
+                'email' => 'forwarder@monkeysmail.com',
+                'name'  => 'MonkeysMail Forwarder',
+            ],
+            'replyTo' => $origFrom ?: null,            // preserve reply path
+            'to'      => [$to],
+            'subject' => 'Fwd: ' . $origSubject,
+            'text'    => "Forwarded message attached.\n\n--\nTrace: {$traceId}",
+            // No HTML needed; we attach original
+            'attachments' => [[
+                'filename'    => 'original.eml',
+                'contentType' => 'message/rfc822',
+                'content'     => base64_encode($mime),
+            ]],
+            // avoid weirdness/PII for auto-forwarded mail
+            'tracking' => ['opens' => false, 'clicks' => false],
+            'headers'  => [
+                'Auto-Submitted'      => 'auto-forwarded',
+                'X-Forwarded-From'    => $origFrom,
+                'X-Forwarded-By'      => 'MonkeysMail',
+                'X-Forward-TraceId'   => (string)$traceId,
+            ],
+            // optional: skip daily/monthly quotas if you don’t want forwards to count
+             'skipQuotas' => true,  // see note below
+        ];
+
+        // Reuse your robust enqueue + eventing + retries
+        $this->outbound->createAndEnqueue($payload, $company, $domain);
+    }
+
 }
