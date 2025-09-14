@@ -1164,14 +1164,11 @@ final class InboundMessageController
         $fromEmail   = "forwarder@{$fromDomain}";
 
         $payload = [
-            'from' => [
-                'email' => $fromEmail,
-                'name'  => "MonkeysMail Forwarder",
-            ],
+            'from' => ['email' => $fromEmail, 'name' => 'MonkeysMail Forwarder'],
             'replyTo' => $origFrom ?: null,
-            'to'      => [$to],
+            'to' => [$to],
             'subject' => 'Fwd: ' . $origSubject,
-            'text'    => "Forwarded message attached.\n\n--\nTrace: {$traceId}",
+            'text' => "Forwarded message attached.\n\n--\nTrace: {$traceId}",
             'attachments' => [[
                 'filename'    => 'original.eml',
                 'contentType' => 'message/rfc822',
@@ -1180,28 +1177,16 @@ final class InboundMessageController
             'tracking' => ['opens' => false, 'clicks' => false],
             'headers'  => [
                 'Auto-Submitted'    => 'auto-forwarded',
-                'Sender'            => "forwarder@{$fromDomain}", // stable platform identity
+                'Sender'            => $fromEmail,
                 'X-Forwarded-From'  => $origFrom,
                 'X-Forwarded-By'    => 'MonkeysMail',
                 'X-Forward-TraceId' => (string)$traceId,
             ],
         ];
-        
-        try {
-            $this->outbound->createAndEnqueue($payload, $company, $domain);
-            $this->lg($traceId ?? '-', "FORWARD via Outbound ENQUEUED", [
-                    'to' => $to,
-                    'from' => $fromEmail,
-                ]);
-        } catch (\Throwable $e) {
-            $this->lg($traceId ?? '-', "FORWARD via Outbound FAILED", [
-                    'to' => $to,
-                    'error' => $e->getMessage()
-                    ]);
-        }
-            // If your Outbound service supports envelope MAIL FROM or bounce domain, align it:
-            // 'mailFrom' => "bounce@bounce.{$fromDomain}",
 
+        // Use your own outbound service; no 3rd party required
+        $this->outbound->createAndEnqueue($payload, $company, $domain);
+        $this->lg($traceId ?? '-', "FORWARD via Outbound enqueued", ['to' => $to]);
     }
 
     private function fromDomainForForward(Domain $domain): string
