@@ -15,8 +15,6 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
-use PHPMailer\PHPMailer\PHPMailer;
-use PHPMailer\PHPMailer\Exception as MailerException;
 
 final class InboundMessageController
 {
@@ -1131,13 +1129,15 @@ final class InboundMessageController
         Domain $domain
     ): void
     {
+        $origHeaders = $this->parseTopHeaders($mime)['map'];
+
         foreach ($destinations as $d) {
             $d = trim((string)$d);
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
                 // This should work - using sendmail directly
-                $this->forwardEmailRaw($mime, $d, $envelopeFrom, $rid);
+                $this->forwardViaOutbound($mime, $d, $origHeaders, $company, $domain, $rid);
                 continue;
             }
 
@@ -1185,42 +1185,23 @@ final class InboundMessageController
                 'X-Forwarded-By'    => 'MonkeysMail',
                 'X-Forward-TraceId' => (string)$traceId,
             ],
+        ];
+        
+        try {
+            $this->outbound->createAndEnqueue($payload, $company, $domain);
+            $this->lg($traceId ?? '-', "FORWARD via Outbound ENQUEUED", [
+                    'to' => $to,
+                    'from' => $fromEmail,
+                ]);
+        } catch (\Throwable $e) {
+            $this->lg($traceId ?? '-', "FORWARD via Outbound FAILED", [
+                    'to' => $to,
+                    'error' => $e->getMessage()
+                    ]);
+        }
             // If your Outbound service supports envelope MAIL FROM or bounce domain, align it:
             // 'mailFrom' => "bounce@bounce.{$fromDomain}",
-        ];
 
-        try {
-            // Create message entity
-            $msg = $this->createMessageFromPayload($payload, $company, $domain);
-
-            // Send directly without queuing
-            $envelope = [
-                'to' => [$to],
-                'fromEmail' => $fromEmail,
-                'fromName' => "MonkeysMail Forwarder",
-                'replyTo' => $origFrom ?: null,
-                'headers' => $payload['headers']
-            ];
-
-            $result = $this->sender->send($msg, $envelope);
-
-            if ($result['ok']) {
-                $this->lg($traceId ?? '-', "FORWARD via Outbound OK", [
-                    'to' => $to,
-                    'messageId' => $result['message_id'] ?? null
-                ]);
-            } else {
-                $this->lg($traceId ?? '-', "FORWARD via Outbound FAILED", [
-                    'to' => $to,
-                    'error' => $result['error'] ?? 'Unknown error'
-                ]);
-            }
-        } catch (\Throwable $e) {
-            $this->lg($traceId ?? '-', "FORWARD via Outbound EXCEPTION", [
-                'to' => $to,
-                'error' => $e->getMessage()
-            ]);
-        }
     }
 
     private function fromDomainForForward(Domain $domain): string
