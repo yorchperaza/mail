@@ -1210,34 +1210,30 @@ final class InboundMessageController
 
         $payload = [
             'from' => [
-                // choose a domain you sign for; subdomain is fine
                 'email' => 'forwarder@monkeysmail.com',
                 'name'  => 'MonkeysMail Forwarder',
             ],
-            'replyTo' => $origFrom ?: null,            // preserve reply path
+            'replyTo' => $origFrom ?: null,
             'to'      => [$to],
             'subject' => 'Fwd: ' . $origSubject,
             'text'    => "Forwarded message attached.\n\n--\nTrace: {$traceId}",
-            // No HTML needed; we attach original
             'attachments' => [[
                 'filename'    => 'original.eml',
                 'contentType' => 'message/rfc822',
                 'content'     => base64_encode($mime),
             ]],
-            // avoid weirdness/PII for auto-forwarded mail
             'tracking' => ['opens' => false, 'clicks' => false],
             'headers'  => [
-                'Auto-Submitted'      => 'auto-forwarded',
-                'X-Forwarded-From'    => $origFrom,
-                'X-Forwarded-By'      => 'MonkeysMail',
-                'X-Forward-TraceId'   => (string)$traceId,
+                'Auto-Submitted'    => 'auto-forwarded',
+                'X-Forwarded-From'  => $origFrom,
+                'X-Forwarded-By'    => 'MonkeysMail',
+                'X-Forward-TraceId' => (string)$traceId,
             ],
-            // optional: skip daily/monthly quotas if you don’t want forwards to count
-             'skipQuotas' => true,  // see note below
         ];
 
-        // Reuse your robust enqueue + eventing + retries
+        // enqueue through your existing pipeline (quotas/events/retries)
         $this->outbound->createAndEnqueue($payload, $company, $domain);
     }
+
 
 }
