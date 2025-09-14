@@ -1210,7 +1210,7 @@ final class InboundMessageController
 
         $payload = [
             'from' => [
-                'email' => 'forwarder@monkeysmail.com',
+                'email' => 'forwarder@' . ($domain->getDomain() ?: 'monkeysmail.com'),
                 'name'  => 'MonkeysMail Forwarder',
             ],
             'replyTo' => $origFrom ?: null,
