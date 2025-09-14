@@ -941,6 +941,17 @@ final class InboundMessageController
      * - $envelopeFrom: use the original MAIL FROM if you have it, fallback to null.
      * Returns true on success.
      */
+    /** Check if MIME has To/Cc/Bcc headers (case-insensitive) */
+    private function mimeHasHeaderRecipients(string $mime): bool
+    {
+        [$raw] = preg_split("/\r?\n\r?\n/", $mime, 2);
+        if ($raw === null) return false;
+        // unfold
+        $raw = preg_replace("/\r?\n[ \t]+/", ' ', $raw) ?? '';
+        $lraw = strtolower($raw);
+        return str_contains($lraw, "\nto:") || str_contains($lraw, "\ncc:") || str_contains($lraw, "\nbcc:");
+    }
+
     private function forwardEmailRaw(string $mime, string $rcpt, ?string $envelopeFrom = null, ?string $rid = null): bool
     {
         $sendmail = '/usr/sbin/sendmail';
@@ -949,28 +960,24 @@ final class InboundMessageController
             return false;
         }
 
-        // Ensure the MIME ends with a newline; some MTAs are picky about final line
-        if ($mime === '' || substr($mime, -1) !== "\n") {
-            $mime .= "\n";
-        }
+        // Make sure MIME ends with newline (some MTAs care)
+        if ($mime === '' || substr($mime, -1) !== "\n") $mime .= "\n";
 
-        $try = function(array $args) use ($mime, $rid) {
-            $descriptorspec = [
-                0 => ['pipe', 'w'], // stdin
-                1 => ['pipe', 'w'], // stdout
-                2 => ['pipe', 'w'], // stderr
+        $hasHdrRcpts = $this->mimeHasHeaderRecipients($mime);
+
+        $try = function(array $args) use ($mime) {
+            $desc = [
+                0 => ['pipe', 'w'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
             ];
-            // IMPORTANT: pass command as ARRAY so PHP doesn’t invoke a shell
-            $proc = proc_open($args, $descriptorspec, $pipes, null, null);
-            if (!\is_resource($proc)) {
-                return [false, 0, '', 'proc_open failed'];
-            }
+            // Pass as array (no shell)
+            $proc = proc_open($args, $desc, $pipes);
+            if (!is_resource($proc)) return [false, 0, '', 'proc_open failed', 0];
 
+            // Write MIME (chunked) in case the reader closes early
+            $off = 0; $len = strlen($mime); $chunk = 64 * 1024; $ok = true;
             stream_set_blocking($pipes[0], true);
-            $ok = true;
-
-            // Write in chunks (gracefully handles early-close)
-            $off = 0; $len = strlen($mime); $chunk = 64 * 1024;
             while ($off < $len) {
                 $n = min($chunk, $len - $off);
                 $w = @fwrite($pipes[0], substr($mime, $off, $n));
@@ -983,38 +990,63 @@ final class InboundMessageController
             $stderr = stream_get_contents($pipes[2]); @fclose($pipes[2]);
             $code   = proc_close($proc);
 
-            return [$ok && $code === 0, $code, (string)$stdout, (string)$stderr, $off];
+            return [($ok && $code === 0), $code, (string)$stdout, (string)$stderr, $off];
         };
 
-        // Primary attempt: -oi -t (recipients from headers), keep -f if it looks valid
-        $args = [$sendmail, '-oi', '-t'];
-        if ($envelopeFrom && filter_var($envelopeFrom, FILTER_VALIDATE_EMAIL)) {
-            $args[] = '-f';
-            $args[] = $envelopeFrom;
+        // Build base args
+        $base = [$sendmail, '-oi'];
+        $withF = function(array $a) use ($envelopeFrom) {
+            if ($envelopeFrom && filter_var($envelopeFrom, FILTER_VALIDATE_EMAIL)) {
+                $a[] = '-f'; $a[] = $envelopeFrom;
+            }
+            return $a;
+        };
+
+        // Strategy A: if headers have To/Cc/Bcc → use -t (no argv rcpts)
+        // Strategy B: otherwise pass rcpt on argv (no -t)
+        $argsA = $withF(array_merge($base, ['-t']));
+        $argsB = $withF(array_merge($base, ['--', $rcpt]));
+
+        // First attempt depends on header presence
+        $primary = $hasHdrRcpts ? $argsA : $argsB;
+        [$ok, $code, $out, $err, $wrote] = $try($primary);
+
+        // If failed and we used -f, retry once without -f
+        if (!$ok && in_array('-f', $primary, true)) {
+            $this->lg($rid ?? '-', "FORWARD retry WITHOUT -f", ['exit' => $code, 'stderr' => $err]);
+            $noF = array_values(array_filter($primary, fn($x) => $x !== '-f' && $x !== $envelopeFrom));
+            [$ok, $code, $out, $err, $wrote] = $try($noF);
         }
 
-        [$ok, $code, $out, $err, $wrote] = $try($args);
-
-        // If stdin closed immediately (wrote 0) or nonzero exit: retry once WITHOUT -f
-        if (!$ok && $wrote === 0 && in_array('-f', $args, true)) {
-            $this->lg($rid ?? '-', "FORWARD retry WITHOUT -f", ['exit' => $code, 'stderr' => $err]);
-            $argsNoF = array_values(array_filter($args, fn($a) => $a !== '-f' && $a !== $envelopeFrom));
-            [$ok, $code, $out, $err, $wrote] = $try($argsNoF);
+        // If still failed **and** error says "No recipient addresses" + we used -t,
+        // fallback to argv recipients mode once.
+        if (!$ok && $hasHdrRcpts && stripos($err, 'no recipient addresses') !== false) {
+            $this->lg($rid ?? '-', "FORWARD fallback to argv rcpt", ['exit' => $code]);
+            $fallback = $withF(array_merge($base, ['--', $rcpt]));
+            [$ok, $code, $out, $err, $wrote] = $try($fallback);
+            if (!$ok && in_array('-f', $fallback, true)) {
+                $noF = array_values(array_filter($fallback, fn($x) => $x !== '-f' && $x !== $envelopeFrom));
+                [$ok, $code, $out, $err, $wrote] = $try($noF);
+            }
         }
 
         if (!$ok) {
             $this->lg($rid ?? '-', "FORWARD email FAILED", [
-                'rcpt_hint' => $rcpt, // only a hint; -t gets rcpts from headers
-                'exit' => $code,
+                'rcpt_hint'   => $rcpt,
+                'exit'        => $code,
                 'wrote_bytes' => $wrote,
-                'stderr' => $err,
-                'stdout' => $out,
-                'from' => $envelopeFrom,
+                'stderr'      => $err,
+                'stdout'      => $out,
+                'from'        => $envelopeFrom,
+                'mode'        => $hasHdrRcpts ? 'header(-t)' : 'argv',
             ]);
             return false;
         }
 
-        $this->lg($rid ?? '-', "FORWARD email OK", ['rcpt_hint' => $rcpt]);
+        $this->lg($rid ?? '-', "FORWARD email OK", [
+            'rcpt_hint' => $rcpt,
+            'mode'      => $hasHdrRcpts ? 'header(-t)' : 'argv',
+        ]);
         return true;
     }
 
