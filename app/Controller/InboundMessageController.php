@@ -967,7 +967,7 @@ final class InboundMessageController
 
         $try = function(array $argv) use ($mime) {
             $desc = [
-                0 => ['pipe', 'w'],
+                0 => ['pipe', 'r'],
                 1 => ['pipe', 'w'],
                 2 => ['pipe', 'w'],
             ];
