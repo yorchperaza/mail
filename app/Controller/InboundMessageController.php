@@ -1131,17 +1131,13 @@ final class InboundMessageController
         Domain $domain
     ): void
     {
-        // You already have company/domain in scope just before calling performForwards()
-        // Pass them in (or store into $meta) so we can route via Outbound.
-        [$headers] = [$this->parseTopHeaders($mime)['map']];
-
         foreach ($destinations as $d) {
             $d = trim((string)$d);
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
-                // ⬇ replace PHPMailer path with Outbound
-                $this->forwardViaOutbound($mime, $d, $headers, $company, $domain, $rid);
+                // This should work - using sendmail directly
+                $this->forwardEmailRaw($mime, $d, $envelopeFrom, $rid);
                 continue;
             }
 
@@ -1193,7 +1189,38 @@ final class InboundMessageController
             // 'mailFrom' => "bounce@bounce.{$fromDomain}",
         ];
 
-        $this->outbound->createAndEnqueue($payload, $company, $domain);
+        try {
+            // Create message entity
+            $msg = $this->createMessageFromPayload($payload, $company, $domain);
+
+            // Send directly without queuing
+            $envelope = [
+                'to' => [$to],
+                'fromEmail' => $fromEmail,
+                'fromName' => "MonkeysMail Forwarder",
+                'replyTo' => $origFrom ?: null,
+                'headers' => $payload['headers']
+            ];
+
+            $result = $this->sender->send($msg, $envelope);
+
+            if ($result['ok']) {
+                $this->lg($traceId ?? '-', "FORWARD via Outbound OK", [
+                    'to' => $to,
+                    'messageId' => $result['message_id'] ?? null
+                ]);
+            } else {
+                $this->lg($traceId ?? '-', "FORWARD via Outbound FAILED", [
+                    'to' => $to,
+                    'error' => $result['error'] ?? 'Unknown error'
+                ]);
+            }
+        } catch (\Throwable $e) {
+            $this->lg($traceId ?? '-', "FORWARD via Outbound EXCEPTION", [
+                'to' => $to,
+                'error' => $e->getMessage()
+            ]);
+        }
     }
 
     private function fromDomainForForward(Domain $domain): string
