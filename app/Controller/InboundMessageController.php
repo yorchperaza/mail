@@ -1126,7 +1126,9 @@ final class InboundMessageController
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
-                $this->forwardEmailRaw($mime, $d, $envelopeFrom, $rid);
+                // parse top headers once (you already have parseTopHeaders)
+                $top = $this->parseTopHeaders($mime);
+                $this->forwardAsNewEmail($mime, $d, $top['map'], $rid);
                 continue;
             }
 
