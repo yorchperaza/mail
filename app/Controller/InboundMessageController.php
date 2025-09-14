@@ -1127,17 +1127,18 @@ final class InboundMessageController
         ?string $rid,
         Company $company,
         Domain $domain
-    ): void
-    {
-        $origHeaders = $this->parseTopHeaders($mime)['map'];
+    ): void {
+        $fromDomain = $this->fromDomainForForward($domain);
+        $envFrom    = "forwarder@{$fromDomain}";
 
         foreach ($destinations as $d) {
             $d = trim((string)$d);
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
-                // This should work - using sendmail directly
-                $this->forwardViaOutbound($mime, $d, $origHeaders, $company, $domain, $rid);
+                // Re-inject into local Postfix so it shows up in mail.log as a new delivery
+                $ok = $this->forwardEmailRaw($mime, $d, $envFrom, $rid);
+                if (!$ok) $this->lg($rid ?? '-', "FORWARD email FAILED", ['to' => $d]);
                 continue;
             }
 
