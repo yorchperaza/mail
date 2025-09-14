@@ -1154,49 +1154,6 @@ final class InboundMessageController
         }
     }
 
-
-
-    private function forwardAsNewEmail(string $mime, string $to, array $origHeaders, ?string $rid = null): bool
-    {
-        $origFrom    = $origHeaders['from']    ?? '';
-        $origSubject = $origHeaders['subject'] ?? '(no subject)';
-
-        $m = new PHPMailer(true);
-        try {
-            // SMTP submission to your own server
-            $m->isSMTP();
-            $m->Host       = 'smtp.monkeysmail.com';
-            $m->Port       = 587;
-            $m->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $m->SMTPAuth   = true;
-            $m->Username   = 'smtpuser';
-            $m->Password   = 'S3cureP@ssw0rd';
-            $m->Timeout    = 15;
-
-            // Build a NEW message from your domain
-            $m->setFrom('forwarder@monkeysmail.com', 'MonkeysMail Forwarder');
-            if ($origFrom !== '') {
-                // preserve reply path
-                $m->addReplyTo($origFrom);
-            }
-            $m->addAddress($to);
-
-            $m->Subject = 'Fwd: ' . $origSubject;
-            $m->Body    = "Forwarded message attached.\n\n--\nTrace: {$rid}";
-
-            // Attach original as message/rfc822 to keep it intact
-            $m->addStringAttachment($mime, 'original.eml', 'base64', 'message/rfc822');
-
-            $ok = $m->send();
-            if ($ok) $this->lg($rid ?? '-', "FORWARD (resend-as-new) OK", ['rcpt' => $to]);
-            else     $this->lg($rid ?? '-', "FORWARD (resend-as-new) FAILED (unknown)", ['rcpt' => $to]);
-            return $ok;
-        } catch (MailerException $e) {
-            $this->lg($rid ?? '-', "FORWARD (resend-as-new) FAILED", ['rcpt' => $to, 'err' => $e->getMessage()]);
-            return false;
-        }
-    }
-
     private function forwardViaOutbound(
         string $mime,
         string $to,
@@ -1207,11 +1164,13 @@ final class InboundMessageController
     ): void {
         $origFrom    = $origHeaders['from']    ?? '';
         $origSubject = $origHeaders['subject'] ?? '(no subject)';
+        $fromDomain  = $this->fromDomainForForward($domain);
+        $fromEmail   = "forwarder@{$fromDomain}";
 
         $payload = [
             'from' => [
-                'email' => 'forwarder@' . ($domain->getDomain() ?: 'monkeysmail.com'),
-                'name'  => 'MonkeysMail Forwarder',
+                'email' => $fromEmail,
+                'name'  => "MonkeysMail Forwarder",
             ],
             'replyTo' => $origFrom ?: null,
             'to'      => [$to],
@@ -1225,15 +1184,31 @@ final class InboundMessageController
             'tracking' => ['opens' => false, 'clicks' => false],
             'headers'  => [
                 'Auto-Submitted'    => 'auto-forwarded',
+                'Sender'            => 'forwarder@monkeysmail.com', // stable platform identity
                 'X-Forwarded-From'  => $origFrom,
                 'X-Forwarded-By'    => 'MonkeysMail',
                 'X-Forward-TraceId' => (string)$traceId,
             ],
+            // If your Outbound service supports envelope MAIL FROM or bounce domain, align it:
+            // 'mailFrom' => "bounce@bounce.{$fromDomain}",
         ];
 
-        // enqueue through your existing pipeline (quotas/events/retries)
         $this->outbound->createAndEnqueue($payload, $company, $domain);
     }
+    
+    private function fromDomainForForward(Domain $domain): string
+    {
+        $d = strtolower(trim((string)$domain->getDomain()));
+        if ($d === '') return 'monkeysmail.com';
 
+        // (Optional) don't ever try to send "as" freemail
+        if (preg_match('/(?:^|\.)((gmail|yahoo|outlook|hotmail|icloud)\.com)$/i', $d)) {
+            return 'monkeysmail.com';
+        }
 
+        // If you track verification in your model, gate on it:
+        // if (!$domain->isOutboundVerified()) return 'monkeysmail.com';
+
+        return $d;
+    }
 }
