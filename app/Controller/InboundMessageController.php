@@ -960,22 +960,21 @@ final class InboundMessageController
             return false;
         }
 
-        // Make sure MIME ends with newline (some MTAs care)
+        // Make sure MIME ends with a newline
         if ($mime === '' || substr($mime, -1) !== "\n") $mime .= "\n";
 
         $hasHdrRcpts = $this->mimeHasHeaderRecipients($mime);
 
-        $try = function(array $args) use ($mime) {
+        $try = function(array $argv) use ($mime) {
             $desc = [
                 0 => ['pipe', 'w'],
                 1 => ['pipe', 'w'],
                 2 => ['pipe', 'w'],
             ];
-            // Pass as array (no shell)
-            $proc = proc_open($args, $desc, $pipes);
+            $proc = proc_open($argv, $desc, $pipes);
             if (!is_resource($proc)) return [false, 0, '', 'proc_open failed', 0];
 
-            // Write MIME (chunked) in case the reader closes early
+            // Write MIME (chunked)
             $off = 0; $len = strlen($mime); $chunk = 64 * 1024; $ok = true;
             stream_set_blocking($pipes[0], true);
             while ($off < $len) {
@@ -993,8 +992,8 @@ final class InboundMessageController
             return [($ok && $code === 0), $code, (string)$stdout, (string)$stderr, $off];
         };
 
-        // Build base args
-        $base = [$sendmail, '-oi'];
+        $base = [$sendmail, '-oi', '-i']; // be explicit: -i == -oi
+
         $withF = function(array $a) use ($envelopeFrom) {
             if ($envelopeFrom && filter_var($envelopeFrom, FILTER_VALIDATE_EMAIL)) {
                 $a[] = '-f'; $a[] = $envelopeFrom;
@@ -1002,52 +1001,51 @@ final class InboundMessageController
             return $a;
         };
 
-        // Strategy A: if headers have To/Cc/Bcc → use -t (no argv rcpts)
-        // Strategy B: otherwise pass rcpt on argv (no -t)
-        $argsA = $withF(array_merge($base, ['-t']));
-        $argsB = $withF(array_merge($base, ['--', $rcpt]));
+        // Build four variants we’ll try in order:
+        // 1) -t (read To/Cc/Bcc) with -f
+        // 2) -t without -f
+        // 3) argv recipients with -f
+        // 4) argv recipients without -f
+        $variants = [];
 
-        // First attempt depends on header presence
-        $primary = $hasHdrRcpts ? $argsA : $argsB;
-        [$ok, $code, $out, $err, $wrote] = $try($primary);
-
-        // If failed and we used -f, retry once without -f
-        if (!$ok && in_array('-f', $primary, true)) {
-            $this->lg($rid ?? '-', "FORWARD retry WITHOUT -f", ['exit' => $code, 'stderr' => $err]);
-            $noF = array_values(array_filter($primary, fn($x) => $x !== '-f' && $x !== $envelopeFrom));
-            [$ok, $code, $out, $err, $wrote] = $try($noF);
+        if ($hasHdrRcpts) {
+            $variants[] = $withF(array_merge($base, ['-t']));
+            $variants[] = array_values(array_filter($variants[0], fn($x) => $x !== '-f' && $x !== ($envelopeFrom ?? '')));
         }
 
-        // If still failed **and** error says "No recipient addresses" + we used -t,
-        // fallback to argv recipients mode once.
-        if (!$ok && $hasHdrRcpts && stripos($err, 'no recipient addresses') !== false) {
-            $this->lg($rid ?? '-', "FORWARD fallback to argv rcpt", ['exit' => $code]);
-            $fallback = $withF(array_merge($base, ['--', $rcpt]));
-            [$ok, $code, $out, $err, $wrote] = $try($fallback);
-            if (!$ok && in_array('-f', $fallback, true)) {
-                $noF = array_values(array_filter($fallback, fn($x) => $x !== '-f' && $x !== $envelopeFrom));
-                [$ok, $code, $out, $err, $wrote] = $try($noF);
+        // Always include argv-recipient fallbacks (covers broken/missing headers or -t failures of any kind)
+        $argvWithF = $withF(array_merge($base, ['--', $rcpt]));
+        $variants[] = $argvWithF;
+        $variants[] = array_values(array_filter($argvWithF, fn($x) => $x !== '-f' && $x !== ($envelopeFrom ?? '')));
+
+        $last = [false, 0, '', '', 0];
+        foreach ($variants as $idx => $args) {
+            [$ok, $code, $out, $err, $wrote] = $try($args);
+            if ($ok) {
+                $this->lg($rid ?? '-', "FORWARD email OK", [
+                    'rcpt_hint' => $rcpt,
+                    'mode'      => in_array('-t', $args, true) ? 'header(-t)' : 'argv',
+                    'variant'   => $idx+1,
+                ]);
+                return true;
             }
+            // keep last failure to log
+            $last = [$ok, $code, $out, $err, $wrote];
+            // If we failed with -t for any reason, we’ll naturally move on to argv mode.
+            // If we failed with -f, the next variant without -f will run.
         }
 
-        if (!$ok) {
-            $this->lg($rid ?? '-', "FORWARD email FAILED", [
-                'rcpt_hint'   => $rcpt,
-                'exit'        => $code,
-                'wrote_bytes' => $wrote,
-                'stderr'      => $err,
-                'stdout'      => $out,
-                'from'        => $envelopeFrom,
-                'mode'        => $hasHdrRcpts ? 'header(-t)' : 'argv',
-            ]);
-            return false;
-        }
-
-        $this->lg($rid ?? '-', "FORWARD email OK", [
-            'rcpt_hint' => $rcpt,
-            'mode'      => $hasHdrRcpts ? 'header(-t)' : 'argv',
+        [, $code, $out, $err, $wrote] = $last;
+        $this->lg($rid ?? '-', "FORWARD email FAILED", [
+            'rcpt_hint'   => $rcpt,
+            'exit'        => $code,
+            'wrote_bytes' => $wrote,
+            'stderr'      => $err,
+            'stdout'      => $out,
+            'from'        => $envelopeFrom,
+            'mode'        => $hasHdrRcpts ? 'header(-t)→argv fallback failed' : 'argv',
         ]);
-        return true;
+        return false;
     }
 
     /**
