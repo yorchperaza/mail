@@ -1184,7 +1184,7 @@ final class InboundMessageController
             'tracking' => ['opens' => false, 'clicks' => false],
             'headers'  => [
                 'Auto-Submitted'    => 'auto-forwarded',
-                'Sender'            => 'forwarder@monkeysmail.com', // stable platform identity
+                'Sender'            => "forwarder@{$fromDomain}", // stable platform identity
                 'X-Forwarded-From'  => $origFrom,
                 'X-Forwarded-By'    => 'MonkeysMail',
                 'X-Forward-TraceId' => (string)$traceId,
@@ -1195,7 +1195,7 @@ final class InboundMessageController
 
         $this->outbound->createAndEnqueue($payload, $company, $domain);
     }
-    
+
     private function fromDomainForForward(Domain $domain): string
     {
         $d = strtolower(trim((string)$domain->getDomain()));
