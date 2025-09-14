@@ -949,92 +949,72 @@ final class InboundMessageController
             return false;
         }
 
-        // Basic sanity: this function is only for email recipients.
-        if (!$this->isEmail($rcpt)) {
-            $this->lg($rid ?? '-', "FORWARD email FAILED (invalid rcpt)", ['rcpt' => $rcpt]);
-            return false;
+        // Ensure the MIME ends with a newline; some MTAs are picky about final line
+        if ($mime === '' || substr($mime, -1) !== "\n") {
+            $mime .= "\n";
         }
 
-        // Some MTAs reject -f for unprivileged users. Only pass when it looks like an email.
-        $args = [$sendmail, '-oi']; // -oi ignore dots
-        if ($envelopeFrom && $this->isEmail($envelopeFrom)) {
+        $try = function(array $args) use ($mime, $rid) {
+            $descriptorspec = [
+                0 => ['pipe', 'w'], // stdin
+                1 => ['pipe', 'w'], // stdout
+                2 => ['pipe', 'w'], // stderr
+            ];
+            // IMPORTANT: pass command as ARRAY so PHP doesn’t invoke a shell
+            $proc = proc_open($args, $descriptorspec, $pipes, null, null);
+            if (!\is_resource($proc)) {
+                return [false, 0, '', 'proc_open failed'];
+            }
+
+            stream_set_blocking($pipes[0], true);
+            $ok = true;
+
+            // Write in chunks (gracefully handles early-close)
+            $off = 0; $len = strlen($mime); $chunk = 64 * 1024;
+            while ($off < $len) {
+                $n = min($chunk, $len - $off);
+                $w = @fwrite($pipes[0], substr($mime, $off, $n));
+                if ($w === false) { $ok = false; break; }
+                $off += $w;
+            }
+            @fclose($pipes[0]);
+
+            $stdout = stream_get_contents($pipes[1]); @fclose($pipes[1]);
+            $stderr = stream_get_contents($pipes[2]); @fclose($pipes[2]);
+            $code   = proc_close($proc);
+
+            return [$ok && $code === 0, $code, (string)$stdout, (string)$stderr, $off];
+        };
+
+        // Primary attempt: -oi -t (recipients from headers), keep -f if it looks valid
+        $args = [$sendmail, '-oi', '-t'];
+        if ($envelopeFrom && filter_var($envelopeFrom, FILTER_VALIDATE_EMAIL)) {
             $args[] = '-f';
             $args[] = $envelopeFrom;
         }
-        $args[] = '--';
-        $args[] = $rcpt;
 
-        $descriptorspec = [
-            0 => ['pipe', 'w'], // stdin
-            1 => ['pipe', 'w'], // stdout
-            2 => ['pipe', 'w'], // stderr
-        ];
+        [$ok, $code, $out, $err, $wrote] = $try($args);
 
-        $cmd = implode(' ', array_map('escapeshellarg', $args));
-        $proc = proc_open($cmd, $descriptorspec, $pipes, null, null);
-        if (!\is_resource($proc)) {
-            $this->lg($rid ?? '-', "FORWARD email FAILED (proc_open)", ['rcpt' => $rcpt]);
-            return false;
+        // If stdin closed immediately (wrote 0) or nonzero exit: retry once WITHOUT -f
+        if (!$ok && $wrote === 0 && in_array('-f', $args, true)) {
+            $this->lg($rid ?? '-', "FORWARD retry WITHOUT -f", ['exit' => $code, 'stderr' => $err]);
+            $argsNoF = array_values(array_filter($args, fn($a) => $a !== '-f' && $a !== $envelopeFrom));
+            [$ok, $code, $out, $err, $wrote] = $try($argsNoF);
         }
-
-        // Write MIME in chunks; if child closes stdin early, capture error cleanly.
-        $ok = true;
-        $chunkSize = 64 * 1024;
-        $len = strlen($mime);
-        $off = 0;
-
-        // Make writes blocking to simplify
-        stream_set_blocking($pipes[0], true);
-        // Ensure trailing newline (some MTAs are picky)
-        if ($len === 0 || substr($mime, -1) !== "\n") {
-            $mime .= "\n";
-            $len++;
-        }
-
-        while ($off < $len) {
-            $n = min($chunkSize, $len - $off);
-            // suppress warning; we’ll detect failure via === false and then read stderr
-            $w = @fwrite($pipes[0], substr($mime, $off, $n));
-            if ($w === false) {
-                $ok = false;
-                break;
-            }
-            $off += $w;
-        }
-        // Close stdin to signal EOF to sendmail
-        @fclose($pipes[0]);
-
-        // Read out any output/diagnostics
-        $stdout = stream_get_contents($pipes[1]); @fclose($pipes[1]);
-        $stderr = stream_get_contents($pipes[2]); @fclose($pipes[2]);
-
-        $code = proc_close($proc);
 
         if (!$ok) {
-            // Child closed stdin early → fwrite failed; log whatever stderr had.
-            $this->lg($rid ?? '-', "FORWARD email WRITE FAILED (pipe closed)", [
-                'rcpt' => $rcpt,
-                'wrote_bytes' => $off,
-                'stderr' => (string)$stderr,
-                'stdout' => (string)$stdout,
+            $this->lg($rid ?? '-', "FORWARD email FAILED", [
+                'rcpt_hint' => $rcpt, // only a hint; -t gets rcpts from headers
                 'exit' => $code,
+                'wrote_bytes' => $wrote,
+                'stderr' => $err,
+                'stdout' => $out,
                 'from' => $envelopeFrom,
             ]);
             return false;
         }
 
-        if ($code !== 0) {
-            $this->lg($rid ?? '-', "FORWARD email FAILED (exit != 0)", [
-                'rcpt' => $rcpt,
-                'code' => $code,
-                'stderr' => (string)$stderr,
-                'stdout' => (string)$stdout,
-                'from' => $envelopeFrom,
-            ]);
-            return false;
-        }
-
-        $this->lg($rid ?? '-', "FORWARD email OK", ['rcpt' => $rcpt, 'bytes' => $len]);
+        $this->lg($rid ?? '-', "FORWARD email OK", ['rcpt_hint' => $rcpt]);
         return true;
     }
 
