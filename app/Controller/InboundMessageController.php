@@ -936,44 +936,82 @@ final class InboundMessageController
         return (bool)filter_var($s, FILTER_VALIDATE_URL);
     }
 
-    /**
-     * Forward the raw MIME via local MTA's sendmail interface.
-     * - $envelopeFrom: use the original MAIL FROM if you have it, fallback to null.
-     * Returns true on success.
-     */
-    /** Check if MIME has To/Cc/Bcc headers (case-insensitive) */
-    private function mimeHasHeaderRecipients(string $mime): bool
+    /** Extract bare email from "Name <email>" or return null if invalid */
+    private function extractEmail(?string $s): ?string
     {
-        [$raw] = preg_split("/\r?\n\r?\n/", $mime, 2);
-        if ($raw === null) return false;
-        // unfold
-        $raw = preg_replace("/\r?\n[ \t]+/", ' ', $raw) ?? '';
-        $lraw = strtolower($raw);
-        return str_contains($lraw, "\nto:") || str_contains($lraw, "\ncc:") || str_contains($lraw, "\nbcc:");
+        if (!$s) return null;
+        // cheap parse: prefer angle address, else the string as-is
+        if (preg_match('/<([^>]+)>/', $s, $m)) {
+            $s = trim($m[1]);
+        }
+        $s = trim($s, " \t\r\n<>");
+        return filter_var($s, FILTER_VALIDATE_EMAIL) ? $s : null;
     }
 
-    private function forwardEmailRaw(string $mime, string $rcpt, ?string $envelopeFrom = null, ?string $rid = null): void
+    /** Ensure MIME ends with newline, optionally inject missing To: */
+    private function ensureDeliverableMime(string $mime, string $rcpt): string
+    {
+        // Split headers/body
+        $parts = preg_split("/\r?\n\r?\n/", $mime, 2);
+        $rawHdrs = (string)($parts[0] ?? '');
+        $body    = (string)($parts[1] ?? '');
+
+        // Unfold to check for To/Cc/Bcc easily
+        $unfold = preg_replace("/\r?\n[ \t]+/", ' ', $rawHdrs) ?? $rawHdrs;
+        $lh = strtolower($unfold);
+        $hasHdrRcpts = str_contains($lh, "\nto:") || str_contains($lh, "\ncc:") || str_contains($lh, "\nbcc:");
+
+        if (!$hasHdrRcpts) {
+            // Inject a To header at the top (keep original header order mostly intact)
+            // Also ensure Subject/From exist in case upstream stripped them
+            $add = [];
+            $add[] = "To: {$rcpt}";
+            if (!str_contains($lh, "\nfrom:"))    $add[] = "From: <>";
+            if (!str_contains($lh, "\nsubject:")) $add[] = "Subject: (no subject)";
+            $rawHdrs = implode("\r\n", $add) . "\r\n" . $rawHdrs;
+            $mime = $rawHdrs . "\r\n\r\n" . $body;
+        } else {
+            $mime = $rawHdrs . "\r\n\r\n" . $body;
+        }
+
+        // Ensure trailing newline
+        if ($mime === '' || substr($mime, -1) !== "\n") $mime .= "\n";
+        return $mime;
+    }
+
+    private function forwardEmailRaw(string $mime, string $rcpt, ?string $envelopeFrom = null, ?string $rid = null): bool
     {
         $sendmail = '/usr/sbin/sendmail';
         if (!is_file($sendmail) || !is_executable($sendmail)) {
             $this->lg($rid ?? '-', "FORWARD email FAILED (sendmail missing)", ['rcpt' => $rcpt, 'path' => $sendmail]);
-            return;
+            return false;
         }
 
-        // Ensure the MIME ends with a newline (some MTAs care)
-        if ($mime === '' || substr($mime, -1) !== "\n") $mime .= "\n";
+        // Sanitize/override envelope sender
+        $envOverride = getenv('FORWARD_ENVELOPE_FROM') ?: ($_ENV['FORWARD_ENVELOPE_FROM'] ?? null);
+        $envFrom = $this->extractEmail($envOverride ?: $envelopeFrom); // null if invalid
 
-        // Helper to exec sendmail and stream MIME to stdin
+        // Make MIME deliverable (inject To: if missing, ensure newline)
+        $mime = $this->ensureDeliverableMime($mime, $rcpt);
+
+        // Verbose transcript if requested
+        $verbose = (bool)($GLOBALS['_INBOUND_SENDMAIL_VERBOSE'] ?? false);
+        if (!$verbose) {
+            $flag = getenv('INBOUND_SENDMAIL_VERBOSE') ?: ($_ENV['INBOUND_SENDMAIL_VERBOSE'] ?? '');
+            $verbose = in_array(strtolower($flag), ['1','true','on','yes'], true);
+            $GLOBALS['_INBOUND_SENDMAIL_VERBOSE'] = $verbose;
+        }
+
         $try = function(array $argv) use ($mime) {
             $desc = [
-                0 => ['pipe', 'r'], // stdin
-                1 => ['pipe', 'w'], // stdout
-                2 => ['pipe', 'w'], // stderr
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
             ];
             $proc = proc_open($argv, $desc, $pipes);
             if (!is_resource($proc)) return [false, 0, '', 'proc_open failed', 0];
 
-            // Chunked write
+            // Chunked write in case reader closes early
             $off = 0; $len = strlen($mime); $chunk = 64 * 1024; $ok = true;
             stream_set_blocking($pipes[0], true);
             while ($off < $len) {
@@ -987,48 +1025,53 @@ final class InboundMessageController
             $stdout = stream_get_contents($pipes[1]); @fclose($pipes[1]);
             $stderr = stream_get_contents($pipes[2]); @fclose($pipes[2]);
             $code   = proc_close($proc);
-
             return [($ok && $code === 0), $code, (string)$stdout, (string)$stderr, $off];
         };
 
-        // Build argv: always use argv recipients (no -t)
-        $base = [$sendmail, '-oi', '-i']; // -i == -oi; keep both for compatibility
-        $args = $base;
-        $useF = false;
-        if ($envelopeFrom && filter_var($envelopeFrom, FILTER_VALIDATE_EMAIL)) {
-            $args[] = '-f';
-            $args[] = $envelopeFrom;
-            $useF = true;
-        }
-        $args[] = '--';
-        $args[] = $rcpt;
+        // Always use argv recipients (no -t)
+        $base = [$sendmail, '-oi', '-i'];
+        if ($verbose) $base[] = '-v';
 
-        // Try once with -f (if present) …
-        [$ok, $code, $out, $err, $wrote] = $try($args);
+        $withRcpt = function(array $a) use ($rcpt) {
+            $a[] = '--'; $a[] = $rcpt; return $a;
+        };
 
-        // …then retry once without -f if it failed
-        if (!$ok && $useF) {
-            $noF = array_values(array_filter($args, fn($x) => $x !== '-f' && $x !== $envelopeFrom));
-            [$ok, $code, $out, $err, $wrote] = $try($noF);
-        }
+        // Variant 1: with -f (if valid)
+        $v1 = $base;
+        if ($envFrom) { $v1[] = '-f'; $v1[] = $envFrom; }
+        $v1 = $withRcpt($v1);
 
-        if (!$ok) {
-            $this->lg($rid ?? '-', "FORWARD email FAILED", [
-                'rcpt_hint'   => $rcpt,
-                'exit'        => $code,
-                'wrote_bytes' => $wrote,
-                'stderr'      => $err,
-                'stdout'      => $out,
-                'from'        => $envelopeFrom,
-                'mode'        => 'argv',
-            ]);
-            return;
+        // Variant 2: without -f
+        $v2 = $withRcpt($base);
+
+        // Try V1 then V2
+        [$ok, $code, $out, $err, $wrote] = $try($v1);
+        if (!$ok && $envFrom) {
+            [$ok, $code, $out, $err, $wrote] = $try($v2);
         }
 
-        $this->lg($rid ?? '-', "FORWARD email OK", [
-            'rcpt_hint' => $rcpt,
-            'mode'      => 'argv',
+        if ($ok) {
+            // Trim long transcripts for logs
+            $t = $verbose ? substr(($out . "\n" . $err), 0, 2000) : null;
+            $this->lg($rid ?? '-', "FORWARD email OK", array_filter([
+                'rcpt_hint'  => $rcpt,
+                'mode'       => 'argv',
+                'from'       => $envFrom,
+                'transcript' => $t,
+            ]));
+            return true;
+        }
+
+        $this->lg($rid ?? '-', "FORWARD email FAILED", [
+            'rcpt_hint'   => $rcpt,
+            'exit'        => $code,
+            'wrote_bytes' => $wrote,
+            'stderr'      => $err,
+            'stdout'      => $out,
+            'from'        => $envFrom,
+            'mode'        => 'argv',
         ]);
+        return false;
     }
 
     /**
