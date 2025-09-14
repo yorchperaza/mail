@@ -14,6 +14,8 @@ use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
 use RuntimeException;
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception as MailerException;
 
 final class InboundMessageController
 {
@@ -1138,4 +1140,45 @@ final class InboundMessageController
         }
     }
 
+
+    private function forwardAsNewEmail(string $mime, string $to, array $origHeaders, ?string $rid = null): bool
+    {
+        $origFrom    = $origHeaders['from']    ?? '';
+        $origSubject = $origHeaders['subject'] ?? '(no subject)';
+
+        $m = new PHPMailer(true);
+        try {
+            // SMTP submission to your own server
+            $m->isSMTP();
+            $m->Host       = 'smtp.monkeysmail.com';
+            $m->Port       = 587;
+            $m->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+            $m->SMTPAuth   = true;
+            $m->Username   = 'smtpuser';
+            $m->Password   = 'S3cureP@ssw0rd';
+            $m->Timeout    = 15;
+
+            // Build a NEW message from your domain
+            $m->setFrom('forwarder@monkeysmail.com', 'MonkeysMail Forwarder');
+            if ($origFrom !== '') {
+                // preserve reply path
+                $m->addReplyTo($origFrom);
+            }
+            $m->addAddress($to);
+
+            $m->Subject = 'Fwd: ' . $origSubject;
+            $m->Body    = "Forwarded message attached.\n\n--\nTrace: {$rid}";
+
+            // Attach original as message/rfc822 to keep it intact
+            $m->addStringAttachment($mime, 'original.eml', 'base64', 'message/rfc822');
+
+            $ok = $m->send();
+            if ($ok) $this->lg($rid ?? '-', "FORWARD (resend-as-new) OK", ['rcpt' => $to]);
+            else     $this->lg($rid ?? '-', "FORWARD (resend-as-new) FAILED (unknown)", ['rcpt' => $to]);
+            return $ok;
+        } catch (MailerException $e) {
+            $this->lg($rid ?? '-', "FORWARD (resend-as-new) FAILED", ['rcpt' => $to, 'err' => $e->getMessage()]);
+            return false;
+        }
+    }
 }
