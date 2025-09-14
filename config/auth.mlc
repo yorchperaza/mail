@@ -23,7 +23,7 @@
 auth {
     token       = "changeme-super-secret"
     jwt_secret  = "changeme-even-more-secret"
-    jwt_ttl     = 3600
+    jwt_ttl     = 172800
 
     # → declare all of our “public” routes here:
     # match-all for dev or fully open API
