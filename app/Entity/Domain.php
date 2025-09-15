@@ -94,6 +94,19 @@ class Domain
     #[OneToMany(targetEntity: ApiKey::class, mappedBy: 'domain')]
     public array $apiKeys = [];
 
+    #[Field(type: 'string', nullable: true)]
+    public ?string $tlsrpt_rua = null; // mailto: target we collect at
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $tlsrpt_expected = null; // rendered value for _smtp._tls TXT
+
+    #[Field(type: 'string', nullable: true)]
+    public ?string $mta_sts_id = null; // current STS id used in _mta-sts TXT
+
+    #[Field(type: 'json', nullable: true)]
+    public ?array $mta_sts_expected = null; // policy TXT + CNAME(s) we ask the client to add
+
+
     public function __construct()
     {
         $this->dkimKeys = [];
@@ -474,4 +487,45 @@ class Domain
     {
         return $this->apiKeys;
     }
+
+    public function getTlsrpt_rua(): ?string
+    {
+        return $this->tlsrpt_rua;
+    }
+
+    public function setTlsrpt_rua(?string $v): self
+    {
+        $this->tlsrpt_rua = $v; return $this;
+    }
+
+    public function getTlsrpt_expected(): ?string
+    {
+        return $this->tlsrpt_expected;
+    }
+
+    public function setTlsrpt_expected(?string $v): self
+    {
+        $this->tlsrpt_expected = $v; return $this;
+    }
+
+    public function getMta_sts_id(): ?string
+    {
+        return $this->mta_sts_id;
+    }
+
+    public function setMta_sts_id(?string $v): self
+    {
+        $this->mta_sts_id = $v; return $this;
+    }
+
+    public function getMta_sts_expected(): ?array
+    {
+        return $this->mta_sts_expected;
+    }
+
+    public function setMta_sts_expected(?array $v): self
+    {
+        $this->mta_sts_expected = $v; return $this;
+    }
+
 }

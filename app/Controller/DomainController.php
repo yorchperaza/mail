@@ -286,6 +286,53 @@ final class DomainController
                 ];
             }
 
+            // === Managed TLS-RPT + MTA-STS expectations (NEW) ===
+            $clientDomain  = $domain->getDomain();
+            $stsEdgeTarget = 'mta-sts.monkeysmail.com.';           // your hosted STS edge
+            $tlsRptMailbox = 'tlsrpt@monkeyslegion.com';           // where you'll receive TLS-RPT
+
+            // 1) TLS-RPT (TXT at _smtp._tls.<domain>)
+            $tlsrptValue = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
+            $domain
+                ->setTlsrpt_rua('mailto:' . $tlsRptMailbox)
+                ->setTlsrpt_expected($tlsrptValue);
+
+            // 2) MTA-STS (TXT + CNAME + optional ACME delegation)
+            $mtaStsId   = 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
+            $mtaStsHost = 'mta-sts.' . $clientDomain;
+            $mtaStsDns  = [
+                'policy_txt' => [
+                    'name'  => '_mta-sts.' . $clientDomain,
+                    'type'  => 'TXT',
+                    'value' => 'v=STSv1; id=' . $mtaStsId,
+                    'ttl'   => 3600,
+                ],
+                'host' => [
+                    'name'  => $mtaStsHost,
+                    'type'  => 'CNAME',
+                    'value' => $stsEdgeTarget,
+                    'ttl'   => 3600,
+                ],
+                // Optional but recommended: let you issue certs via DNS-01
+                'acme_delegate' => [
+                    'name'  => '_acme-challenge.' . $mtaStsHost,
+                    'type'  => 'CNAME',
+                    'value' => '_acme-challenge.' . $clientDomain . '.auth.monkeysmail.com.',
+                    'ttl'   => 3600,
+                ],
+            ];
+            $domain
+                ->setMta_sts_id($mtaStsId)
+                ->setMta_sts_expected($mtaStsDns);
+
+            // Persist the new fields
+            try {
+                $domainRepo->save($domain);
+            } catch (\Throwable $e) {
+                // non-fatal; we still return the values in the response
+                error_log("[createDomain][$rid] Warning: saving TLS-RPT/MTA-STS fields failed: " . $e->getMessage());
+            }
+
             // ---- build response safely (ip_pool may be absent) ----
             $resp = new JsonResponse([
                 'id'         => $domain->getId(),
@@ -297,8 +344,17 @@ final class DomainController
                     'spf_expected'   => $bootstrap['dns']['spf']   ?? null,
                     'dmarc_expected' => $bootstrap['dns']['dmarc'] ?? null,
                     'mx_expected'    => $bootstrap['dns']['mx']    ?? null,
-                    // DomainConfig now returns a selector→{selector,value} map
+                    // DomainConfig returns selector→{selector,value}
                     'dkim'           => $bootstrap['dns']['dkim']  ?? null,
+
+                    // NEW: TLS-RPT + MTA-STS
+                    'tlsrpt'         => [
+                        'name'  => '_smtp._tls.' . $domain->getDomain(),
+                        'type'  => 'TXT',
+                        'value' => $domain->getTlsrpt_expected(),
+                        'rua'   => $domain->getTlsrpt_rua(),
+                    ],
+                    'mta_sts'        => $domain->getMta_sts_expected(),
                 ],
                 'smtp'       => [
                     'host'     => 'smtp.monkeysmail.com',
@@ -308,7 +364,7 @@ final class DomainController
                     'username' => $creds['username'] ?? null,
                     // keep full password in response, but DO NOT log it
                     'password' => $creds['password'] ?? null,
-                    'ip_pool'  => $creds['ip_pool']  ?? null,   // safe default
+                    'ip_pool'  => $creds['ip_pool']  ?? null,
                 ],
                 // Non-blocking warning the UI can display
                 'opendkim_error' => $opendkimError,
@@ -320,7 +376,6 @@ final class DomainController
 
         } catch (\Throwable $e) {
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
-            // Log full exception with code + first line of trace for quick pinpointing
             $trace = explode("\n", $e->getTraceAsString())[0] ?? '';
             error_log("[createDomain][$rid] ERROR code={$e->getCode()} msg=" . $e->getMessage() . " at {$trace} dt_ms={$dt}");
 
@@ -403,6 +458,59 @@ final class DomainController
             }
         }
 
+        // ---- TLS-RPT & MTA-STS expectations (with fallbacks) ----
+        // These assume you added getters:
+        //   getTlsrpt_expected(): ?string
+        //   getTlsrpt_rua(): ?string
+        //   getMta_sts_expected(): ?array
+        //   getMta_sts_id(): ?string
+        $clientDomain = $domain->getDomain();
+
+        // TLS-RPT
+        $tlsRptValue = method_exists($domain, 'getTlsrpt_expected') ? $domain->getTlsrpt_expected() : null;
+        $tlsRptRua   = method_exists($domain, 'getTlsrpt_rua') ? $domain->getTlsrpt_rua() : null;
+        if (!$tlsRptValue) {
+            // default to your managed mailbox if not persisted
+            $tlsRptRua   = $tlsRptRua ?: 'mailto:tlsrpt@monkeyslegion.com';
+            $tlsRptValue = sprintf('v=TLSRPTv1; rua=%s', $tlsRptRua);
+        }
+        $tlsrptRecord = [
+            'name'  => '_smtp._tls.' . $clientDomain,
+            'type'  => 'TXT',
+            'value' => $tlsRptValue,
+            'rua'   => $tlsRptRua,
+            'ttl'   => 3600,
+        ];
+
+        // MTA-STS
+        $mtaSts = method_exists($domain, 'getMta_sts_expected') ? $domain->getMta_sts_expected() : null;
+        $mtaStsId = method_exists($domain, 'getMta_sts_id') ? $domain->getMta_sts_id() : null;
+        if (!$mtaSts) {
+            $mtaStsId = $mtaStsId ?: 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
+            $mtaSts = [
+                'policy_txt' => [
+                    'name'  => '_mta-sts.' . $clientDomain,
+                    'type'  => 'TXT',
+                    'value' => 'v=STSv1; id=' . $mtaStsId,
+                    'ttl'   => 3600,
+                ],
+                'host' => [
+                    'name'  => 'mta-sts.' . $clientDomain,
+                    'type'  => 'CNAME',
+                    'value' => 'mta-sts.monkeysmail.com.',
+                    'ttl'   => 3600,
+                ],
+                'acme_delegate' => [
+                    'name'  => '_acme-challenge.' . 'mta-sts.' . $clientDomain,
+                    'type'  => 'CNAME',
+                    'value' => '_acme-challenge.' . $clientDomain . '.auth.monkeysmail.com.',
+                    'ttl'   => 3600,
+                ],
+            ];
+        }
+        // Public policy URL at your managed edge (constant)
+        $mtaStsPolicyUrl = 'https://mta-sts.monkeysmail.com/.well-known/mta-sts.txt';
+
         // 5) Response
         $out = [
             'id'              => $domain->getId(),
@@ -429,7 +537,13 @@ final class DomainController
                 'spf_expected'   => $domain->getSpf_expected(),
                 'dmarc_expected' => $domain->getDmarc_expected(),
                 'mx_expected'    => $domain->getMx_expected(),
-                'dkim_expected'  => $dkimExpected,   // <-- now always publishable when key exists
+                'dkim_expected'  => $dkimExpected,   // unchanged
+
+                // NEW
+                'tlsrpt'         => $tlsrptRecord,
+                'mta_sts'        => $mtaSts,
+                'mta_sts_policy_url' => $mtaStsPolicyUrl,
+                'mta_sts_id'     => $mtaStsId,
             ],
 
             // counts
