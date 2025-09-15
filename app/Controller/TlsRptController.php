@@ -5,6 +5,7 @@ namespace App\Controller;
 
 use App\Entity\Company;
 use App\Entity\Domain;
+use App\Service\TlsRptEmailParser;
 use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Query\QueryBuilder;
 use MonkeysLegion\Repository\RepositoryFactory;
@@ -114,116 +115,6 @@ final class TlsRptController
         ];
     }
 
-    /**
-     * POST /ingest/tlsrpt
-     * Body: TLS-RPT JSON or { payload: {...}, receivedAt?: ISO }
-     */
-    #[Route(methods: 'POST', path: '/ingest/tlsrpt')]
-    public function ingestTlsRpt(ServerRequestInterface $r): JsonResponse
-    {
-        $this->authUser($r);
-
-        $raw = (string)$r->getBody();
-        $json = json_decode($raw, true);
-        if (!is_array($json)) {
-            return new JsonResponse(['ok' => false, 'error' => 'Invalid JSON'], 400);
-        }
-
-        $payload = isset($json['payload']) && is_array($json['payload']) ? $json['payload'] : $json;
-        $receivedAtIso = isset($json['receivedAt']) ? (string)$json['receivedAt'] : (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM);
-
-        $norm = $this->normalizeTlsRpt($payload);
-        if (empty($norm['policy_domain'])) {
-            return new JsonResponse(['ok' => false, 'error' => 'policy-domain not found in report'], 400);
-        }
-
-        /** @var \App\Repository\DomainRepository $domainRepo */
-        $domainRepo = $this->repos->getRepository(Domain::class);
-        /** @var Domain|null $domain */
-        $domain = $domainRepo->findOneBy(['name' => $norm['policy_domain']]); // adjust if your field is different
-        if (!$domain) {
-            return new JsonResponse(['ok' => false, 'error' => 'Domain not found: ' . $norm['policy_domain']], 404);
-        }
-
-        // Upsert by (domain_id, report_id)
-        $fields = [
-            'domain_id'     => $domain->getId(),
-            'reporter'      => $norm['reporter'],
-            'report_id'     => $norm['report_id'],
-            'date_start'    => $norm['date_start']?->format('Y-m-d H:i:s'),
-            'date_end'      => $norm['date_end']?->format('Y-m-d H:i:s'),
-            'success_count' => (int)$norm['success_count'],
-            'failure_count' => (int)$norm['failure_count'],
-            'details'       => json_encode($norm['details'] ?? []),
-            'received_at'   => (new \DateTimeImmutable($receivedAtIso))->format('Y-m-d H:i:s'),
-        ];
-
-        try {
-            $cols         = array_keys($fields);
-            $insertCols   = implode(', ', $cols);
-            $placeholders = implode(', ', array_map(fn($c) => ':' . $c, $cols));
-            $updates      = implode(', ', array_map(fn($c) => "$c = VALUES($c)", array_diff($cols, ['domain_id','report_id'])));
-
-            $sql = "INSERT INTO tlsrptreport ($insertCols) VALUES ($placeholders)
-                    ON DUPLICATE KEY UPDATE $updates";
-
-            $pdo  = $this->qb->pdo();
-            $stmt = $pdo->prepare($sql);
-            $params = [];
-            foreach ($fields as $k => $v) $params[":$k"] = $v;
-            $ok = $stmt->execute($params);
-            if (!$ok) {
-                [$state, $code, $msg] = $stmt->errorInfo();
-                throw new \RuntimeException("TLS-RPT upsert failed: $state/$code – $msg");
-            }
-
-            // Determine id (insert vs duplicate)
-            $rowId = (int)$pdo->lastInsertId();
-            if ($rowId === 0) {
-                $stmt2 = $pdo->prepare("SELECT id FROM tlsrptreport WHERE domain_id = :did AND report_id = :rid LIMIT 1");
-                $stmt2->bindValue(':did', $fields['domain_id'], \PDO::PARAM_INT);
-                $stmt2->bindValue(':rid', $fields['report_id'], \PDO::PARAM_STR);
-                $stmt2->execute();
-                $rowId = (int)($stmt2->fetchColumn() ?: 0);
-            }
-
-            // Dispatch webhook event to the company's subscribers
-            $companyId = (int)($domain->getCompany()?->getId() ?? 0);
-            if ($companyId > 0) {
-                $this->dispatcher->dispatch(
-                    $companyId,
-                    'tlsrpt.received',
-                    [
-                        'tlsrptId'   => $rowId ?: null,
-                        'domainId'   => $domain->getId(),
-                        'domain'     => method_exists($domain, 'getDomain') ? $domain->getDomain() : ($norm['policy_domain'] ?? null),
-                        'reportId'   => $norm['report_id'],
-                        'reporter'   => $norm['reporter'],
-                        'window'     => [
-                            'start' => $norm['date_start']?->format(\DateTimeInterface::ATOM),
-                            'end'   => $norm['date_end']?->format(\DateTimeInterface::ATOM),
-                        ],
-                        'summary'    => [
-                            'success' => (int)$norm['success_count'],
-                            'failure' => (int)$norm['failure_count'],
-                        ],
-                        'receivedAt' => (new \DateTimeImmutable($receivedAtIso))->format(\DateTimeInterface::ATOM),
-                    ],
-                    $rowId ?: null
-                );
-            }
-
-            return new JsonResponse([
-                'ok'         => true,
-                'tlsrptId'   => $rowId,
-                'domainId'   => $domain->getId(),
-                'dispatched' => $companyId > 0,
-            ]);
-
-        } catch (\Throwable $e) {
-            return new JsonResponse(['ok' => false, 'error' => $e->getMessage()], 500);
-        }
-    }
 
     /**
      * GET /companies/{hash}/reports/tlsrpt?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -299,4 +190,168 @@ final class TlsRptController
             'reports' => $byDomain,
         ]);
     }
+
+    /**
+     * Core saver used by both endpoints.
+     * Returns ['ok'=>bool, ...] like your public endpoint.
+     *
+     * @param array  $payload  One TLS-RPT JSON (RFC 8460)
+     * @param string $receivedAtIso ISO-8601 when we received the email/webhook
+     * @return array<string,mixed>
+     */
+    private function saveTlsRpt(array $payload, string $receivedAtIso): array
+    {
+        $norm = $this->normalizeTlsRpt($payload);
+        if (empty($norm['policy_domain'])) {
+            return ['ok' => false, 'error' => 'policy-domain not found in report'];
+        }
+
+        /** @var \App\Repository\DomainRepository $domainRepo */
+        $domainRepo = $this->repos->getRepository(Domain::class);
+        /** @var Domain|null $domain */
+        $domain = $domainRepo->findOneBy(['domain' => $norm['policy_domain']]);
+        if (!$domain) {
+            return ['ok' => false, 'error' => 'Domain not found: ' . $norm['policy_domain']];
+        }
+
+        $fields = [
+            'domain_id'     => $domain->getId(),
+            'reporter'      => $norm['reporter'],
+            'report_id'     => $norm['report_id'],
+            'date_start'    => $norm['date_start']?->format('Y-m-d H:i:s'),
+            'date_end'      => $norm['date_end']?->format('Y-m-d H:i:s'),
+            'success_count' => (int)$norm['success_count'],
+            'failure_count' => (int)$norm['failure_count'],
+            'details'       => json_encode($norm['details'] ?? []),
+            'received_at'   => (new \DateTimeImmutable($receivedAtIso))->format('Y-m-d H:i:s'),
+        ];
+
+        $pdo  = $this->qb->pdo();
+        $cols         = array_keys($fields);
+        $insertCols   = implode(', ', $cols);
+        $placeholders = implode(', ', array_map(fn($c) => ':' . $c, $cols));
+        $updates      = implode(', ', array_map(fn($c) => "$c = VALUES($c)", array_diff($cols, ['domain_id','report_id'])));
+
+        $sql = "INSERT INTO tlsrptreport ($insertCols) VALUES ($placeholders)
+                ON DUPLICATE KEY UPDATE $updates";
+
+        $stmt = $pdo->prepare($sql);
+        $params = [];
+        foreach ($fields as $k => $v) $params[":$k"] = $v;
+
+        if (!$stmt->execute($params)) {
+            [$state, $code, $msg] = $stmt->errorInfo();
+            return ['ok' => false, 'error' => "TLS-RPT upsert failed: $state/$code – $msg"];
+        }
+
+        // id for insert or existing row
+        $rowId = (int)$pdo->lastInsertId();
+        if ($rowId === 0) {
+            $stmt2 = $pdo->prepare("SELECT id FROM tlsrptreport WHERE domain_id = :did AND report_id = :rid LIMIT 1");
+            $stmt2->bindValue(':did', $fields['domain_id'], \PDO::PARAM_INT);
+            $stmt2->bindValue(':rid', $fields['report_id'], \PDO::PARAM_STR);
+            $stmt2->execute();
+            $rowId = (int)($stmt2->fetchColumn() ?: 0);
+        }
+
+        // webhook
+        $companyId = (int)($domain->getCompany()?->getId() ?? 0);
+        if ($companyId > 0) {
+            $this->dispatcher->dispatch(
+                $companyId,
+                'tlsrpt.received',
+                [
+                    'tlsrptId'   => $rowId ?: null,
+                    'domainId'   => $domain->getId(),
+                    'domain'     => method_exists($domain, 'getDomain') ? $domain->getDomain() : ($norm['policy_domain'] ?? null),
+                    'reportId'   => $norm['report_id'],
+                    'reporter'   => $norm['reporter'],
+                    'window'     => [
+                        'start' => $norm['date_start']?->format(\DateTimeInterface::ATOM),
+                        'end'   => $norm['date_end']?->format(\DateTimeInterface::ATOM),
+                    ],
+                    'summary'    => [
+                        'success' => (int)$norm['success_count'],
+                        'failure' => (int)$norm['failure_count'],
+                    ],
+                    'receivedAt' => (new \DateTimeImmutable($receivedAtIso))->format(\DateTimeInterface::ATOM),
+                ],
+                $rowId ?: null
+            );
+        }
+
+        return [
+            'ok'         => true,
+            'tlsrptId'   => $rowId,
+            'domainId'   => $domain->getId(),
+            'dispatched' => $companyId > 0,
+        ];
+    }
+
+    /**
+     * POST /ingest/tlsrpt
+     * Body: TLS-RPT JSON or { payload: {...}, receivedAt?: ISO }
+     */
+    #[Route(methods: 'POST', path: '/ingest/tlsrpt')]
+    public function ingestTlsRpt(ServerRequestInterface $r): JsonResponse
+    {
+        $this->authUser($r);
+
+        $raw  = (string)$r->getBody();
+        $json = json_decode($raw, true);
+        if (!is_array($json)) {
+            return new JsonResponse(['ok' => false, 'error' => 'Invalid JSON'], 400);
+        }
+
+        $payload      = (isset($json['payload']) && is_array($json['payload'])) ? $json['payload'] : $json;
+        $receivedAtIso = isset($json['receivedAt'])
+            ? (string)$json['receivedAt']
+            : (new \DateTimeImmutable())->format(\DateTimeInterface::ATOM);
+
+        $result = $this->saveTlsRpt($payload, $receivedAtIso);
+
+        return new JsonResponse($result, $result['ok'] ? 200 : 400);
+    }
+
+    /**
+     * POST /hooks/tlsrpt/email
+     * Accepts raw MIME from inbound email provider, extracts TLS-RPT JSON(s), saves each.
+     */
+    #[Route(methods: 'POST', path: '/hooks/tlsrpt/email')]
+    public function tlsRptInbound(ServerRequestInterface $r): JsonResponse
+    {
+        // Raw MIME may be in 'email' (SendGrid) or 'body-mime' (Mailgun) or raw body
+        $body = $r->getParsedBody();
+        $raw  = is_array($body)
+            ? (string)($body['email'] ?? $body['body-mime'] ?? '')
+            : '';
+        if ($raw === '') {
+            $raw = (string)$r->getBody();
+        }
+        if ($raw === '') {
+            return new JsonResponse(['ok'=>false,'error'=>'No MIME found'], 400);
+        }
+
+        $parser  = new TlsRptEmailParser();
+        $reports = $parser->parse($raw);
+        if (!$reports) {
+            return new JsonResponse(['ok'=>false,'error'=>'No TLS-RPT JSON found'], 422);
+        }
+
+        $ingested = 0;
+        $errors   = [];
+        foreach ($reports as $rep) {
+            $payload      = $rep['json'];
+            $receivedAtIso = $rep['receivedAt'];
+            $res = $this->saveTlsRpt($payload, $receivedAtIso);
+            if (($res['ok'] ?? false) === true) {
+                $ingested++;
+            } else {
+                $errors[] = $res['error'] ?? 'unknown error';
+            }
+        }
+
+        return new JsonResponse(['ok'=> true, 'count'=> $ingested, 'errors'=> $errors]);
+    }
+
 }

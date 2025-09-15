@@ -35,7 +35,7 @@ sleep 2
 # Step 3: Get tracking token (requires DB access)
 echo "2. Getting tracking token from database..."
 echo "Run this SQL query to get the token:"
-echo "SELECT track_token FROM messagerecipients WHERE message_id = $MESSAGE_ID LIMIT 1;"
+echo "SELECT track_token FROM messagerecipient WHERE message_id = $MESSAGE_ID LIMIT 1;"
 echo ""
 read -p "Enter the tracking token from DB: " TOKEN
 
