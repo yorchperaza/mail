@@ -14,94 +14,175 @@ final class DomainDnsVerifier
     }
 
     /**
-     * Verify TXT (verification), SPF, DMARC, MX, and DKIM (if present) for a domain.
-     * Persists a structured report + updates status/verified_at accordingly.
-     * Returns the report array for the API.
+     * Verify TXT (verification), SPF, DMARC, MX, DKIM,
+     * PLUS TLS-RPT + MTA-STS (DNS+HTTPS policy).
      */
     public function verifyAndPersist(Domain $domain): array
     {
-        $name = strtolower(trim((string)$domain->getDomain()));
+        $nowIso = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DateTimeInterface::ATOM);
+        $name   = strtolower(trim((string)$domain->getDomain()));
+
         $expected = [
             'txt_name'  => (string)$domain->getTxt_name(),
             'txt_value' => (string)$domain->getTxt_value(),
             'spf'       => (string)$domain->getSpf_expected(),
             'dmarc'     => (string)$domain->getDmarc_expected(),
-            'mx'        => (array)$domain->getMx_expected(), // e.g. [['host'=>..., 'value'=>..., 'priority'=>10]]
+            'mx'        => (array)$domain->getMx_expected(), // [['host'=>..., 'value'=>..., 'priority'=>10]]
         ];
 
-        /* --------------------------- DKIM (optional / recommended) --------------------------- */
+        /* ------------ DKIM (optional/recommended) ------------- */
         $dkimName  = null;
-        $dkimValue = null; // full TXT value: "v=DKIM1; k=rsa; p=...."
-
-        // Locate active DKIM key from the domain’s relation (if any)
+        $dkimValue = null; // "v=DKIM1; k=rsa; p=..."
         $activeDkim = null;
         foreach ($domain->getDkimKeys() ?? [] as $k) {
             if ($k->getActive()) { $activeDkim = $k; break; }
         }
-
         if ($activeDkim) {
             $selector = trim((string)$activeDkim->getSelector());
             if ($selector !== '') {
                 $dkimName = sprintf('%s._domainkey.%s', $selector, $name);
-
-                // If you stored a PEM in public_key_pem, convert to DKIM p= value
                 $pem = (string)$activeDkim->getPublic_key_pem();
-                $p   = $this->pemToDkimP($pem); // base64 (no headers/whitespace)
-                if ($p !== '') {
-                    $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
-                }
+                $p   = $this->pemToDkimP($pem);
+                if ($p !== '') $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
             }
         }
 
+        /* ------------ TLS-RPT expected (from Domain fields) ------------- */
+        $tlsrptExpected = method_exists($domain, 'getTlsrpt_expected')
+            ? (string)$domain->getTlsrpt_expected()
+            : null;
+        $tlsrptHost = '_smtp._tls.' . $name;
+
+        /* ------------ MTA-STS expected (from Domain fields) ------------- */
+        /** @var array<string,mixed> $mtaStsExpected */
+        $mtaStsExpected = method_exists($domain, 'getMta_sts_expected')
+            ? (array)$domain->getMta_sts_expected()
+            : [];
+        $stsTxtName = '_mta-sts.' . $name;
+        $stsHost    = 'mta-sts.' . $name;
+        $expectedCname = (string)($mtaStsExpected['host']['value'] ?? 'mta-sts.monkeysmail.com.');
+        if ($expectedCname !== '') {
+            $expectedCname = rtrim(strtolower($expectedCname), '.') . '.';
+        }
+
         /* ---------------------------------- Run checks ---------------------------------- */
-        $report = [
-            'checked_at' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DateTimeInterface::ATOM),
-            'domain'     => $name,
-            'records'    => [
-                'verification_txt' => $this->checkVerificationTxt($expected['txt_name'], $expected['txt_value']),
-                'spf'               => $this->checkSpf($name, $expected['spf']),
-                'dmarc'             => $this->checkDmarc($name, $expected['dmarc']),
-                'mx'                => $this->checkMx($name, $expected['mx']),
-                'dkim'              => ($dkimName && $dkimValue)
-                    ? $this->checkDkim($dkimName, $dkimValue)
-                    : ['status' => 'skipped', 'found' => [], 'errors' => ['no_active_dkim']],
-            ],
-            'summary' => [],
+        $records = [
+            'verification_txt' => $this->checkVerificationTxt($expected['txt_name'], $expected['txt_value']),
+            'spf'               => $this->checkSpf($name, $expected['spf']),
+            'dmarc'             => $this->checkDmarc($name, $expected['dmarc']),
+            'mx'                => $this->checkMx($name, $expected['mx']),
+            'dkim'              => ($dkimName && $dkimValue)
+                ? $this->checkDkim($dkimName, $dkimValue)
+                : ['status' => 'skipped', 'found' => [], 'errors' => ['no_active_dkim']],
+        ];
+
+        /* =========================
+         * TLS-RPT verification
+         * ========================= */
+        $tlsFound = $this->txtValues($tlsrptHost);
+        $tlsOk = false;
+        if ($tlsrptExpected) {
+            $tlsOk = in_array($this->normalizeTxt($tlsrptExpected), array_map([$this,'normalizeTxt'], $tlsFound), true);
+        }
+        $records['tlsrpt'] = [
+            'status'   => ($tlsrptExpected && $tlsOk) ? 'pass' : 'fail',
+            'host'     => $tlsrptHost,
+            'expected' => $tlsrptExpected,
+            'found'    => $tlsFound,
+            'errors'   => ($tlsrptExpected && $tlsOk) ? [] : ['tlsrpt_not_matching_or_missing'],
+        ];
+
+        /* =========================
+         * MTA-STS DNS verification
+         * ========================= */
+        $stsTxts = $this->txtValues($stsTxtName);
+        $policyIdOk = false;
+        foreach ($stsTxts as $txt) {
+            if (preg_match('~^v=STSv1;\s*id=\S+~i', trim($txt))) { $policyIdOk = true; break; }
+        }
+
+        $cnameTargets = $this->cnameTargets($stsHost);
+        $cnameOk = false;
+        foreach ($cnameTargets as $t) {
+            $t = rtrim(strtolower($t), '.') . '.';
+            if ($t === $expectedCname) { $cnameOk = true; break; }
+        }
+
+        $records['mta_sts_dns'] = [
+            'status'          => ($policyIdOk && ($expectedCname === '' || $cnameOk)) ? 'pass' : 'fail',
+            'policy_txt_name' => $stsTxtName,
+            'policy_txt_found'=> $stsTxts,
+            'policy_txt_ok'   => $policyIdOk,
+            'host_name'       => $stsHost,
+            'cname_found'     => $cnameTargets,
+            'cname_expected'  => $expectedCname ?: null,
+            'cname_ok'        => $expectedCname ? $cnameOk : null,
+            'errors'          => ($policyIdOk && ($expectedCname === '' || $cnameOk)) ? [] : ['mta_sts_dns_invalid'],
+        ];
+
+        /* =========================
+         * MTA-STS HTTPS policy fetch
+         * ========================= */
+        $policyUrl = "https://{$stsHost}/.well-known/mta-sts.txt";
+        $http = $this->httpGet($policyUrl, 5000);
+        $parsed = null;
+        $policyOk = false;
+        $httpOk = ($http['status'] >= 200 && $http['status'] < 300 && $http['error'] === null);
+
+        if ($httpOk) {
+            $parsed = $this->parseStsPolicy($http['body']);
+            $policyOk = !isset($parsed['error']) && ($parsed['version'] ?? null) === 'STSv1';
+        }
+
+        $records['mta_sts_policy'] = [
+            'status' => ($httpOk && $policyOk) ? 'pass' : 'fail',
+            'url'    => $policyUrl,
+            'http'   => ['status' => $http['status'], 'error' => $http['error']],
+            'parsed' => $parsed,
+            'errors' => ($httpOk && $policyOk) ? [] : ['mta_sts_policy_unreachable_or_invalid'],
         ];
 
         /* --------------------------- Required rules (policy) --------------------------- */
-        // MX is optional for outbound-only. Toggle DKIM requirement here (env/config friendly).
-        $requireDkim = true; // set to false to make DKIM recommended (not required)
-
+        $requireDkim = true;  // adjust if DKIM should be advisory only
         $required = [
-            'verification_txt' => true,           // prove ownership
-            'spf'              => true,           // sending authorization
-            'dmarc'            => true,           // alignment/reporting
-            'mx'               => false,          // inbound optional
-            'dkim'             => $requireDkim,   // stricter if true
+            'verification_txt' => true,
+            'spf'              => true,
+            'dmarc'            => true,
+            'mx'               => false, // inbound optional
+            'dkim'             => $requireDkim,
+            'tlsrpt'           => true,
+            'mta_sts_dns'      => true,
+            'mta_sts_policy'   => true,
         ];
 
-        // Compute summary & activation decision
+        $summary = [];
         $allRequiredPass = true;
-        foreach ($report['records'] as $kind => $res) {
+        foreach ($records as $kind => $res) {
             $pass = ($res['status'] ?? '') === 'pass';
-            $report['summary'][$kind] = $pass ? 'pass' : ($res['status'] ?? 'fail');
+            $summary[$kind] = $pass ? 'pass' : ($res['status'] ?? 'fail');
             if (!empty($required[$kind]) && !$pass) {
                 $allRequiredPass = false;
             }
         }
 
         /* --------------------------- Persist the report + status flip --------------------------- */
+        $report = [
+            'checked_at' => $nowIso,
+            'domain'     => $name,
+            'records'    => $records,
+            'summary'    => $summary,
+        ];
+
         $domain->setStatus($allRequiredPass ? 'active' : 'pending');
         if ($allRequiredPass && !$domain->getVerified_at()) {
-            $domain->setVerified_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $domain->setVerified_at(new \DateTimeImmutable($nowIso));
         }
-        // Save report + timestamp if the entity has those columns/setters
         if (method_exists($domain, 'setVerification_report')) {
+            // if your ORM column is JSON, it’s fine to store as array
             $domain->setVerification_report($report);
         }
         if (method_exists($domain, 'setLast_checked_at')) {
-            $domain->setLast_checked_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')));
+            $domain->setLast_checked_at(new \DateTimeImmutable($nowIso));
         }
 
         /** @var \App\Repository\DomainRepository $repo */
@@ -111,7 +192,7 @@ final class DomainDnsVerifier
         return $report;
     }
 
-    /* ------------ Individual checks ------------- */
+    /* ------------ Individual checks you already had ------------- */
 
     private function checkVerificationTxt(string $name, string $expected): array
     {
@@ -119,7 +200,6 @@ final class DomainDnsVerifier
             return ['status' => 'fail', 'found' => [], 'errors' => ['missing_expected']];
         }
         $found = $this->txtValues($name);
-        // exact match (trim normalize quotes/spacing)
         $ok = in_array($this->normalizeTxt($expected), array_map([$this, 'normalizeTxt'], $found), true);
         return [
             'status'   => $ok ? 'pass' : 'fail',
@@ -140,9 +220,7 @@ final class DomainDnsVerifier
         $ok = false;
         foreach ($found as $txt) {
             if (str_starts_with(strtolower(trim($txt)), 'v=spf1')) {
-                if ($this->normalizeSpf($txt) === $normExp) {
-                    $ok = true; break;
-                }
+                if ($this->normalizeSpf($txt) === $normExp) { $ok = true; break; }
             }
         }
         return [
@@ -176,7 +254,7 @@ final class DomainDnsVerifier
         $exp = array_map(function ($r) {
             return [
                 'host'     => strtolower(trim((string)($r['host'] ?? ''))),
-                'value'    => rtrim(strtolower(trim((string)($r['value'] ?? ''))), '.') . '.', // ensure trailing dot
+                'value'    => rtrim(strtolower(trim((string)($r['value'] ?? ''))), '.') . '.', // trailing dot
                 'priority' => (int)($r['priority'] ?? 10),
             ];
         }, $expected);
@@ -191,14 +269,11 @@ final class DomainDnsVerifier
             ];
         }
 
-        // All expected must be present among found (order may vary)
         $missing = [];
         foreach ($exp as $er) {
             $match = false;
             foreach ($found as $fr) {
-                if ($er['value'] === $fr['value'] && $er['priority'] === $fr['priority']) {
-                    $match = true; break;
-                }
+                if ($er['value'] === $fr['value'] && $er['priority'] === $fr['priority']) { $match = true; break; }
             }
             if (!$match) $missing[] = $er;
         }
@@ -215,7 +290,7 @@ final class DomainDnsVerifier
     private function checkDkim(string $host, string $expectedValue): array
     {
         $found   = $this->txtValues($host);
-        $normExp = $this->normalizeDkim($expectedValue); // reduce to p=... if present
+        $normExp = $this->normalizeDkim($expectedValue);
         $ok = in_array($normExp, array_map([$this, 'normalizeDkim'], $found), true);
 
         return [
@@ -227,17 +302,34 @@ final class DomainDnsVerifier
         ];
     }
 
-    /* ------------ DNS helpers & normalizers ------------- */
+    /* ------------ DNS/HTTP helpers & normalizers ------------- */
 
+    /** Return TXT values (best-effort normalized) */
     private function txtValues(string $host): array
     {
-        $recs = dns_get_record($host, DNS_TXT) ?: [];
+        $recs = @dns_get_record($host, DNS_TXT) ?: [];
         $vals = [];
         foreach ($recs as $r) {
-            $txt = $r['txt'] ?? $r['entries'][0] ?? null;
-            if ($txt !== null && $txt !== '') $vals[] = (string)$txt;
+            // PHP variants: 'txt' or 'entries' => fragments
+            if (isset($r['txt']) && $r['txt'] !== '') {
+                $vals[] = (string)$r['txt'];
+            } elseif (!empty($r['entries']) && is_array($r['entries'])) {
+                $vals[] = implode('', $r['entries']);
+            }
         }
         return $vals;
+    }
+
+    /** Return CNAME targets for host (as array of strings) */
+    private function cnameTargets(string $host): array
+    {
+        $recs = @dns_get_record($host, DNS_CNAME) ?: [];
+        $out = [];
+        foreach ($recs as $r) {
+            $t = (string)($r['target'] ?? '');
+            if ($t !== '') $out[] = $t;
+        }
+        return $out;
     }
 
     private function normalizeTxt(string $s): string
@@ -248,42 +340,86 @@ final class DomainDnsVerifier
     private function normalizeSpf(string $s): string
     {
         $s = strtolower($this->normalizeTxt($s));
-        // simple, order-sensitive compare (good enough for strict setup)
         return $s;
     }
 
     private function normalizeDmarc(string $s): string
     {
         $s = strtolower(trim($s));
-        $s = preg_replace('~\s+~', '', $s);
-        return $s;
+        return preg_replace('~\s+~', '', $s);
     }
 
     private function normalizeDkim(string $s): string
     {
         $s = trim($s);
-        // If it already contains p=..., normalize to just "p=BASE64"
         if (preg_match('~\bp=([a-z0-9+/=]+)~i', $s, $m)) {
             return 'p=' . $m[1];
         }
-        // Else if given a PEM, reduce it to base64 (no headers) and prepend p=
         $p = $this->pemToDkimP($s);
         return $p !== '' ? 'p=' . $p : preg_replace('~\s+|\"~', '', strtolower($s));
     }
 
-    /** Convert an RSA public PEM (or a DKIM TXT that already includes p=) to DKIM p= (single-line base64). */
+    /** Convert RSA public PEM (or DKIM TXT) to bare base64 p= value */
     private function pemToDkimP(string $pem): string
     {
         $pem = trim($pem);
         if ($pem === '') return '';
+        if (preg_match('~\bp=([a-z0-9+/=]+)~i', $pem, $m)) return $m[1];
+        return preg_replace('~-----.*?-----|\s+~', '', $pem) ?: '';
+    }
 
-        // If it’s already a DKIM TXT (contains p=), just extract and return the p=
-        if (preg_match('~\bp=([a-z0-9+/=]+)~i', $pem, $m)) {
-            return $m[1];
+    /**
+     * GET helper: returns ['status'=>int,'body'=>string,'error'=>?string]
+     */
+    private function httpGet(string $url, int $timeoutMs = 5000): array
+    {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_CONNECTTIMEOUT_MS => $timeoutMs,
+            CURLOPT_TIMEOUT_MS => $timeoutMs,
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_USERAGENT => 'Monkeysmail-MTA-STS-Checker/1.0',
+        ]);
+        $body = curl_exec($ch);
+        $err  = curl_error($ch) ?: null;
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        curl_close($ch);
+        return ['status' => $code, 'body' => (string)$body, 'error' => $err];
+    }
+
+    /**
+     * Minimal STS policy parser (RFC 8461) for STSv1.
+     * Returns ['version','mode','mx'=>[],'max_age'] or ['error'=>string]
+     */
+    private function parseStsPolicy(string $text): array
+    {
+        $lines = preg_split('~\R+~', $text) ?: [];
+        $kv = [];
+        foreach ($lines as $ln) {
+            $ln = trim($ln);
+            if ($ln === '' || str_starts_with($ln, '#')) continue;
+            $parts = array_map('trim', explode(':', $ln, 2));
+            if (count($parts) === 2) $kv[strtolower($parts[0])] = $parts[1];
         }
-
-        // Otherwise assume PEM and strip headers/whitespace
-        $p = preg_replace('~-----.*?-----|\s+~', '', $pem);
-        return $p ?: '';
+        if (($kv['version'] ?? '') !== 'STSv1') {
+            return ['error' => 'version invalid or missing'];
+        }
+        $mx = [];
+        if (!empty($kv['mx'])) {
+            foreach (preg_split('~\s*,\s*~', $kv['mx']) as $m) {
+                $m = trim($m);
+                if ($m !== '') $mx[] = $m;
+            }
+        }
+        $maxAge = isset($kv['max_age']) ? (int)$kv['max_age'] : null;
+        return [
+            'version' => 'STSv1',
+            'mode'    => $kv['mode'] ?? null,
+            'mx'      => $mx,
+            'max_age' => $maxAge,
+        ];
     }
 }
