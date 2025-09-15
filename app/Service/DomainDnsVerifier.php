@@ -68,7 +68,7 @@ final class DomainDnsVerifier
             $expectedCname = rtrim(strtolower($expectedCname), '.') . '.';
         }
 
-        // NEW: ACME delegation CNAME
+        // ACME delegation CNAME
         $acmeExpected = (string)($mtaStsExpected['acme_delegate']['value'] ?? '');
         if ($acmeExpected === '') {
             $acmeExpected = '_acme-challenge.' . $name . '.auth.monkeysmail.com.';
@@ -132,7 +132,7 @@ final class DomainDnsVerifier
         ];
 
         /* =========================
-         * NEW: MTA-STS ACME delegation CNAME
+         * MTA-STS ACME delegation CNAME
          * ========================= */
         $acmeCnames = $this->cnameTargets($acmeHost);
         $acmeOk = false;
@@ -171,6 +171,52 @@ final class DomainDnsVerifier
             'errors' => ($httpOk && $policyOk) ? [] : ['mta_sts_policy_unreachable_or_invalid'],
         ];
 
+        // NEW: expose the policy URL directly for the UI (RecordsTab reads recObj?.mta_sts_policy_url)
+        $records['mta_sts_policy_url'] = $policyUrl; // NEW
+
+        // NEW: aggregate, UI-friendly mta_sts block to match RecordsTab.tsx (recs?.mta_sts)
+        $stsAllOk = (
+            (($records['mta_sts_dns']['status'] ?? '') === 'pass') &&
+            (($records['mta_sts_acme']['status'] ?? '') === 'pass') &&
+            (($records['mta_sts_policy']['status'] ?? '') === 'pass')
+        );
+
+        $records['mta_sts'] = [ // NEW
+            'status'   => $stsAllOk ? 'pass' : 'fail',
+            'host'     => $stsHost,
+            'expected' => [
+                'policy_txt' => [
+                    'type'  => 'TXT',
+                    'name'  => $stsTxtName,
+                    'value' => 'v=STSv1; id=' . ((string)($mtaStsExpected['policy_txt']['value'] ?? '')),
+                    'ttl'   => 3600,
+                ],
+                'host' => [
+                    'type'  => 'CNAME',
+                    'name'  => $stsHost,
+                    'value' => $expectedCname,
+                    'ttl'   => 3600,
+                ],
+                'acme_delegate' => [
+                    'type'  => 'CNAME',
+                    'name'  => $acmeHost,
+                    'value' => $acmeExpected,
+                    'ttl'   => 3600,
+                ],
+            ],
+            'found'    => [
+                'policy_txt_found' => $stsTxts,
+                'cname_found'      => $cnameTargets,
+                'acme_cname_found' => $acmeCnames,
+                'policy_url'       => $policyUrl,
+            ],
+            'errors'   => array_values(array_merge(
+                (($records['mta_sts_dns']['status'] ?? '') === 'pass')   ? [] : (array)($records['mta_sts_dns']['errors']   ?? []),
+                (($records['mta_sts_acme']['status'] ?? '') === 'pass')  ? [] : (array)($records['mta_sts_acme']['errors']  ?? []),
+                (($records['mta_sts_policy']['status'] ?? '') === 'pass')? [] : (array)($records['mta_sts_policy']['errors']?? []),
+            )),
+        ];
+
         /* --------------------------- Required rules (policy) --------------------------- */
         $requireDkim = true;  // adjust if DKIM should be advisory only
         $required = [
@@ -181,13 +227,14 @@ final class DomainDnsVerifier
             'dkim'             => $requireDkim,
             'tlsrpt'           => true,
             'mta_sts_dns'      => true,
-            'mta_sts_acme'     => true,  // NEW: require ACME delegation CNAME
+            'mta_sts_acme'     => true,
             'mta_sts_policy'   => true,
         ];
 
         $summary = [];
         $allRequiredPass = true;
         foreach ($records as $kind => $res) {
+            if (!is_array($res)) continue;
             $pass = ($res['status'] ?? '') === 'pass';
             $summary[$kind] = $pass ? 'pass' : ($res['status'] ?? 'fail');
             if (!empty($required[$kind]) && !$pass) {
@@ -244,6 +291,7 @@ final class DomainDnsVerifier
 
         return $report;
     }
+
 
     /* ------------ Individual checks you already had ------------- */
 
