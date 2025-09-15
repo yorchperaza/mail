@@ -15,7 +15,7 @@ final class DomainDnsVerifier
 
     /**
      * Verify TXT (verification), SPF, DMARC, MX, DKIM,
-     * PLUS TLS-RPT + MTA-STS (DNS+HTTPS policy).
+     * PLUS TLS-RPT + MTA-STS (DNS+HTTPS policy) + ACME delegation CNAME.
      */
     public function verifyAndPersist(Domain $domain): array
     {
@@ -58,12 +58,23 @@ final class DomainDnsVerifier
         $mtaStsExpected = method_exists($domain, 'getMta_sts_expected')
             ? (array)$domain->getMta_sts_expected()
             : [];
-        $stsTxtName = '_mta-sts.' . $name;
-        $stsHost    = 'mta-sts.' . $name;
+
+        $stsTxtName    = '_mta-sts.' . $name;
+        $stsHost       = 'mta-sts.' . $name;
+
+        // Expected CNAME for mta-sts.<domain>
         $expectedCname = (string)($mtaStsExpected['host']['value'] ?? 'mta-sts.monkeysmail.com.');
         if ($expectedCname !== '') {
             $expectedCname = rtrim(strtolower($expectedCname), '.') . '.';
         }
+
+        // NEW: ACME delegation CNAME
+        $acmeExpected = (string)($mtaStsExpected['acme_delegate']['value'] ?? '');
+        if ($acmeExpected === '') {
+            $acmeExpected = '_acme-challenge.' . $name . '.auth.monkeysmail.com.';
+        }
+        $acmeExpected = rtrim(strtolower($acmeExpected), '.') . '.';
+        $acmeHost     = '_acme-challenge.' . $stsHost; // _acme-challenge.mta-sts.<domain>
 
         /* ---------------------------------- Run checks ---------------------------------- */
         $records = [
@@ -121,6 +132,24 @@ final class DomainDnsVerifier
         ];
 
         /* =========================
+         * NEW: MTA-STS ACME delegation CNAME
+         * ========================= */
+        $acmeCnames = $this->cnameTargets($acmeHost);
+        $acmeOk = false;
+        foreach ($acmeCnames as $t) {
+            $t = rtrim(strtolower($t), '.') . '.';
+            if ($t === $acmeExpected) { $acmeOk = true; break; }
+        }
+
+        $records['mta_sts_acme'] = [
+            'status'         => $acmeOk ? 'pass' : 'fail',
+            'host_name'      => $acmeHost,
+            'cname_found'    => $acmeCnames,
+            'cname_expected' => $acmeExpected,
+            'errors'         => $acmeOk ? [] : ['mta_sts_acme_cname_invalid_or_missing'],
+        ];
+
+        /* =========================
          * MTA-STS HTTPS policy fetch
          * ========================= */
         $policyUrl = "https://{$stsHost}/.well-known/mta-sts.txt";
@@ -152,6 +181,7 @@ final class DomainDnsVerifier
             'dkim'             => $requireDkim,
             'tlsrpt'           => true,
             'mta_sts_dns'      => true,
+            'mta_sts_acme'     => true,  // NEW: require ACME delegation CNAME
             'mta_sts_policy'   => true,
         ];
 
@@ -171,6 +201,30 @@ final class DomainDnsVerifier
             'domain'     => $name,
             'records'    => $records,
             'summary'    => $summary,
+            // Optional: expectations for UI table
+            'expectations' => [
+                [
+                    'type'     => 'TXT',
+                    'name'     => $stsTxtName,
+                    'value'    => 'v=STSv1; id=' . ((string)($mtaStsExpected['policy_txt']['value'] ?? '')),
+                    'ttl'      => 3600,
+                    'priority' => null,
+                ],
+                [
+                    'type'     => 'CNAME',
+                    'name'     => $stsHost,
+                    'value'    => $expectedCname,
+                    'ttl'      => 3600,
+                    'priority' => null,
+                ],
+                [
+                    'type'     => 'CNAME',
+                    'name'     => $acmeHost,
+                    'value'    => $acmeExpected,
+                    'ttl'      => 3600,
+                    'priority' => null,
+                ],
+            ],
         ];
 
         $domain->setStatus($allRequiredPass ? 'active' : 'pending');
@@ -178,7 +232,6 @@ final class DomainDnsVerifier
             $domain->setVerified_at(new \DateTimeImmutable($nowIso));
         }
         if (method_exists($domain, 'setVerification_report')) {
-            // if your ORM column is JSON, it’s fine to store as array
             $domain->setVerification_report($report);
         }
         if (method_exists($domain, 'setLast_checked_at')) {
