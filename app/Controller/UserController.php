@@ -593,20 +593,42 @@ final class UserController
      * POST /auth/refresh
      *
      * Stateless sliding session:
-     *  - Requires a valid Authorization: Bearer <access_jwt> (not yet expired)
-     *  - Returns a fresh short-lived access token { token }
-     *  - No refresh cookies or server storage needed
+     *  - Accepts Authorization: Bearer <access_jwt>
+     *  - Allows small grace (default 10m) so users can refresh right after exp
+     *  - Returns a fresh access token { token }
+     *
      * @throws \JsonException
      */
     #[Route(methods: 'POST', path: '/auth/refresh')]
     public function refresh(ServerRequestInterface $request): JsonResponse
     {
+        // 1) Prefer user_id if middleware set it (happy path)
         $userId = (int)$request->getAttribute('user_id', 0);
+
+        // 2) If not set, decode the Bearer with extra leeway (handles just-expired tokens)
         if ($userId <= 0) {
-            throw new RuntimeException('Unauthorized', 401);
+            $authz = $request->getHeaderLine('Authorization');
+            if (!preg_match('/^Bearer\s+(.+)$/i', $authz, $m)) {
+                throw new RuntimeException('Unauthorized', 401);
+            }
+            $accessToken = $m[1];
+
+            // Accept tokens that expired ≤ 10 minutes ago strictly for refresh:
+            // (You can tune 600 seconds in config if you like.)
+            try {
+                $claims = $this->auth->decodeForRefresh($accessToken, 600);
+            } catch (\Throwable $e) {
+                // If decode still fails, we truly can't refresh
+                throw new RuntimeException('Unauthorized', 401, $e);
+            }
+
+            $userId = (int)($claims['sub'] ?? 0);
+            if ($userId <= 0) {
+                throw new RuntimeException('Unauthorized', 401);
+            }
         }
 
-        // 30 minutes by default; adjust if you like
+        // 3) Mint a new short-lived access token (30 minutes by default)
         $newToken = $this->auth->refreshAccessForUser($userId, 1800);
 
         return new JsonResponse(['token' => $newToken], 200);
