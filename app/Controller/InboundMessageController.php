@@ -1136,9 +1136,9 @@ final class InboundMessageController
             if ($d === '') continue;
 
             if ($this->isEmail($d)) {
-                // Re-inject into local Postfix so it shows up in mail.log as a new delivery
-                $ok = $this->forwardEmailRaw($mime, $d, $envFrom, $rid);
-                if (!$ok) $this->lg($rid ?? '-', "FORWARD email FAILED", ['to' => $d]);
+                // use your outbound service instead of local sendmail
+                $origHeaders = $this->parseTopHeaders($mime)['map'];
+                $this->forwardViaOutbound($mime, $d, $origHeaders, $company, $domain, $rid);
                 continue;
             }
 
@@ -1149,6 +1149,11 @@ final class InboundMessageController
 
             $this->lg($rid ?? '-', "FORWARD skipped (unknown dest type)", ['dest' => $d]);
         }
+    }
+
+    private function fromDomainForForward(Domain $domain): string {
+        // Keep it simple unless the customer's domain is fully verified for outbound
+        return 'monkeysmail.com';
     }
 
     private function forwardViaOutbound(
@@ -1190,19 +1195,4 @@ final class InboundMessageController
         $this->lg($traceId ?? '-', "FORWARD via Outbound enqueued", ['to' => $to]);
     }
 
-    private function fromDomainForForward(Domain $domain): string
-    {
-        $d = strtolower(trim((string)$domain->getDomain()));
-        if ($d === '') return 'monkeysmail.com';
-
-        // (Optional) don't ever try to send "as" freemail
-        if (preg_match('/(?:^|\.)((gmail|yahoo|outlook|hotmail|icloud)\.com)$/i', $d)) {
-            return 'monkeysmail.com';
-        }
-
-        // If you track verification in your model, gate on it:
-        // if (!$domain->isOutboundVerified()) return 'monkeysmail.com';
-
-        return $d;
-    }
 }
