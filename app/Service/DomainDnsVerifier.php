@@ -153,7 +153,7 @@ final class DomainDnsVerifier
          * MTA-STS HTTPS policy fetch
          * ========================= */
         $policyUrl = "https://{$stsHost}/.well-known/mta-sts.txt";
-        $http = $this->httpGet($policyUrl, 5000);
+        $http = $this->httpGet($policyUrl, 10000);
         $parsed = null;
         $policyOk = false;
         $httpOk = ($http['status'] >= 200 && $http['status'] < 300 && $http['error'] === null);
@@ -181,6 +181,12 @@ final class DomainDnsVerifier
             (($records['mta_sts_policy']['status'] ?? '') === 'pass')
         );
 
+        $policyVal = (string)($mtaStsExpected['policy_txt']['value'] ?? '');
+        $policyVal = trim($policyVal);
+        $expectedPolicyVal = str_starts_with(strtolower($policyVal), 'v=stsv1')
+            ? $policyVal
+            : ('v=STSv1; id=' . $policyVal);
+
         $records['mta_sts'] = [ // NEW
             'status'   => $stsAllOk ? 'pass' : 'fail',
             'host'     => $stsHost,
@@ -188,7 +194,7 @@ final class DomainDnsVerifier
                 'policy_txt' => [
                     'type'  => 'TXT',
                     'name'  => $stsTxtName,
-                    'value' => 'v=STSv1; id=' . ((string)($mtaStsExpected['policy_txt']['value'] ?? '')),
+                    'value' => $expectedPolicyVal,
                     'ttl'   => 3600,
                 ],
                 'host' => [
