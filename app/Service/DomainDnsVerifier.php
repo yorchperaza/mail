@@ -259,7 +259,7 @@ final class DomainDnsVerifier
                 [
                     'type'     => 'TXT',
                     'name'     => $stsTxtName,
-                    'value'    => 'v=STSv1; id=' . ((string)($mtaStsExpected['policy_txt']['value'] ?? '')),
+                    'value'    => $expectedPolicyVal,
                     'ttl'      => 3600,
                     'priority' => null,
                 ],
