@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Service;
@@ -7,15 +6,29 @@ namespace App\Service;
 use App\Entity\Domain;
 use App\Entity\IpPool;
 use MonkeysLegion\Query\QueryBuilder;
-use RuntimeException;
 
 final class ReputationStore
 {
     public function __construct(private QueryBuilder $qb) {}
 
+    /** Normalize provider slugs a bit (consistent keys) */
+    private function normProvider(string $p): string
+    {
+        $p = strtolower(trim($p));
+        $p = preg_replace('~\s+~', '-', $p);
+        return $p ?: 'unknown';
+    }
+
+    private function clampScore(int $s): int
+    {
+        return max(0, min(100, $s));
+    }
+
     /**
-     * Insert or update a domain-level sample for a given day+provider.
-     * Returns inserted/updated row id (best-effort).
+     * Insert or update a domain-level sample for a given timestamp+provider.
+     * Requires a UNIQUE index on (domain_id, provider, sampled_at).
+     *
+     * @return int Row id (inserted or existing).
      */
     public function upsertDomainSample(
         Domain $domain,
@@ -24,49 +37,49 @@ final class ReputationStore
         ?string $notes,
         ?\DateTimeImmutable $sampledAt = null
     ): int {
-        $when = $sampledAt ?: new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $payload = [
-            'provider'   => $provider,
-            'score'      => $score,
-            'sampled_at' => $when->format('Y-m-d H:i:s'),
-            'notes'      => $notes,
-            'domain_id'  => $domain->getId(),
-            'ip_pool_id' => null,
-        ];
+        $provider  = $this->normProvider($provider);
+        $score     = $this->clampScore($score);
+        $when      = $sampledAt ?: new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $ts        = $when->format('Y-m-d H:i:s');
 
-        // Use native upsert. QueryBuilder doesn’t have ON DUPLICATE KEY helper,
-        // so we run a custom SQL.
+        // Upsert
         $sql = "
-INSERT INTO reputationsample (provider, score, sampled_at, notes, domain_id, ip_pool_id)
+INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`domain_id`,`ip_pool_id`)
 VALUES (:provider, :score, :sampled_at, :notes, :domain_id, NULL)
 ON DUPLICATE KEY UPDATE
-  score = VALUES(score),
-  notes = VALUES(notes),
-  sampled_at = VALUES(sampled_at)
+  `score` = VALUES(`score`),
+  `notes` = VALUES(`notes`)
 ";
         $this->qb->custom($sql, [
-            ':provider'   => $payload['provider'],
-            ':score'      => $payload['score'],
-            ':sampled_at' => $payload['sampled_at'],
-            ':notes'      => $payload['notes'],
-            ':domain_id'  => $payload['domain_id'],
+            ':provider'   => $provider,
+            ':score'      => $score,
+            ':sampled_at' => $ts,
+            ':notes'      => $notes,
+            ':domain_id'  => $domain->getId(),
         ])->execute();
 
-        // Try to fetch id (optional)
+        // Prefer lastInsertId() for inserts; fall back to a precise lookup.
+        $pdo = $this->qb->pdo();
+        $id  = (int)$pdo->lastInsertId();
+        if ($id > 0) {
+            return $id;
+        }
+
         $row = $this->qb->fetchOne(
-            'SELECT id FROM reputationsample
-             WHERE domain_id = :d AND provider = :p AND sample_day = :day
-             ORDER BY id DESC LIMIT 1',
-            [
-                ':d'   => $payload['domain_id'],
-                ':p'   => $payload['provider'],
-                ':day' => $when->format('Y-m-d'),
-            ]
+            'SELECT `id`
+               FROM `reputationsample`
+              WHERE `domain_id` = :d AND `provider` = :p AND `sampled_at` = :ts
+              LIMIT 1',
+            [':d' => $domain->getId(), ':p' => $provider, ':ts' => $ts]
         );
 
         return (int)($row['id'] ?? 0);
     }
 
+    /**
+     * Insert or update an IP-pool sample (same uniqueness rule).
+     * Requires a UNIQUE index on (ip_pool_id, provider, sampled_at).
+     */
     public function upsertIpPoolSample(
         IpPool $pool,
         string $provider,
@@ -74,32 +87,38 @@ ON DUPLICATE KEY UPDATE
         ?string $notes,
         ?\DateTimeImmutable $sampledAt = null
     ): int {
-        $when = $sampledAt ?: new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $provider  = $this->normProvider($provider);
+        $score     = $this->clampScore($score);
+        $when      = $sampledAt ?: new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $ts        = $when->format('Y-m-d H:i:s');
+
         $sql = "
-INSERT INTO reputationsample (provider, score, sampled_at, notes, ip_pool_id, domain_id)
+INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`ip_pool_id`,`domain_id`)
 VALUES (:provider, :score, :sampled_at, :notes, :ip_pool_id, NULL)
 ON DUPLICATE KEY UPDATE
-  score = VALUES(score),
-  notes = VALUES(notes),
-  sampled_at = VALUES(sampled_at)
+  `score` = VALUES(`score`),
+  `notes` = VALUES(`notes`)
 ";
         $this->qb->custom($sql, [
             ':provider'   => $provider,
             ':score'      => $score,
-            ':sampled_at' => $when->format('Y-m-d H:i:s'),
+            ':sampled_at' => $ts,
             ':notes'      => $notes,
             ':ip_pool_id' => $pool->getId(),
         ])->execute();
 
+        $pdo = $this->qb->pdo();
+        $id  = (int)$pdo->lastInsertId();
+        if ($id > 0) {
+            return $id;
+        }
+
         $row = $this->qb->fetchOne(
-            'SELECT id FROM reputationsample
-             WHERE ip_pool_id = :p AND provider = :prov AND sample_day = :day
-             ORDER BY id DESC LIMIT 1',
-            [
-                ':p'    => $pool->getId(),
-                ':prov' => $provider,
-                ':day'  => $when->format('Y-m-d'),
-            ]
+            'SELECT `id`
+               FROM `reputationsample`
+              WHERE `ip_pool_id` = :p AND `provider` = :prov AND `sampled_at` = :ts
+              LIMIT 1',
+            [':p' => $pool->getId(), ':prov' => $provider, ':ts' => $ts]
         );
 
         return (int)($row['id'] ?? 0);
