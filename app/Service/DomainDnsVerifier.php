@@ -327,29 +327,77 @@ final class DomainDnsVerifier
 
     private function checkMx(string $apex, array $expected): array
     {
+        // normalize expected
         $exp = array_map(function ($r) {
             return [
                 'host'     => strtolower(trim((string)($r['host'] ?? ''))),
-                'value'    => rtrim(strtolower(trim((string)($r['value'] ?? ''))), '.') . '.', // trailing dot
+                'value'    => rtrim(strtolower(trim((string)($r['value'] ?? ''))), '.') . '.', // canonical fqdn
                 'priority' => (int)($r['priority'] ?? 10),
             ];
         }, $expected);
 
+        // fetch actual MX
         $recs  = dns_get_record($apex, DNS_MX) ?: [];
         $found = [];
         foreach ($recs as $r) {
+            $target = rtrim(strtolower((string)($r['target'] ?? '')), '.') . '.';
             $found[] = [
                 'host'     => strtolower($apex),
-                'value'    => rtrim(strtolower((string)($r['target'] ?? '')), '.') . '.',
+                'value'    => $target,
                 'priority' => (int)($r['pri'] ?? 10),
             ];
         }
 
+        // helper: follow CNAME chain up to 5 hops to canonical fqdn
+        $resolveCanonical = function (string $fqdn): string {
+            $seen = [];
+            $cur  = $fqdn;
+            for ($i = 0; $i < 5; $i++) {
+                $key = rtrim(strtolower($cur), '.') . '.';
+                if (isset($seen[$key])) break;
+                $seen[$key] = true;
+                $cn = dns_get_record($key, DNS_CNAME) ?: [];
+                if (empty($cn)) break;
+                $cur = rtrim(strtolower((string)($cn[0]['target'] ?? $cur)), '.') . '.';
+            }
+            return rtrim(strtolower($cur), '.') . '.';
+        };
+
+        // helper: resolve A/AAAA set (for last-resort equivalence)
+        $resolveIps = function (string $fqdn): array {
+            $fqdn = rtrim(strtolower($fqdn), '.') . '.';
+            $ips  = [];
+            foreach (dns_get_record($fqdn, DNS_A) ?: [] as $a) {
+                if (!empty($a['ip'])) $ips[] = 'A:' . $a['ip'];
+            }
+            foreach (dns_get_record($fqdn, DNS_AAAA) ?: [] as $aaaa) {
+                if (!empty($aaaa['ipv6'])) $ips[] = 'AAAA:' . $aaaa['ipv6'];
+            }
+            sort($ips);
+            return $ips;
+        };
+
+        // try to match expected with found (allowing CNAME aliasing or IP equivalence)
         $missing = [];
         foreach ($exp as $er) {
+            $wantVal = rtrim(strtolower($er['value']), '.') . '.';
+            $wantCanon = $resolveCanonical($wantVal);
+            $wantIps   = $resolveIps($wantCanon);
+
             $match = false;
             foreach ($found as $fr) {
-                if ($er['value'] === $fr['value'] && $er['priority'] === $fr['priority']) { $match = true; break; }
+                if ((int)$fr['priority'] !== (int)$er['priority']) continue;
+
+                $gotVal   = rtrim(strtolower($fr['value']), '.') . '.';
+                $gotCanon = $resolveCanonical($gotVal);
+
+                if ($gotVal === $wantVal || $gotCanon === $wantCanon) { $match = true; break; }
+
+                // last-resort: same IP set
+                if (!empty($wantIps)) {
+                    $gotIps = $resolveIps($gotCanon);
+                    if ($gotIps === $wantIps) { $match = true; break; }
+                }
             }
             if (!$match) $missing[] = $er;
         }
