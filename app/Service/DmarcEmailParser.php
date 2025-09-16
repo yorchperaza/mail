@@ -16,13 +16,41 @@ final class DmarcEmailParser
      */
     public function parse(string $rawMime): array
     {
-        $parser  = new MailMimeParser();
-        /** @var IMessage $message */
-        $message = $parser->parse($rawMime, true);
-
         $out        = [];
         $receivedAt = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
             ->format(\DateTimeInterface::ATOM);
+
+        /* ---------------------------------------------------------
+         * 0) RAW fallback: handle plain text posts with inline XML
+         *    (no proper MIME, just a body containing <feedback>…</feedback>)
+         * --------------------------------------------------------- */
+        $directXmls = $this->extractXmlFromRaw($rawMime);
+        if (!empty($directXmls)) {
+            foreach ($directXmls as $xml) {
+                if ($this->looksLikeXml($xml)) {
+                    $json = $this->xmlToArray($xml);
+                    if ($json) {
+                        $out[] = ['xml' => $xml, 'json' => $json, 'receivedAt' => $receivedAt];
+                    }
+                }
+            }
+            if (!empty($out)) {
+                return $out; // already parsed from raw body
+            }
+        }
+
+        /* ---------------------------------------------------------
+         * 1) MIME parse (attachments, gzip/zip, etc.)
+         * --------------------------------------------------------- */
+        $message = null;
+        try {
+            $parser  = new MailMimeParser();
+            /** @var IMessage $message */
+            $message = $parser->parse($rawMime, true);
+        } catch (\Throwable) {
+            // If MIME parsing blows up, we already tried raw fallback above.
+            return $out; // [] or whatever was found via raw
+        }
 
         // Some reporters (rare) embed XML in body
         $inline = trim((string)($message->getTextContent() ?? $message->getHtmlContent() ?? ''));
@@ -54,8 +82,10 @@ final class DmarcEmailParser
             // ZIP
             if ($ctype === 'application/zip' || str_ends_with($filename, '.zip')) {
                 foreach ($this->fromZip($bytes) as $xml) {
-                    $json = $this->xmlToArray($xml);
-                    if ($json) $out[] = ['xml'=>$xml, 'json'=>$json, 'receivedAt'=>$receivedAt];
+                    if ($this->looksLikeXml($xml)) {
+                        $json = $this->xmlToArray($xml);
+                        if ($json) $out[] = ['xml'=>$xml, 'json'=>$json, 'receivedAt'=>$receivedAt];
+                    }
                 }
                 continue;
             }
@@ -196,5 +226,22 @@ final class DmarcEmailParser
             'rows'         => $rows,
             '_raw_xml_len' => strlen($xml),
         ];
+    }
+
+    /** Try to extract 1..N DMARC XML blocks directly from the raw MIME/body. */
+    private function extractXmlFromRaw(string $raw): array
+    {
+        // Strip headers if present (everything before the first blank line)
+        $parts = preg_split("/\R\R/", $raw, 2);
+        $body  = $parts[1] ?? $raw;
+
+        // Find all <feedback>...</feedback> blocks (DMARC aggregate)
+        $out = [];
+        if (preg_match_all('~(<\?xml[^>]*\?>\s*)?<feedback\b[\s\S]*?</feedback>~i', $body, $m)) {
+            foreach ($m[0] as $xml) {
+                $out[] = trim($xml);
+            }
+        }
+        return $out;
     }
 }

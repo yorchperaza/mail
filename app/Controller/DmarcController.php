@@ -149,25 +149,25 @@ final class DmarcController
     #[Route(methods: 'POST', path: '/hooks/dmarc/email')]
     public function emailHook(ServerRequestInterface $r): JsonResponse
     {
-        // No auth on this endpoint if coming from localhost/postfix; protect at Nginx.
-        $body = $r->getParsedBody();
-        $raw = is_array($body)
-            ? (string)($body['email'] ?? $body['body-mime'] ?? '')
-            : '';
-        if ($raw === '') $raw = (string)$r->getBody();
-        if ($raw === '') return new JsonResponse(['ok' => false, 'error' => 'No MIME found'], 400);
+        // Prefer raw body first (text/plain posts), then provider fields
+        $raw = (string)$r->getBody();
+        if ($raw === '') {
+            $body = $r->getParsedBody();
+            $raw  = is_array($body) ? (string)($body['email'] ?? $body['body-mime'] ?? '') : (string)$body;
+        }
+        if ($raw === '') return new JsonResponse(['ok'=>false,'error'=>'No MIME found'], 400);
 
-        $parser = new DmarcEmailParser();
-        $pieces = $parser->parse($raw);
-        if (!$pieces) return new JsonResponse(['ok' => false, 'error' => 'No DMARC XML found'], 422);
+        $parser  = new DmarcEmailParser();
+        $pieces  = $parser->parse($raw);
+        if (!$pieces) return new JsonResponse(['ok'=>false,'error'=>'No DMARC XML found'], 422);
 
-        $ok = 0;
-        $errors = [];
+        $ok = 0; $errors = [];
         foreach ($pieces as $p) {
             $res = $this->saveAggregate($p['json'], $p['receivedAt']);
             if (($res['ok'] ?? false) === true) $ok++; else $errors[] = $res['error'] ?? 'unknown error';
         }
 
-        return new JsonResponse(['ok' => true, 'count' => $ok, 'errors' => $errors]);
+        return new JsonResponse(['ok'=> true, 'count'=> $ok, 'errors'=> $errors]);
     }
+
 }
