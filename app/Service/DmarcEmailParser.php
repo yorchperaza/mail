@@ -10,9 +10,35 @@ use ZipArchive;
 
 final class DmarcEmailParser
 {
+
     /**
-     * Parse a raw RFC822 email and return 0..N DMARC reports.
-     * Each item: ['xml'=>string, 'json'=>array, 'receivedAt'=>ISO-8601]
+     * Enrich one decoded DMARC JSON with convenience fields and push to $out.
+     */
+    private function pushReport(array &$out, string $xml, array $json, string $receivedAt): void
+    {
+        // inside parse(), after $json = $this->xmlToArray($xml)
+        $domain = $json['policy_published']['domain']
+            ?? ($json['record']['identifiers']['header_from'] ?? null);
+
+        // In some feeds <record> is an array
+        if (!$domain && isset($json['record'][0]['identifiers']['header_from'])) {
+            $domain = $json['record'][0]['identifiers']['header_from'];
+        }
+
+        $reportId = $json['report_metadata']['report_id'] ?? null;
+
+        $out[] = [
+            'xml'        => $xml,
+            'json'       => $json,
+            'domain'     => $domain,     // convenience
+            'report_id'  => $reportId,   // convenience
+            'receivedAt' => $receivedAt,
+        ];
+    }
+
+    /**
+     * @param string $rawMime Full RFC822 message
+     * @return array<int,array{xml:string, json:array, domain:string|null, report_id:string|null, receivedAt:string}>
      */
     public function parse(string $rawMime): array
     {
@@ -20,45 +46,39 @@ final class DmarcEmailParser
         $receivedAt = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
             ->format(\DateTimeInterface::ATOM);
 
-        /* ---------------------------------------------------------
-         * 0) RAW fallback: handle plain text posts with inline XML
-         *    (no proper MIME, just a body containing <feedback>…</feedback>)
-         * --------------------------------------------------------- */
+        // 0) RAW fallback (inline XML in plain text post)
         $directXmls = $this->extractXmlFromRaw($rawMime);
         if (!empty($directXmls)) {
             foreach ($directXmls as $xml) {
                 if ($this->looksLikeXml($xml)) {
                     $json = $this->xmlToArray($xml);
                     if ($json) {
-                        $out[] = ['xml' => $xml, 'json' => $json, 'receivedAt' => $receivedAt];
+                        $this->pushReport($out, $xml, $json, $receivedAt); // <-- changed
                     }
                 }
             }
-            if (!empty($out)) {
-                return $out; // already parsed from raw body
-            }
+            if (!empty($out)) return $out;
         }
 
-        /* ---------------------------------------------------------
-         * 1) MIME parse (attachments, gzip/zip, etc.)
-         * --------------------------------------------------------- */
-        $message = null;
+        // 1) MIME parse
         try {
             $parser  = new MailMimeParser();
             /** @var IMessage $message */
             $message = $parser->parse($rawMime, true);
         } catch (\Throwable) {
-            // If MIME parsing blows up, we already tried raw fallback above.
-            return $out; // [] or whatever was found via raw
+            return $out;
         }
 
-        // Some reporters (rare) embed XML in body
+        // Inline body XML (rare)
         $inline = trim((string)($message->getTextContent() ?? $message->getHtmlContent() ?? ''));
         if ($inline !== '' && $this->looksLikeXml($inline)) {
             $json = $this->xmlToArray($inline);
-            if ($json) $out[] = ['xml' => $inline, 'json' => $json, 'receivedAt' => $receivedAt];
+            if ($json) {
+                $this->pushReport($out, $inline, $json, $receivedAt); // <-- changed
+            }
         }
 
+        // Attachments
         foreach ($message->getAllAttachmentParts() as $att) {
             $filename = strtolower((string)($att->getFilename() ?? ''));
             $ctypeRaw = strtolower((string)($att->getContentType() ?? ''));
@@ -84,7 +104,9 @@ final class DmarcEmailParser
                 foreach ($this->fromZip($bytes) as $xml) {
                     if ($this->looksLikeXml($xml)) {
                         $json = $this->xmlToArray($xml);
-                        if ($json) $out[] = ['xml'=>$xml, 'json'=>$json, 'receivedAt'=>$receivedAt];
+                        if ($json) {
+                            $this->pushReport($out, $xml, $json, $receivedAt); // <-- changed
+                        }
                     }
                 }
                 continue;
@@ -95,7 +117,9 @@ final class DmarcEmailParser
                 $xml = $this->fromGzip($bytes);
                 if ($xml && $this->looksLikeXml($xml)) {
                     $json = $this->xmlToArray($xml);
-                    if ($json) $out[] = ['xml'=>$xml, 'json'=>$json, 'receivedAt'=>$receivedAt];
+                    if ($json) {
+                        $this->pushReport($out, $xml, $json, $receivedAt); // <-- changed
+                    }
                 }
                 continue;
             }
@@ -105,7 +129,9 @@ final class DmarcEmailParser
                 $xml = $bytes;
                 if ($this->looksLikeXml($xml)) {
                     $json = $this->xmlToArray($xml);
-                    if ($json) $out[] = ['xml'=>$xml, 'json'=>$json, 'receivedAt'=>$receivedAt];
+                    if ($json) {
+                        $this->pushReport($out, $xml, $json, $receivedAt); // <-- changed
+                    }
                 }
                 continue;
             }
