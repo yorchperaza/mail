@@ -44,7 +44,7 @@ final class ReputationStore
 
         // Upsert
         $sql = "
-INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`domain_id`,`ip_pool_id`)
+INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`domain_id`,`ipPool_id`)
 VALUES (:provider, :score, :sampled_at, :notes, :domain_id, NULL)
 ON DUPLICATE KEY UPDATE
   `score` = VALUES(`score`),
@@ -93,8 +93,8 @@ ON DUPLICATE KEY UPDATE
         $ts        = $when->format('Y-m-d H:i:s');
 
         $sql = "
-INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`ip_pool_id`,`domain_id`)
-VALUES (:provider, :score, :sampled_at, :notes, :ip_pool_id, NULL)
+INSERT INTO `reputationsample` (`provider`,`score`,`sampled_at`,`notes`,`ipPool_id`,`domain_id`)
+VALUES (:provider, :score, :sampled_at, :notes, :ipPool_id, NULL)
 ON DUPLICATE KEY UPDATE
   `score` = VALUES(`score`),
   `notes` = VALUES(`notes`)
@@ -104,7 +104,7 @@ ON DUPLICATE KEY UPDATE
             ':score'      => $score,
             ':sampled_at' => $ts,
             ':notes'      => $notes,
-            ':ip_pool_id' => $pool->getId(),
+            ':ipPool_id' => $pool->getId(),
         ])->execute();
 
         $pdo = $this->qb->pdo();
@@ -116,7 +116,7 @@ ON DUPLICATE KEY UPDATE
         $row = $this->qb->fetchOne(
             'SELECT `id`
                FROM `reputationsample`
-              WHERE `ip_pool_id` = :p AND `provider` = :prov AND `sampled_at` = :ts
+              WHERE `ipPool_id` = :p AND `provider` = :prov AND `sampled_at` = :ts
               LIMIT 1',
             [':p' => $pool->getId(), ':prov' => $provider, ':ts' => $ts]
         );
