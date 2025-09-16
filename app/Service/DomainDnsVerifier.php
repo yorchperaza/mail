@@ -62,12 +62,6 @@ final class DomainDnsVerifier
         $stsTxtName    = '_mta-sts.' . $name;
         $stsHost       = 'mta-sts.' . $name;
 
-        // Expected CNAME for mta-sts.<domain>
-        $expectedCname = (string)($mtaStsExpected['host']['value'] ?? 'mta-sts.monkeysmail.com.');
-        if ($expectedCname !== '') {
-            $expectedCname = rtrim(strtolower($expectedCname), '.') . '.';
-        }
-
         // ACME delegation CNAME
         $acmeExpected = (string)($mtaStsExpected['acme_delegate']['value'] ?? '');
         if ($acmeExpected === '') {
@@ -104,31 +98,19 @@ final class DomainDnsVerifier
         ];
 
         /* =========================
-         * MTA-STS DNS verification
+         * MTA-STS DNS verification (TXT only)
          * ========================= */
         $stsTxts = $this->txtValues($stsTxtName);
         $policyIdOk = false;
         foreach ($stsTxts as $txt) {
             if (preg_match('~^v=STSv1;\s*id=\S+~i', trim($txt))) { $policyIdOk = true; break; }
         }
-
-        $cnameTargets = $this->cnameTargets($stsHost);
-        $cnameOk = false;
-        foreach ($cnameTargets as $t) {
-            $t = rtrim(strtolower($t), '.') . '.';
-            if ($t === $expectedCname) { $cnameOk = true; break; }
-        }
-
         $records['mta_sts_dns'] = [
-            'status'          => ($policyIdOk && ($expectedCname === '' || $cnameOk)) ? 'pass' : 'fail',
-            'policy_txt_name' => $stsTxtName,
-            'policy_txt_found'=> $stsTxts,
-            'policy_txt_ok'   => $policyIdOk,
-            'host_name'       => $stsHost,
-            'cname_found'     => $cnameTargets,
-            'cname_expected'  => $expectedCname ?: null,
-            'cname_ok'        => $expectedCname ? $cnameOk : null,
-            'errors'          => ($policyIdOk && ($expectedCname === '' || $cnameOk)) ? [] : ['mta_sts_dns_invalid'],
+            'status'           => $policyIdOk ? 'pass' : 'fail',
+            'policy_txt_name'  => $stsTxtName,
+            'policy_txt_found' => $stsTxts,
+            'policy_txt_ok'    => $policyIdOk,
+            'errors'           => $policyIdOk ? [] : ['mta_sts_dns_invalid'],
         ];
 
         /* =========================
@@ -150,29 +132,18 @@ final class DomainDnsVerifier
         ];
 
         /* =========================
-         * MTA-STS HTTPS policy fetch
+         * MTA-STS HTTPS policy fetch (skipped)
          * ========================= */
-        $policyUrl = "https://{$stsHost}/.well-known/mta-sts.txt";
-        $http = $this->httpGet($policyUrl, 10000);
-        $parsed = null;
-        $policyOk = false;
-        $httpOk = ($http['status'] >= 200 && $http['status'] < 300 && $http['error'] === null);
-
-        if ($httpOk) {
-            $parsed = $this->parseStsPolicy($http['body']);
-            $policyOk = !isset($parsed['error']) && ($parsed['version'] ?? null) === 'STSv1';
-        }
-
+        $policyUrl = 'https://mta-sts.monkeysmail.com/.well-known/mta-sts.txt'; // keep your managed URL
         $records['mta_sts_policy'] = [
-            'status' => ($httpOk && $policyOk) ? 'pass' : 'fail',
+            'status' => 'skipped',
             'url'    => $policyUrl,
-            'http'   => ['status' => $http['status'], 'error' => $http['error']],
-            'parsed' => $parsed,
-            'errors' => ($httpOk && $policyOk) ? [] : ['mta_sts_policy_unreachable_or_invalid'],
+            'http'   => null,
+            'parsed' => null,
+            'errors' => [],
         ];
-
-        // NEW: expose the policy URL directly for the UI (RecordsTab reads recObj?.mta_sts_policy_url)
-        $records['mta_sts_policy_url'] = $policyUrl; // NEW
+        // keep exposing for UI if you want:
+        $records['mta_sts_policy_url'] = $policyUrl;
 
         // NEW: aggregate, UI-friendly mta_sts block to match RecordsTab.tsx (recs?.mta_sts)
         $stsAllOk = (
@@ -187,7 +158,13 @@ final class DomainDnsVerifier
             ? $policyVal
             : ('v=STSv1; id=' . $policyVal);
 
-        $records['mta_sts'] = [ // NEW
+        $stsAllOk = (
+            (($records['mta_sts_dns']['status'] ?? '') === 'pass') &&
+            (($records['mta_sts_acme']['status'] ?? '') === 'pass')
+            // NOTE: policy is skipped, not required
+        );
+
+        $records['mta_sts'] = [
             'status'   => $stsAllOk ? 'pass' : 'fail',
             'host'     => $stsHost,
             'expected' => [
@@ -195,12 +172,6 @@ final class DomainDnsVerifier
                     'type'  => 'TXT',
                     'name'  => $stsTxtName,
                     'value' => $expectedPolicyVal,
-                    'ttl'   => 3600,
-                ],
-                'host' => [
-                    'type'  => 'CNAME',
-                    'name'  => $stsHost,
-                    'value' => $expectedCname,
                     'ttl'   => 3600,
                 ],
                 'acme_delegate' => [
@@ -211,15 +182,13 @@ final class DomainDnsVerifier
                 ],
             ],
             'found'    => [
-                'policy_txt_found' => $stsTxts,
-                'cname_found'      => $cnameTargets,
-                'acme_cname_found' => $acmeCnames,
+                'policy_txt_found' => $records['mta_sts_dns']['policy_txt_found'] ?? [],
+                'acme_cname_found' => $records['mta_sts_acme']['cname_found'] ?? [],
                 'policy_url'       => $policyUrl,
             ],
             'errors'   => array_values(array_merge(
-                (($records['mta_sts_dns']['status'] ?? '') === 'pass')   ? [] : (array)($records['mta_sts_dns']['errors']   ?? []),
-                (($records['mta_sts_acme']['status'] ?? '') === 'pass')  ? [] : (array)($records['mta_sts_acme']['errors']  ?? []),
-                (($records['mta_sts_policy']['status'] ?? '') === 'pass')? [] : (array)($records['mta_sts_policy']['errors']?? []),
+                (($records['mta_sts_dns']['status'] ?? '') === 'pass')  ? [] : (array)($records['mta_sts_dns']['errors']  ?? []),
+                (($records['mta_sts_acme']['status'] ?? '') === 'pass') ? [] : (array)($records['mta_sts_acme']['errors'] ?? []),
             )),
         ];
 
@@ -229,12 +198,12 @@ final class DomainDnsVerifier
             'verification_txt' => true,
             'spf'              => true,
             'dmarc'            => true,
-            'mx'               => false, // inbound optional
+            'mx'               => false,
             'dkim'             => $requireDkim,
             'tlsrpt'           => true,
-            'mta_sts_dns'      => true,
-            'mta_sts_acme'     => true,
-            'mta_sts_policy'   => true,
+            'mta_sts_dns'      => true,   // TXT only
+            'mta_sts_acme'     => true,   // keep ACME CNAME required (or set false if optional)
+            'mta_sts_policy'   => false,  // not required
         ];
 
         $summary = [];
@@ -264,9 +233,9 @@ final class DomainDnsVerifier
                     'priority' => null,
                 ],
                 [
-                    'type'     => 'CNAME',
-                    'name'     => $stsHost,
-                    'value'    => $expectedCname,
+                    'type'     => 'TXT',
+                    'name'     => $stsTxtName,
+                    'value'    => $expectedPolicyVal,
                     'ttl'      => 3600,
                     'priority' => null,
                 ],
