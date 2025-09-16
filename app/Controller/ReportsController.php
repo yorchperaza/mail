@@ -300,11 +300,13 @@ final class ReportsController
     #[Route(methods: 'GET', path: '/companies/{hash}/reports/dmarc')]
     public function companyDmarc(ServerRequestInterface $r): JsonResponse
     {
-        $uid = $this->authUser($r);
+        $uid  = $this->authUser($r);
         $hash = (string)$r->getAttribute('hash');
-        if (!is_string($hash) || strlen($hash) !== 64) throw new RuntimeException('Invalid company identifier', 400);
+        if (!is_string($hash) || strlen($hash) !== 64) {
+            throw new RuntimeException('Invalid company identifier', 400);
+        }
 
-        $company = $this->companyByHashForUser($hash, $uid);
+        $company     = $this->companyByHashForUser($hash, $uid);
         [$from, $to] = $this->parseRange($r);
 
         /** @var \App\Repository\DomainRepository $domainRepo */
@@ -313,55 +315,78 @@ final class ReportsController
         // All domains for this company
         $domains = $domainRepo->findBy(['company' => $company]);
         error_log('Found ' . count($domains) . ' domains for company ' . $company->getId());
+
         $domainIds = array_map(fn(Domain $d) => $d->getId(), $domains);
         if (empty($domainIds)) {
             return new JsonResponse([
                 'company' => ['id' => $company->getId(), 'hash' => $company->getHash(), 'name' => $company->getName()],
-                'range' => compact('from', 'to'),
+                'range'   => compact('from', 'to'),
                 'domains' => [],
                 'reports' => [],
             ]);
         }
         error_log('Found1 ' . count($domainIds) . ' domains for company ' . $company->getId());
-        // Query DMARC aggregates by domain_id IN (...) and overlap with date range
-        // date_start/date_end in your entity are report window bounds.
-        $qb = (clone $this->qb)
-            ->select(
-            // NOTE: select() accepts string or array; we pass a single string so we can backtick+alias safely
-                "`da`.`id`,
-         `da`.`domain_id`,
-         `da`.`org_name`,
-         `da`.`report_id`,
-         `da`.`date_start`,
-         `da`.`date_end`,
-         `da`.`adkim`,
-         `da`.`aspf`,
-         `da`.`p`   AS `policy_p`,
-         `da`.`sp`  AS `policy_sp`,
-         `da`.`pct`,
-         `da`.`rows` AS `rows_json`,
-         `da`.`received_at`"
-            )
-            // Quote the table name too (your preflight will still resolve pluralization if needed)
+
+        // Common SELECT list
+        $selectCols = "`da`.`id`,
+                   `da`.`domain_id`,
+                   `da`.`org_name`,
+                   `da`.`report_id`,
+                   `da`.`date_start`,
+                   `da`.`date_end`,
+                   `da`.`adkim`,
+                   `da`.`aspf`,
+                   `da`.`p`   AS `policy_p`,
+                   `da`.`sp`  AS `policy_sp`,
+                   `da`.`pct`,
+                   `da`.`rows` AS `rows_json`,
+                   `da`.`received_at`";
+
+        // Query 1: window overlap using report dates
+        $q1 = (clone $this->qb)
+            ->select($selectCols)
             ->from('`dmarcaggregate`', 'da')
-            // whereIn does placeholders for values; we provide a quoted column here
             ->whereIn('`da`.`domain_id`', $domainIds)
-            // These use bound params under the hood; keep the column quoted
-            ->andWhere('`da`.`date_end`', '>=', $from . ' 00:00:00')
-            ->andWhere('`da`.`date_start`', '<=', $to . ' 23:59:59')
+            ->andWhere('`da`.`date_end`',   '>=', $from . ' 00:00:00')
+            ->andWhere('`da`.`date_start`', '<=', $to   . ' 23:59:59')
             ->orderBy('`da`.`date_start`', 'ASC');
 
+        // Query 2: fallback using received_at in the same range
+        $q2 = (clone $this->qb)
+            ->select($selectCols)
+            ->from('`dmarcaggregate`', 'da')
+            ->whereIn('`da`.`domain_id`', $domainIds)
+            ->andWhere('`da`.`received_at`', '>=', $from . ' 00:00:00')
+            ->andWhere('`da`.`received_at`', '<=', $to   . ' 23:59:59')
+            ->orderBy('`da`.`received_at`', 'ASC');
+
         try {
-            $rows = $qb->fetchAll();
+            $rows1 = $q1->fetchAll();
+            $rows2 = $q2->fetchAll();
         } catch (\Throwable $e) {
             error_log('[DMARC SQL ERROR] ' . $e->getMessage());
-            error_log('[DMARC SQL] ' . $qb->toDebugSql());
+            error_log('[DMARC SQL-1] ' . $q1->toDebugSql());
+            error_log('[DMARC SQL-2] ' . $q2->toDebugSql());
             throw new \RuntimeException('Failed to fetch DMARC reports', 500);
         }
-        error_log('Found2 ' . count($rows) . ' domains for company ' . $company->getId());
+
+        // Merge by unique id (avoid duplicates when both conditions match)
+        $seen   = [];
+        $merged = [];
+        foreach ([$rows1, $rows2] as $batch) {
+            foreach ($batch as $row) {
+                $id = (int)($row['id'] ?? 0);
+                if (!$id || isset($seen[$id])) continue;
+                $seen[$id] = true;
+                $merged[]  = $row;
+            }
+        }
+
+        error_log('Found2 ' . count($merged) . ' rows after merge for company ' . $company->getId());
+
         // Group by domain_id and normalize payload
         $byDomain = [];
-        foreach ($rows as $row) {
+        foreach ($merged as $row) {
             $did = (int)($row['domain_id'] ?? 0);
             $byDomain[$did] ??= [];
             $byDomain[$did][] = [
@@ -370,13 +395,13 @@ final class ReportsController
                 'reportId' => $row['report_id'] ?? null,
                 'window'   => [
                     'start' => !empty($row['date_start']) ? (new \DateTimeImmutable($row['date_start']))->format(\DateTimeInterface::ATOM) : null,
-                    'end'   => !empty($row['date_end'])   ? (new \DateTimeImmutable($row['date_end']))->format(\DateTimeInterface::ATOM)   : null,
+                    'end'   => !empty($row['date_end'])   ? (new \DateTimeImmutable($row['date_end']))  ->format(\DateTimeInterface::ATOM)   : null,
                 ],
                 'policy'   => [
                     'adkim' => $row['adkim'] ?? null,
                     'aspf'  => $row['aspf']  ?? null,
-                    'p'     => $row['policy_p']  ?? null,   // <- aliased
-                    'sp'    => $row['policy_sp'] ?? null,   // <- aliased
+                    'p'     => $row['policy_p']  ?? null,
+                    'sp'    => $row['policy_sp'] ?? null,
                     'pct'   => isset($row['pct']) ? (int)$row['pct'] : null,
                 ],
                 'rows'       => is_string($row['rows_json'] ?? null) ? json_decode($row['rows_json'], true) : ($row['rows_json'] ?? null),
@@ -390,18 +415,20 @@ final class ReportsController
         $domainMap = [];
         foreach ($domains as $d) {
             $domainMap[$d->getId()] = [
-                'id' => $d->getId(),
-                'name' => $d->getDomain(), // adjust getter if different
+                'id'   => $d->getId(),
+                'name' => $d->getDomain(),
             ];
         }
+
         error_log('Found4 ' . count($byDomain) . ' domains for company ' . $company->getId());
+
         return new JsonResponse([
             'company' => [
-                'id' => $company->getId(),
+                'id'   => $company->getId(),
                 'hash' => $company->getHash(),
                 'name' => $company->getName(),
             ],
-            'range' => compact('from', 'to'),
+            'range'   => compact('from', 'to'),
             'domains' => array_values($domainMap),
             'reports' => $byDomain,
         ]);

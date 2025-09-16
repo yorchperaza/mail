@@ -46,13 +46,15 @@ final class DmarcController
         /** @var Domain|null $d */
         $d = $domainRepo->findOneBy(['domain' => $domain]);
         if (!$d) return ['ok' => false, 'error' => "Domain not found: $domain"];
+        $startIso = $norm['date_range']['start'] ?? null;
+        $endIso   = $norm['date_range']['end']   ?? null;
 
         $fields = [
             'domain_id' => $d->getId(),
             'org_name' => $orgName,
             'report_id' => $reportId,
-            'date_start' => $norm['date_range']['start'] ?? null ? (new \DateTimeImmutable($norm['date_range']['start']))->format('Y-m-d H:i:s') : null,
-            'date_end' => $norm['date_range']['end'] ?? null ? (new \DateTimeImmutable($norm['date_range']['end']))->format('Y-m-d H:i:s') : null,
+            'date_start' => $startIso ? (new \DateTimeImmutable($startIso))->format('Y-m-d H:i:s') : null,
+            'date_end'   => $endIso   ? (new \DateTimeImmutable($endIso))  ->format('Y-m-d H:i:s') : null,
             'adkim' => $policy['adkim'] ?? null,
             'aspf' => $policy['aspf'] ?? null,
             'p' => $policy['p'] ?? null,
