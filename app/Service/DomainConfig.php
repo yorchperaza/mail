@@ -50,9 +50,10 @@ final class DomainConfig
         $txtValue = 'monkeys-site-verification=' . bin2hex(random_bytes(16));
 
         $spfExpected   = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
+        $managedDmarcMailbox = 'dmarc@monkeysmail.com';
         $dmarcExpected = sprintf(
-            'v=DMARC1; p=none; rua=mailto:dmarc@%1$s; ruf=mailto:dmarc@%1$s; fo=1; adkim=s; aspf=s',
-            $name
+            'v=DMARC1; p=none; rua=mailto:%1$s; ruf=mailto:%1$s; fo=1; adkim=s; aspf=s',
+            $managedDmarcMailbox
         );
         $mxExpected = [[
             'host'     => $name,

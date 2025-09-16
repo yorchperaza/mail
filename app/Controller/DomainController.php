@@ -289,10 +289,8 @@ final class DomainController
             // === Managed TLS-RPT + MTA-STS expectations (NEW) ===
             $clientDomain  = $domain->getDomain();
             $stsEdgeTarget = 'mta-sts.monkeysmail.com.';           // your hosted STS edge
-            $tlsRptMailbox = 'tlsrpt@monkeyslegion.com';           // where you'll receive TLS-RPT
-
-            // 1) TLS-RPT (TXT at _smtp._tls.<domain>)
-            $tlsrptValue = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
+            $tlsRptMailbox = 'tlsrpt@monkeysmail.com';
+            $tlsrptValue   = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
             $domain
                 ->setTlsrpt_rua('mailto:' . $tlsRptMailbox)
                 ->setTlsrpt_expected($tlsrptValue);
