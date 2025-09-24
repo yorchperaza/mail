@@ -4,6 +4,7 @@ declare(strict_types=1);
 use App\Service\Infra\PhpMailerMailSender;
 use App\Service\Infra\PredisStreamsMailQueue;
 use App\Service\Infra\DevInlineMailQueue;
+use App\Service\InternalMailService;
 use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
