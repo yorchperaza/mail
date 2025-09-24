@@ -20,13 +20,13 @@ final class SystemMailSender implements MailSender
 
         try {
             $mail->isSMTP();
-            $mail->Host       = $_ENV['SYSTEM_SMTP_HOST'] ?? 'smtp.monkeysmail.com';
-            $mail->Port       = (int)($_ENV['SYSTEM_SMTP_PORT'] ?? 587);
+            $mail->Host       = 'smtp.monkeysmail.com';
+            $mail->Port       = 587;
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
             $mail->SMTPAuth   = true;
-            $mail->Username   = $_ENV['SYSTEM_SMTP_USERNAME'] ?? 'smtpuser';
-            $mail->Password   = $_ENV['SYSTEM_SMTP_PASSWORD'] ?? 'S3cureP@ssw0rd';
-            $mail->Timeout    = (int)($_ENV['SYSTEM_SMTP_TIMEOUT'] ?? 15);
+            $mail->Username   = 'smtpuser';
+            $mail->Password   = 'S3cureP@ssw0rd';
+            $mail->Timeout    = 15;
 
             // From / Reply-To
             $mail->setFrom($payload['from_email'], $payload['from_name']);
