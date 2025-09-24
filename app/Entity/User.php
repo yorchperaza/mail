@@ -47,15 +47,19 @@ class User
 
     #[OneToOne(targetEntity: Media::class, inversedBy: 'user')]
     public ?Media $media = null;
-    
     #[Field(type: 'datetime', nullable: true)]
     public ?\DateTimeImmutable $lastActivityAt = null;
+    
+     /** @var PasswordResetToken[] */
+    #[OneToMany(targetEntity: PasswordResetToken::class, mappedBy: 'user')]
+    public array $passwordResetTokens = [];
 
     public function __construct()
     {
         // any initialization if needed
         $this->companies = [];
         $this->roles = [];
+        $this->passwordResetTokens = [];
     }
 
     public function getId(): int
@@ -211,5 +215,22 @@ class User
     {
         $this->lastActivityAt = $lastActivityAt;
         return $this;
+    }
+
+    public function addPasswordResetToken(PasswordResetToken $item): self
+    {
+        $this->passwordResetTokens[] = $item;
+        return $this;
+    }
+
+    public function removePasswordResetToken(PasswordResetToken $item): self
+    {
+        $this->passwordResetTokens = array_filter($this->passwordResetTokens, fn($i) => $i !== $item);
+        return $this;
+    }
+
+    public function getPasswordResetTokens(): array
+    {
+        return $this->passwordResetTokens;
     }
 }
