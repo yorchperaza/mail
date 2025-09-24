@@ -23,7 +23,6 @@ final class SystemMailSender implements MailSender
             $mail->Host       = 'smtp.monkeysmail.com';
             $mail->Port       = 587;
             $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->SMTPAuth   = true;
             $mail->Username   = 'smtpuser';
             $mail->Password   = 'S3cureP@ssw0rd';
             $mail->Timeout    = 15;
