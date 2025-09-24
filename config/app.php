@@ -8,13 +8,16 @@ use App\Service\OutboundMailService;
 use App\Service\Ports\MailQueue;
 use App\Service\Ports\MailSender;
 use App\Service\CampaignDispatchService;
+use App\Service\Ports\SystemMailSender;
 use App\Service\WebhookDispatcher;
 use App\Service\SegmentBuildService;
 use App\Service\SegmentBuildOrchestrator;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Query\QueryBuilder;
+use MonkeysLegion\Template\Renderer;
 use Predis\Client as PredisClient;
 use MonkeysLegion\Database\MySQL\Connection as MySqlConnection;
+use Psr\Log\LoggerInterface;
 
 $env = function(string $k, $default = null) {
     if (array_key_exists($k, $_ENV) && $_ENV[$k] !== '') return $_ENV[$k];
@@ -120,10 +123,26 @@ return [
         $c->get(QueryBuilder::class),
         $c->get(MailQueue::class),
         $c->get(MailSender::class),
-        // ⬇️ pass the DI Predis client here (NOT null)
         $c->get(PredisClient::class),
         3600
     ),
+
+    // A separate sender for internal/system emails that reads SYSTEM_SMTP_* envs
+    SystemMailSender::class => fn() => new SystemMailSender(),
+
+    // The InternalMailService uses:
+    //  - SystemMailSender (no DB, no quotas, no tracking)
+    //  - ML Renderer for templates under resources/views/emails/*.ml.php
+    //  - Optional PSR-3 logger if available
+    InternalMailService::class => function ($c) {
+        $logger = null;
+        try { $logger = $c->get(LoggerInterface::class); } catch (\Throwable) {}
+        return new InternalMailService(
+            $c->get(SystemMailSender::class),
+            $c->get(Renderer::class),
+            $logger
+        );
+    },
 
     CampaignDispatchService::class => fn($c) => new CampaignDispatchService(
         $c->get(RepositoryFactory::class),

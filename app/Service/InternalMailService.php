@@ -88,6 +88,9 @@ final class InternalMailService
         $this->sendSystem($to, $subject, $html, $text, ['X-Category' => 'system-password-reset']);
     }
 
+    /**
+     * @throws \Throwable
+     */
     public function adminAlert(string $subject, string $html, ?string $text = null): void
     {
         $ops = $_ENV['INTERNAL_ALERT_TO'] ?? 'ops@monkeysmail.com';

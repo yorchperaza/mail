@@ -640,67 +640,52 @@ final class UserController
         return new JsonResponse(['token' => $newToken], 200);
     }
 
-    /* ---------------------------------------------------------------------
-     * POST /auth/password/forgot
-     * Body: { "email": "user@example.com" }
-     * - Always 202 (no user enumeration)
-     * - If user exists: create reset token (hashed), store with expiry, email link
-     * ------------------------------------------------------------------- */
-    /**
-     * @throws \DateMalformedStringException
-     * @throws \JsonException
-     * @throws RandomException
-     */
     #[Route(methods: 'POST', path: '/auth/password/forgot')]
-    public function passwordForgot(ServerRequestInterface $request): JsonResponse
+    public function forgot(ServerRequestInterface $request): JsonResponse
     {
-        $data  = json_decode((string) $request->getBody(), true, JSON_THROW_ON_ERROR);
-        $email = strtolower(trim((string)($data['email'] ?? '')));
-
-        // Always return 202 to prevent email enumeration
-        if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            return new JsonResponse(['status' => 'accepted'], 202);
+        $data  = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
+        $email = trim((string)($data['email'] ?? ''));
+        if ($email === '') {
+            throw new RuntimeException('Email is required', 400);
         }
 
+        /** @var EntityRepository<User> $userRepo */
+        $userRepo = $this->repos->getRepository(User::class);
         /** @var ?User $user */
-        $user = $this->users->findOneBy(['email' => $email]);
+        $user = $userRepo->findOneBy(['email' => $email]);
 
-        // If user exists, create token and email it
-        if ($user) {
-            $ttlSec   = (int)($_ENV['PASSWORD_RESET_TTL'] ?? 3600); // 1h default
-            $nowUtc   = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-            $expires  = $nowUtc->modify("+{$ttlSec} seconds");
-
-            // Create a new token (store only the hash)
-            [$rawToken, $tokenHash] = $this->generateResetTokenPair();
-
-            $entry = new PasswordResetToken()
-                ->setUser($user)
-                ->setEmail($email)
-                ->setTokenHash($tokenHash)
-                ->setCreatedAt($nowUtc)
-                ->setExpiresAt($expires)
-                ->setUsedAt(null)
-                ->setRequestIp($request->getServerParams()['REMOTE_ADDR'] ?? null)
-                ->setRequestUa($request->getHeaderLine('User-Agent') ?: null);
-
-            $this->passwordResets->save($entry);
-
-            // Build reset URL
-            $appUrl   = rtrim((string)($_ENV['APP_URL'] ?? 'https://app.monkeysmail.com'), '/');
-            $resetUrl = $appUrl . '/reset-password?token=' . urlencode($rawToken) . '&email=' . urlencode($email);
-
-            // Send email (uses internal templates)
-            $this->internalMail->passwordReset(
-                to: $email,
-                name: (string)($user->getFullName() ?? ''),
-                resetUrl: $resetUrl,
-                ttlSeconds: $ttlSec
-            );
+        // Always 202 to avoid enumeration
+        if (!$user) {
+            return new JsonResponse(['status' => 'ok'], 202);
         }
 
-        // Always accepted
-        return new JsonResponse(['status' => 'accepted'], 202);
+        // Issue a short-lived token stored on the user (or a dedicated table)
+        $token  = bin2hex(random_bytes(32));
+        $expiry = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+60 minutes');
+
+        // Suppose you add these fields to User or a PasswordReset table
+        $user->setMfaSecret(null); // (example of clearing; not required)
+        if (method_exists($user, 'setResetToken')) {
+            $user->setResetToken($token);
+            $user->setResetTokenExpiresAt($expiry);
+            $userRepo->save($user);
+        } else {
+            // If you use a separate ResetToken entity, persist it here instead.
+        }
+
+        // Build a link for Next.js route /reset-password?token=...
+        $base = rtrim($_ENV['APP_URL_PUBLIC'] ?? 'https://app.monkeyslegion.com', '/');
+        $resetUrl = $base . '/reset-password?token=' . urlencode($token);
+
+        // Send via InternalMailService (no queue/quotas/tracking)
+        $this->internalMail->passwordReset(
+            $user->getEmail(),
+            $user->getFullName() ?? '',
+            $resetUrl,
+            3600
+        );
+
+        return new JsonResponse(['status' => 'ok'], 202);
     }
 
     /* ---------------------------------------------------------------------
