@@ -12,9 +12,6 @@ final class SystemMailSender implements MailSender
     public function __construct(private ?PHPMailer $mailer = null) {}
 
     /**
-     * Send *raw* payload as built by InternalMailService::sendSystem()
-     * Returns a small result array for consistency (ok/message_id).
-     *
      * @param array{
      *   from_email:string,
      *   from_name?:?string,
@@ -25,8 +22,6 @@ final class SystemMailSender implements MailSender
      *   text_body?:?string,
      *   headers?:array<string,string>
      * } $payload
-     * @return array{ok:bool,message_id:?string}
-     * @throws \RuntimeException
      */
     public function sendRaw(array $payload): array
     {
@@ -34,21 +29,37 @@ final class SystemMailSender implements MailSender
 
         try {
             $mail->isSMTP();
-            $mail->Host       = 'smtp.monkeysmail.com';
-            $mail->Port       = 587;                               // submission
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;    // STARTTLS
-            $mail->SMTPAuth   = true;                              // ← REQUIRED
-            $mail->AuthType   = 'LOGIN';                           // explicit, optional
-            $mail->Username   = 'smtpuser';                        // burned-in creds
-            $mail->Password   = 'S3cureP@ssw0rd';
-            $mail->Timeout    = 15;
-            $mail->CharSet    = 'UTF-8';
+            $mail->Host         = 'smtp.monkeysmail.com';
+            $mail->Port         = 587;
+            $mail->SMTPSecure   = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->SMTPAuth     = true;
+            $mail->AuthType     = 'LOGIN';
+            $mail->Username     = 'smtpuser';
+            $mail->Password     = 'S3cureP@ssw0rd';
+            $mail->Timeout      = 15;
+            $mail->CharSet      = 'UTF-8';
             $mail->SMTPKeepAlive = false;
+
+            // ---- Compliance with server/DNS ----
+            // The hostname used in EHLO/HELO:
+            $mail->Hostname = 'smtp.monkeysmail.com';
+            $mail->Helo     = 'smtp.monkeysmail.com';
+
+            // Envelope-From / Return-Path (sets SMTP MAIL FROM, not just a header)
+            $mail->Sender   = 'bounce@notify.monkeysmail.com';
 
             // From / Reply-To
             $fromEmail = (string)($payload['from_email'] ?? '');
             $fromName  = (string)($payload['from_name']  ?? '');
             $replyTo   = (string)($payload['reply_to']   ?? '');
+
+            // Force From to the notify subdomain unless already compliant
+            $fromIsNotify = filter_var($fromEmail, FILTER_VALIDATE_EMAIL)
+                && str_ends_with(strtolower($fromEmail), '@notify.monkeysmail.com');
+
+            if (!$fromIsNotify) {
+                $fromEmail = 'no-reply@notify.monkeysmail.com';
+            }
 
             $mail->setFrom($fromEmail, $fromName);
             if ($replyTo !== '') {
@@ -57,10 +68,12 @@ final class SystemMailSender implements MailSender
 
             // To
             foreach ((array)$payload['to'] as $rcpt) {
-                if ($rcpt !== '') $mail->addAddress((string)$rcpt);
+                if ($rcpt !== '') {
+                    $mail->addAddress((string)$rcpt);
+                }
             }
 
-            // Custom headers
+            // Custom headers (safe to keep; Return-Path is controlled by $mail->Sender)
             foreach ((array)($payload['headers'] ?? []) as $k => $v) {
                 if ($k !== '' && $v !== '') {
                     $mail->addCustomHeader((string)$k, (string)$v);
@@ -84,17 +97,8 @@ final class SystemMailSender implements MailSender
         }
     }
 
-    /**
-     * Compatibility path if something calls send(Message $msg, array $envelope)
-     * Builds a raw payload and delegates to sendRaw().
-     *
-     * @param mixed $message  Object with getters or array-like; we only read common fields.
-     * @param array $envelope ['to'=>string[], 'fromEmail'?, 'fromName'?, 'replyTo'?, 'headers'?]
-     * @return array{ok:bool,message_id:?string}
-     */
     public function send($message, array $envelope = []): array
     {
-        // Try to read via getters if available; otherwise fall back to envelope.
         $get = static function ($obj, string $method, $default = null) {
             return (is_object($obj) && method_exists($obj, $method)) ? $obj->{$method}() : $default;
         };
