@@ -640,44 +640,44 @@ final class UserController
         return new JsonResponse(['token' => $newToken], 200);
     }
 
+    /**
+     * @throws \DateMalformedStringException
+     * @throws RandomException
+     * @throws \JsonException
+     */
     #[Route(methods: 'POST', path: '/auth/password/forgot')]
     public function forgot(ServerRequestInterface $request): JsonResponse
     {
         $data  = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
-        $email = trim((string)($data['email'] ?? ''));
-        if ($email === '') {
-            throw new RuntimeException('Email is required', 400);
-        }
+        $email = strtolower(trim((string)($data['email'] ?? '')));
+        if ($email === '') throw new RuntimeException('Email is required', 400);
 
-        /** @var EntityRepository<User> $userRepo */
-        $userRepo = $this->repos->getRepository(User::class);
         /** @var ?User $user */
-        $user = $userRepo->findOneBy(['email' => $email]);
+        $user = $this->users->findOneBy(['email' => $email]);
 
-        // Always 202 to avoid enumeration
-        if (!$user) {
-            return new JsonResponse(['status' => 'ok'], 202);
-        }
+        // Always 202 (enumeration safe)
+        if (!$user) return new JsonResponse(['status' => 'ok'], 202);
 
-        // Issue a short-lived token stored on the user (or a dedicated table)
-        $token  = bin2hex(random_bytes(32));
-        $expiry = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->modify('+60 minutes');
+        // Create token pair
+        [$rawToken, $tokenHash] = $this->generateResetTokenPair();
+        $now    = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        $expiry = $now->modify('+60 minutes');
 
-        // Suppose you add these fields to User or a PasswordReset table
-        $user->setMfaSecret(null); // (example of clearing; not required)
-        if (method_exists($user, 'setResetToken')) {
-            $user->setResetToken($token);
-            $user->setResetTokenExpiresAt($expiry);
-            $userRepo->save($user);
-        } else {
-            // If you use a separate ResetToken entity, persist it here instead.
-        }
+        // Persist a PasswordResetToken row
+        /** @var PasswordResetToken $row */
+        $row = new PasswordResetToken();
+        $row->setEmail($email)
+            ->setTokenHash($tokenHash)
+            ->setCreatedAt($now)
+            ->setExpiresAt($expiry)
+            ->setUsedAt(null);
+        $this->passwordResets->save($row);
 
-        // Build a link for Next.js route /reset-password?token=...
-        $base = rtrim($_ENV['APP_URL_PUBLIC'] ?? 'https://app.monkeyslegion.com', '/');
-        $resetUrl = $base . '/reset-password?token=' . urlencode($token);
+        // Build token-only link
+        $base     = rtrim($_ENV['APP_URL_PUBLIC'] ?? 'https://app.monkeysmail.com', '/');
+        $resetUrl = $base . '/reset-password?token=' . urlencode($rawToken);
 
-        // Send via InternalMailService (no queue/quotas/tracking)
+        // Send internal mail (no tracking/queue)
         $this->internalMail->passwordReset(
             $user->getEmail(),
             $user->getFullName() ?? '',
@@ -702,56 +702,45 @@ final class UserController
     #[Route(methods: 'POST', path: '/auth/password/reset')]
     public function passwordReset(ServerRequestInterface $request): JsonResponse
     {
-        $data     = json_decode((string) $request->getBody(), true, JSON_THROW_ON_ERROR);
-        $email    = strtolower(trim((string)($data['email'] ?? '')));
+        $data     = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
         $token    = (string)($data['token'] ?? '');
         $password = (string)($data['password'] ?? '');
 
-        if ($email === '' || $token === '' || $password === '') {
-            throw new RuntimeException('email, token and password are required', 400);
+        if ($token === '' || $password === '') {
+            throw new RuntimeException('token and password are required', 400);
         }
         if (strlen($password) < 8) {
             throw new RuntimeException('Password must be at least 8 characters', 400);
         }
 
-        /** @var ?User $user */
-        $user = $this->users->findOneBy(['email' => $email]);
-        if (!$user) {
-            // Don’t leak: pretend ok (or throw generic)
-            return new JsonResponse(['status' => 'ok'], 200);
-        }
-
-        // Find the most recent unused, unexpired reset row for this email
-        /** @var PasswordResetToken[] $candidates */
-        $candidates = $this->passwordResets->findBy(['email' => $email], orderBy: ['id' => 'DESC']);
-        $nowUtc     = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+        /** @var PasswordResetToken[] $rows */
+        $rows = $this->passwordResets->findBy([], orderBy: ['id' => 'DESC']);
+        $now  = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
 
         $match = null;
-        foreach ($candidates as $row) {
-            if ($row->getUsedAt() !== null) continue;
-            if ($row->getExpiresAt() && $row->getExpiresAt() < $nowUtc) continue;
-
-            // Constant-time compare on hash
-            $tokenOk = password_verify($token, (string)$row->getTokenHash());
-            if ($tokenOk) { $match = $row; break; }
+        foreach ($rows as $row) {
+            if ($row->getUsedAt()) continue;
+            if ($row->getExpiresAt() && $row->getExpiresAt() < $now) continue;
+            if (password_verify($token, (string)$row->getTokenHash())) { $match = $row; break; }
         }
 
-        if (!$match) {
-            throw new RuntimeException('Invalid or expired token', 400);
-        }
+        if (!$match) throw new RuntimeException('Invalid or expired token', 400);
+
+        $email = strtolower((string)$match->getEmail());
+        /** @var ?User $user */
+        $user = $this->users->findOneBy(['email' => $email]);
+        if (!$user) return new JsonResponse(['status' => 'ok'], 200);
 
         // Update password
         $user->setPasswordHash($this->hasher->hash($password));
         $this->users->save($user);
 
-        // Mark token as used
-        $match->setUsedAt($nowUtc);
+        // Mark token used
+        $match->setUsedAt($now);
         $this->passwordResets->save($match);
 
         return new JsonResponse(['status' => 'ok'], 200);
     }
-
-    /* ===================== Helpers ===================== */
 
     /**
      * Returns [rawToken, tokenHash]
@@ -765,6 +754,48 @@ final class UserController
         $raw      = rtrim(strtr(base64_encode($bytes), '+/', '-_'), '='); // URL-safe
         $hash     = password_hash($raw, PASSWORD_BCRYPT, ['cost' => 12]);
         return [$raw, $hash];
+    }
+
+    /**
+     * @throws \ReflectionException
+     * @throws \DateMalformedStringException
+     * @throws \JsonException
+     */
+    #[Route(methods: 'GET', path: '/auth/password/token-info')]
+    public function tokenInfo(ServerRequestInterface $request): JsonResponse
+    {
+        $token = trim((string)($request->getQueryParams()['token'] ?? ''));
+        if ($token === '') throw new RuntimeException('Missing token', 400);
+
+        /** @var PasswordResetToken[] $rows */
+        $rows = $this->passwordResets->findBy([], orderBy: ['id' => 'DESC']); // you can optimize with an index/lookup
+        $now  = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+        foreach ($rows as $row) {
+            if ($row->getUsedAt()) continue;
+            if ($row->getExpiresAt() && $row->getExpiresAt() < $now) continue;
+            if (password_verify($token, (string)$row->getTokenHash())) {
+                $email = (string)$row->getEmail();
+                return new JsonResponse([
+                    'email'      => $email,               // if you prefer full email here
+                    'emailMask'  => $this->maskEmail($email), // …and show mask in UI
+                    'expiresAt'  => $row->getExpiresAt()?->format(DateTimeInterface::ATOM),
+                    'ttlMin'     => $row->getExpiresAt() ? max(0, (int)ceil(($row->getExpiresAt()->getTimestamp() - $now->getTimestamp())/60)) : null,
+                ], 200);
+            }
+        }
+
+        // Invalid/expired
+        return new JsonResponse(['message' => 'Invalid or expired token'], 400);
+    }
+
+    private function maskEmail(string $email): string
+    {
+        // simple mask: jo***@domain.com
+        if (!str_contains($email, '@')) return $email;
+        [$local, $domain] = explode('@', $email, 2);
+        $keep = max(1, min(3, (int)floor(strlen($local)/2)));
+        return substr($local, 0, $keep) . str_repeat('*', max(1, strlen($local)-$keep)) . '@' . $domain;
     }
 
 }
