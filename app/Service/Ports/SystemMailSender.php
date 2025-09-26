@@ -29,23 +29,23 @@ final class SystemMailSender implements MailSender
 
         try {
             $mail->isSMTP();
-            $mail->Host         = 'smtp.monkeysmail.com';
-            $mail->Port         = 587;
-            $mail->SMTPSecure   = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->SMTPAuth     = true;
-            $mail->AuthType     = 'LOGIN';
-            $mail->Username     = 'smtpuser';
-            $mail->Password     = 'S3cureP@ssw0rd';
-            $mail->Timeout      = 15;
-            $mail->CharSet      = 'UTF-8';
+            $mail->Host          = 'smtp.monkeysmail.com';
+            $mail->Port          = 587;
+            $mail->SMTPSecure    = PHPMailer::ENCRYPTION_STARTTLS;
+            $mail->SMTPAuth      = true;
+            $mail->AuthType      = 'LOGIN';
+            $mail->Username      = 'smtpuser';
+            $mail->Password      = 'S3cureP@ssw0rd';
+            $mail->Timeout       = 15;
+            $mail->CharSet       = 'UTF-8';
             $mail->SMTPKeepAlive = false;
 
             // ---- Compliance with server/DNS ----
-            // The hostname used in EHLO/HELO:
+            // EHLO/HELO should be your SMTP hostname
             $mail->Hostname = 'smtp.monkeysmail.com';
             $mail->Helo     = 'smtp.monkeysmail.com';
 
-            // Envelope-From / Return-Path (sets SMTP MAIL FROM, not just a header)
+            // Envelope-From / Return-Path (MAIL FROM)
             $mail->Sender   = 'bounce@notify.monkeysmail.com';
 
             // From / Reply-To
@@ -66,6 +66,14 @@ final class SystemMailSender implements MailSender
                 $mail->addReplyTo($replyTo);
             }
 
+            // --- DKIM signing (notify.monkeysmail.com; selector s1) ---
+            // Make sure the private key path is readable by the app user.
+            $mail->DKIM_domain   = 'notify.monkeysmail.com';
+            $mail->DKIM_selector = 's1';
+            $mail->DKIM_private  = '/etc/opendkim/keys/notify.monkeysmail.com/s1.private'; // adjust if needed
+            $mail->DKIM_identity = $fromEmail;
+            // $mail->DKIM_passphrase = ''; // uncomment if your key has a passphrase
+
             // To
             foreach ((array)$payload['to'] as $rcpt) {
                 if ($rcpt !== '') {
@@ -73,7 +81,7 @@ final class SystemMailSender implements MailSender
                 }
             }
 
-            // Custom headers (safe to keep; Return-Path is controlled by $mail->Sender)
+            // Custom headers (Return-Path is controlled by $mail->Sender)
             foreach ((array)($payload['headers'] ?? []) as $k => $v) {
                 if ($k !== '' && $v !== '') {
                     $mail->addCustomHeader((string)$k, (string)$v);
