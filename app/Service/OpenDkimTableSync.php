@@ -17,7 +17,7 @@ final class OpenDkimTableSync
 
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb,   // <- REQUIRED now
+        private QueryBuilder      $qb,
     ) {}
 
     /** Always get PDO from MonkeysLegion QueryBuilder (framework standard). */

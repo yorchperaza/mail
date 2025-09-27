@@ -11,22 +11,21 @@ final class DkimKeyService
     public function __construct(?string $baseDir = null)
     {
         // Primary storage location
-        $env = getenv('DKIM_DIR') ?: $baseDir;
+        $env     = getenv('DKIM_DIR') ?: $baseDir;
         $default = '/var/lib/monkeysmail/dkim';
         $local   = __DIR__ . '/../../var/dkim';
 
         $candidate = $env ?: $default;
         if (!self::isWritableDir($candidate)) {
+            // fall back to local project var dir (dev environments)
             $candidate = $local;
         }
 
         $this->baseDir = rtrim($candidate, '/');
         $this->ensureDir($this->baseDir);
 
-        // Ensure OpenDKIM directory exists
-        if (!is_dir($this->opendkimDir)) {
-            @mkdir($this->opendkimDir, 0755, true);
-        }
+        // Do NOT force-create /etc/opendkim/keys here; that is usually root-only.
+        // We will only touch it later if it is writable.
     }
 
     public function ensureKeyForDomain(string $domain, string $selector): array
@@ -44,11 +43,10 @@ final class DkimKeyService
         $safeDomain = preg_replace('~[^a-z0-9.-]~i', '_', $domain);
         $keyPath    = "{$this->baseDir}/{$safeDomain}.{$selector}.key";
 
-        // OpenDKIM expects keys in its own directory structure
+        // Preferred OpenDKIM view (only if writable)
         $opendkimKeyPath = "{$this->opendkimDir}/{$domain}/{$selector}.private";
 
         if (!is_file($keyPath)) {
-            // Generate 2048-bit RSA private key
             $res = \openssl_pkey_new([
                 'private_key_bits' => 2048,
                 'private_key_type' => OPENSSL_KEYTYPE_RSA,
@@ -60,22 +58,25 @@ final class DkimKeyService
                 throw new \RuntimeException('OpenSSL failed to export private key');
             }
 
-            // Atomic write + secure perms
             $tmp = $keyPath . '.tmp.' . bin2hex(random_bytes(6));
             if (@file_put_contents($tmp, $privPem, LOCK_EX) === false) {
                 throw new \RuntimeException("Unable to write DKIM key temp file: {$tmp}");
             }
-            @chmod($tmp, 0600);
+
+            // 0640 so OpenDKIM (group) can read; setgid dir will make group=opendkim
+            @chmod($tmp, 0640);
+
             if (!@rename($tmp, $keyPath)) {
                 @unlink($tmp);
                 throw new \RuntimeException("Unable to move DKIM key into place: {$keyPath}");
             }
-            @chmod($keyPath, 0640); // Allow opendkim group read
-            @chgrp($keyPath, 'opendkim'); // Set group to opendkim
+        } else {
+            // Ensure readable perms if an old file exists
+            @chmod($keyPath, 0640);
         }
 
-        // Create symlink for OpenDKIM
-        $this->ensureOpendkimSymlink($keyPath, $opendkimKeyPath);
+        // Best-effort: create /etc/opendkim/keys symlink ONLY if writable (root prepared it)
+        $this->maybeLinkIntoOpendkim($keyPath, $opendkimKeyPath);
 
         $privPem = @file_get_contents($keyPath);
         if ($privPem === false) {
@@ -92,42 +93,50 @@ final class DkimKeyService
             throw new \RuntimeException('OpenSSL failed to derive public key');
         }
 
-        // Convert PEM public key to single-line base64 for DKIM
         $pubB64  = preg_replace('~-----.*?-----|\s+~', '', $pubPem);
         $txtName = "{$selector}._domainkey.{$domain}";
         $txtVal  = "v=DKIM1; k=rsa; p={$pubB64}";
 
         return [
-            'txt_name'     => $txtName,
-            'txt_value'    => $txtVal,
-            'public_pem'   => $pubPem,
-            'private_path' => $keyPath,
-            'opendkim_path' => $opendkimKeyPath, // Add this for reference
+            'txt_name'      => $txtName,
+            'txt_value'     => $txtVal,
+            'public_pem'    => $pubPem,
+            'private_path'  => $keyPath,         // <-- store this in DB (dkim_key.private_key_ref)
+            'opendkim_path' => $opendkimKeyPath, // best-effort link location
         ];
     }
 
-    private function ensureOpendkimSymlink(string $source, string $target): void
+    private function maybeLinkIntoOpendkim(string $source, string $target): void
     {
         $targetDir = dirname($target);
-        if (!is_dir($targetDir)) {
-            @mkdir($targetDir, 0755, true);
+
+        // Only proceed if /etc/opendkim/keys is writable by the app user/group
+        if (!self::isWritableDir($targetDir)) {
+            // Not an error; OpenDKIM can read $source directly via KeyTable path.
+            error_log("[DKIM] /etc/opendkim not writable by app; skipping symlink. Using source={$source}");
+            return;
         }
 
-        // Remove existing symlink if it exists and points elsewhere
-        if (is_link($target)) {
-            if (readlink($target) !== $source) {
-                @unlink($target);
-            } else {
-                return; // Already correct
+        if (!is_dir($targetDir) && !@mkdir($targetDir, 0755, true) && !is_dir($targetDir)) {
+            // If we couldn't create it, just skip (same as above)
+            error_log("[DKIM] Unable to create {$targetDir}; skipping symlink. Using source={$source}");
+            return;
+        }
+
+        // Remove existing wrong link
+        if (is_link($target) && readlink($target) !== $source) {
+            @unlink($target);
+        }
+
+        if (!is_link($target)) {
+            if (!@symlink($source, $target)) {
+                // fallback: copy (if perms allow)
+                if (@copy($source, $target)) {
+                    @chmod($target, 0640);
+                } else {
+                    error_log("[DKIM] Failed to create symlink/copy into {$target}; continuing without it.");
+                }
             }
-        }
-
-        // Create symlink
-        if (!@symlink($source, $target)) {
-            // If symlink fails, try copying instead
-            @copy($source, $target);
-            @chmod($target, 0640);
-            @chgrp($target, 'opendkim');
         }
     }
 
@@ -141,8 +150,9 @@ final class DkimKeyService
     private function ensureDir(string $dir): void
     {
         if (is_dir($dir)) return;
-        if (!@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        if (!@mkdir($dir, 02770, true) && !is_dir($dir)) { // 02770 to keep setgid when created by app
             throw new \RuntimeException("Cannot create DKIM directory: {$dir}");
         }
+        // If the app user is in 'opendkim' group, new files inherit that group due to setgid on parent (/var/lib/monkeysmail/dkim)
     }
 }
