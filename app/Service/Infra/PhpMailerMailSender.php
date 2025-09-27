@@ -7,6 +7,8 @@ namespace App\Service\Infra;
 use App\Entity\Message;
 use App\Service\Ports\MailSender;
 use PHPMailer\PHPMailer\PHPMailer;
+use App\Service\DkimKeyService;
+use App\Service\OpenDkimRegistrar;
 
 final class PhpMailerMailSender implements MailSender
 {
@@ -35,9 +37,11 @@ final class PhpMailerMailSender implements MailSender
             $mail->Password = $this->password;
             $mail->SMTPSecure = $this->secure === 'tls' ? PHPMailer::ENCRYPTION_STARTTLS : PHPMailer::ENCRYPTION_SMTPS;
             $mail->Timeout = $this->timeout;
+            $mail->CharSet = 'UTF-8';
 
             // From
-            $mail->setFrom($data['from_email'], $data['from_name'] ?? '');
+            $fromEmail = (string)($data['from_email'] ?? '');
+            $mail->setFrom($fromEmail, $data['from_name'] ?? '');
 
             // Reply-to
             if (!empty($data['reply_to'])) {
@@ -57,15 +61,18 @@ final class PhpMailerMailSender implements MailSender
 
             // Content
             $mail->Subject = $data['subject'] ?? '';
-            $mail->Body = $data['html_body'] ?? '';
+            $mail->Body    = $data['html_body'] ?? '';
             $mail->AltBody = $data['text_body'] ?? '';
             $mail->isHTML(!empty($data['html_body']));
+
+            // --- DKIM: provision/register for From: domain (milter-first; local fallback opt-in)
+            $this->prepareDkimForFrom($fromEmail, $mail);
 
             $mail->send();
 
             return ['ok' => true, 'message_id' => $mail->getLastMessageID()];
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             return ['ok' => false, 'error' => $e->getMessage()];
         }
     }
@@ -87,15 +94,16 @@ final class PhpMailerMailSender implements MailSender
             $mail->CharSet = 'UTF-8';
 
             // From + Reply-To
-            $mail->setFrom($msg->getFrom_email(), $msg->getFrom_name() ?? '');
+            $fromEmail = (string)$msg->getFrom_email();
+            $mail->setFrom($fromEmail, $msg->getFrom_name() ?? '');
             if ($msg->getReply_to()) {
                 $mail->addReplyTo($msg->getReply_to());
             }
 
             // Recipients
-            foreach (($envelope['to'] ?? []) as $rcpt) $mail->addAddress($rcpt);
-            foreach (($envelope['cc'] ?? []) as $rcpt) $mail->addCC($rcpt);
-            foreach (($envelope['bcc'] ?? []) as $rcpt) $mail->addBCC($rcpt);
+            foreach (($envelope['to'] ?? []) as $rcpt)  { $mail->addAddress($rcpt); }
+            foreach (($envelope['cc'] ?? []) as $rcpt)  { $mail->addCC($rcpt); }
+            foreach (($envelope['bcc'] ?? []) as $rcpt) { $mail->addBCC($rcpt); }
 
             // Headers
             foreach (($envelope['headers'] ?? []) as $k => $v) {
@@ -127,12 +135,62 @@ final class PhpMailerMailSender implements MailSender
                 );
             }
 
-            $ok = $mail->send();
+            // --- DKIM: provision/register for From: domain (milter-first; local fallback opt-in)
+            $this->prepareDkimForFrom($fromEmail, $mail);
+
+            $ok  = $mail->send();
             $mid = $mail->getLastMessageID() ?: null;
 
             return ['ok' => (bool)$ok, 'message_id' => $mid, 'error' => null];
         } catch (\Throwable $e) {
             return ['ok' => false, 'message_id' => null, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Generates a DKIM key for the From: domain if needed, registers it in OpenDKIM
+     * (KeyTable/SigningTable + HUP), and optionally enables PHPMailer local DKIM
+     * signing when DKIM_FALLBACK_LOCAL=1.
+     */
+    private function prepareDkimForFrom(string $fromEmail, PHPMailer $mail): void
+    {
+        try {
+            $fromEmail = trim($fromEmail);
+            if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+                return; // nothing to do
+            }
+
+            $at = strrpos($fromEmail, '@');
+            if ($at === false) return;
+            $fromDomain = strtolower(substr($fromEmail, $at + 1));
+            if ($fromDomain === '') return;
+
+            // selector: default s1 (overridable)
+            $selector = (string)(getenv('DKIM_SELECTOR') ?: 's1');
+
+            // 1) Ensure/generate key material
+            $dk   = new DkimKeyService();
+            $info = $dk->ensureKeyForDomain($fromDomain, $selector);
+            $privPath = (string)$info['private_path'];
+
+            // 2) Register with OpenDKIM (idempotent) and HUP
+            $reg = new OpenDkimRegistrar();
+            $reg->register($fromDomain, $selector, $privPath);
+
+            // 3) Prefer OpenDKIM milter for signing; only enable PHPMailer DKIM if fallback is requested
+            $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
+            $useLocal = in_array($fallback, ['1','true','yes','on'], true);
+
+            if ($useLocal) {
+                $mail->DKIM_domain   = $fromDomain;
+                $mail->DKIM_selector = $selector;
+                $mail->DKIM_private  = $privPath;
+                $mail->DKIM_identity = $fromEmail;
+                // $mail->DKIM_passphrase = ''; // if your key has one
+            }
+        } catch (\Throwable $e) {
+            // Non-fatal: still try to send without DKIM if provisioning/registration fails.
+            error_log('[DKIM] prepare failed: '.$e->getMessage());
         }
     }
 }
