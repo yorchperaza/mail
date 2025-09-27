@@ -291,21 +291,150 @@ final class DomainDnsVerifier
         if ($expected === '') {
             return ['status' => 'fail', 'host' => $apex, 'found' => [], 'errors' => ['missing_expected']];
         }
-        $found   = $this->txtValues($apex);
-        $normExp = $this->normalizeSpf($expected);
-        $ok = false;
-        foreach ($found as $txt) {
-            if (str_starts_with(strtolower(trim($txt)), 'v=spf1')) {
-                if ($this->normalizeSpf($txt) === $normExp) { $ok = true; break; }
+
+        $foundTxts = $this->txtValues($apex);
+        $errors    = [];
+
+        // Parse expected once
+        $exp = $this->parseSpf($expected);
+        if (!$exp['valid']) {
+            return [
+                'status' => 'fail',
+                'host'   => $apex,
+                'expected' => $expected,
+                'found'  => $foundTxts,
+                'errors' => ['expected_spf_invalid_syntax'],
+            ];
+        }
+
+        // Evaluate each found SPF; pass if any matches the expected (subset check)
+        foreach ($foundTxts as $txt) {
+            $spf = $this->parseSpf($txt);
+            if (!$spf['valid']) {
+                $errors[] = 'found_spf_invalid_syntax';
+                continue;
+            }
+            if ($this->spfSupersetMatches($spf, $exp)) {
+                return [
+                    'status'   => 'pass',
+                    'host'     => $apex,
+                    'expected' => $expected,
+                    'found'    => $foundTxts,
+                    'errors'   => [],
+                ];
             }
         }
+
+        // No found SPF satisfied expected
         return [
-            'status'   => $ok ? 'pass' : 'fail',
+            'status'   => 'fail',
             'host'     => $apex,
             'expected' => $expected,
-            'found'    => $found,
-            'errors'   => $ok ? [] : ['spf_not_matching'],
+            'found'    => $foundTxts,
+            'errors'   => empty($foundTxts) ? ['spf_missing'] : array_values(array_unique($errors + ['spf_not_matching'])),
         ];
+    }
+
+    /**
+     * Parse an SPF string into mechanisms and final-all qualifier.
+     * Returns ['valid'=>bool, 'mechs'=>array<string,true>, 'includes'=>array<string,true>, 'ip4'=>array<string,true>, 'ip6'=>array<string,true>, 'all'=>string|null]
+     */
+    private function parseSpf(string $s): array
+    {
+        $out = [
+            'valid'    => false,
+            'mechs'    => [],           // e.g. ['a'=>true,'mx'=>true]
+            'includes' => [],           // e.g. ['monkeysmail.com'=>true]
+            'ip4'      => [],           // e.g. ['34.30.122.164'=>true, '203.0.113.0/24'=>true]
+            'ip6'      => [],
+            'all'      => null,         // one of '-', '~', '?', '+' or null if no all
+        ];
+
+        $s = strtolower(trim($s, " \t\r\n\"'"));
+        if ($s === '' || !str_starts_with($s, 'v=spf1')) {
+            return $out;
+        }
+
+        $tokens = preg_split('~\s+~', $s) ?: [];
+        array_shift($tokens); // drop v=spf1
+
+        foreach ($tokens as $tok) {
+            $tok = trim($tok);
+            if ($tok === '') continue;
+
+            // qualifier (optional) then mechanism
+            // examples: -all, ~all, include:example.com, ip4:1.2.3.4/24, a, mx
+            if (preg_match('~^([+\-~?])?all$~', $tok, $m)) {
+                $out['all'] = $m[1] !== '' ? $m[1] : '+';
+                continue;
+            }
+            if (preg_match('~^([+\-~?])?include:(.+)$~', $tok, $m)) {
+                $host = trim($m[2], '.');
+                if ($host !== '') $out['includes'][$host] = true;
+                $out['mechs']['include'] = true;
+                continue;
+            }
+            if (preg_match('~^([+\-~?])?ip4:([0-9./]+)$~', $tok, $m)) {
+                $out['ip4'][$m[2]] = true;
+                $out['mechs']['ip4'] = true;
+                continue;
+            }
+            if (preg_match('~^([+\-~?])?ip6:([0-9a-f:/]+)$~', $tok, $m)) {
+                $out['ip6'][$m[2]] = true;
+                $out['mechs']['ip6'] = true;
+                continue;
+            }
+            if (preg_match('~^([+\-~?])?(a|mx|ptr|exists|redirect=.+)$~', $tok, $m)) {
+                // Coarse record of presence; subset logic below cares mainly about ip4/ip6/include and all
+                $key = $m[2];
+                $out['mechs'][$key] = true;
+                continue;
+            }
+            // Unknown token: ignore for tolerance
+        }
+
+        $out['valid'] = true;
+        return $out;
+    }
+
+    /**
+     * Returns true if $found is a superset of $expected, with tolerant ALL:
+     * - If expected has "-all", found may have "-all" OR "~all"
+     * - If expected has "~all" or no "all", found may have any "all" (or none)
+     * - All expected ip4/ip6/include entries must appear in found (exact text match)
+     */
+    private function spfSupersetMatches(array $found, array $expected): bool
+    {
+        if (!$found['valid'] || !$expected['valid']) return false;
+
+        // 1) ip4
+        foreach (array_keys($expected['ip4']) as $ip4) {
+            if (!isset($found['ip4'][$ip4])) return false;
+        }
+        // 2) ip6
+        foreach (array_keys($expected['ip6']) as $ip6) {
+            if (!isset($found['ip6'][$ip6])) return false;
+        }
+        // 3) includes
+        foreach (array_keys($expected['includes']) as $host) {
+            if (!isset($found['includes'][$host])) return false;
+        }
+
+        // 4) ALL qualifier tolerance
+        $expAll = $expected['all']; // '-', '~', '?', '+', or null
+        $fndAll = $found['all'];    // same
+
+        if ($expAll === '-') {
+            // expected hardfail; accept found hardfail or softfail
+            if (!in_array($fndAll, ['-', '~'], true)) return false;
+        } elseif ($expAll === '~') {
+            // expected softfail; accept any all (or none)
+            // (no check)
+        } elseif ($expAll === '+' || $expAll === '?' || $expAll === null) {
+            // no restriction
+        }
+
+        return true;
     }
 
     private function checkDmarc(string $apex, string $expected): array
@@ -459,12 +588,6 @@ final class DomainDnsVerifier
     private function normalizeTxt(string $s): string
     {
         return trim(preg_replace('~\s+~', ' ', (string)$s), " \t\r\n\"'");
-    }
-
-    private function normalizeSpf(string $s): string
-    {
-        $s = strtolower($this->normalizeTxt($s));
-        return $s;
     }
 
     private function normalizeDmarc(string $s): string
