@@ -19,6 +19,7 @@ use App\Entity\Campaign;
 use App\Service\CompanyResolver;
 use App\Service\DomainConfig;
 use App\Service\DomainDnsVerifier;
+use App\Service\DomainProvisioner;
 use App\Service\SmtpCredentialProvisioner;
 use MonkeysLegion\Router\Attributes\Route;
 use MonkeysLegion\Http\Message\JsonResponse;
@@ -38,6 +39,7 @@ final class DomainController
         private DomainConfig      $domainConfig,
         private SmtpCredentialProvisioner $smtpProvisioner,
         private DomainDnsVerifier $domainDnsVerifier,
+        private DomainProvisioner $provisioner,
     ) {}
 
     /**
@@ -115,22 +117,11 @@ final class DomainController
         return new JsonResponse($out);
     }
 
-    /**
-     * POST /companies/{hash}/domains
-     *
-     * Create a new domain under the given company.
-     *
-     * @throws ReflectionException
-     * @throws \JsonException
-     * @throws \DateMalformedStringException
-     * @throws RandomException
-     * @throws \Throwable
-     */
     #[Route(methods: 'POST', path: '/companies/{hash}/domains')]
     public function createDomain(ServerRequestInterface $request): JsonResponse
     {
         $t0  = microtime(true);
-        $rid = bin2hex(random_bytes(6)); // simple trace/correlation id for logs
+        $rid = bin2hex(random_bytes(6));
 
         $mask = static function (?string $s, int $show = 2): string {
             if ($s === null || $s === '') return '';
@@ -143,159 +134,73 @@ final class DomainController
             // 1) Auth
             $userId = (int)$request->getAttribute('user_id', 0);
             error_log("[createDomain][$rid] START user_id={$userId}");
-            if ($userId <= 0) {
-                error_log("[createDomain][$rid] Unauthorized: missing/invalid user_id");
-                throw new RuntimeException('Unauthorized', 401);
-            }
+            if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
 
             // 2) Resolve + authorize company
             $hash = (string)$request->getAttribute('hash');
-            error_log("[createDomain][$rid] Resolving company for hash={$hash}");
             $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-            if (!$company) {
-                error_log("[createDomain][$rid] Company not found or access denied for hash={$hash}, user_id={$userId}");
-                throw new RuntimeException('Company not found or access denied', 404);
-            }
+            if (!$company) throw new RuntimeException('Company not found or access denied', 404);
             $companyId = (int)$company->getId();
-            error_log("[createDomain][$rid] Company resolved id={$companyId}");
 
             /** @var \App\Repository\DomainRepository $domainRepo */
             $domainRepo = $this->repos->getRepository(Domain::class);
 
-            // ---- Enforce domain limits for Starter/Grow/No Plan ----
+            // ---- Plan limit (same as your original) ----
             $planName = null;
-            try {
-                $planName = $company->getPlan()?->getName();
-                error_log("[createDomain][$rid] Plan (via relation) planName=" . ($planName ?? 'NULL'));
-            } catch (\Throwable $e) {
-                error_log("[createDomain][$rid] Plan relation access failed: " . $e->getMessage());
-            }
-
+            try { $planName = $company->getPlan()?->getName(); } catch (\Throwable) {}
             if ($planName === null || $planName === '') {
-                try {
-                    /** @var \App\Repository\CompanyRepository $companyRepo */
-                    $companyRepo = $this->repos->getRepository(Company::class);
-                    $row = (clone $companyRepo->qb)
-                        ->select(['p.name AS name'])
-                        ->from('company', 'c')
-                        ->leftJoin('plan', 'p', 'p.id', '=', 'c.plan_id')
-                        ->where('c.id', '=', $companyId)
-                        ->fetch();
-                    $planName = $row?->name ?? null;
-                    error_log("[createDomain][$rid] Plan (via SQL) planName=" . ($planName ?? 'NULL'));
-                } catch (\Throwable $e) {
-                    error_log("[createDomain][$rid] Plan SQL lookup failed: " . $e->getMessage());
-                }
+                /** @var \App\Repository\CompanyRepository $companyRepo */
+                $companyRepo = $this->repos->getRepository(Company::class);
+                $row = (clone $companyRepo->qb)
+                    ->select(['p.name AS name'])
+                    ->from('company', 'c')
+                    ->leftJoin('plan', 'p', 'p.id', '=', 'c.plan_id')
+                    ->where('c.id', '=', $companyId)
+                    ->fetch();
+                $planName = $row?->name ?? null;
             }
-
             $planKey = strtoupper((string)$planName);
             if ($planKey === '' || in_array($planKey, ['STARTER', 'GROW'], true)) {
-                try {
-                    $existing = $domainRepo->count(['company_id' => $companyId]);
-                    error_log("[createDomain][$rid] Domain count for company_id={$companyId} is {$existing}");
-                    if ($existing >= 1) {
-                        error_log("[createDomain][$rid] Plan limit reached for planKey={$planKey} (>=1 domain)");
-                        throw new RuntimeException(
-                            'Your current plan allows only one domain. Upgrade to add more.',
-                            403
-                        );
-                    }
-                } catch (\Throwable $e) {
-                    error_log("[createDomain][$rid] Counting domains failed: " . $e->getMessage());
-                    throw new RuntimeException('Failed to check domain limits', 500);
+                $existing = $domainRepo->count(['company_id' => $companyId]);
+                if ($existing >= 1) {
+                    throw new RuntimeException('Your current plan allows only one domain. Upgrade to add more.', 403);
                 }
             }
 
             // 3) Parse & validate payload
-            $rawBody = (string)$request->getBody();
-            error_log("[createDomain][$rid] Raw body length=" . strlen($rawBody));
-            try {
-                $body = json_decode($rawBody, true, 512, JSON_THROW_ON_ERROR);
-            } catch (\JsonException $e) {
-                error_log("[createDomain][$rid] JSON parse error: " . $e->getMessage());
-                throw new RuntimeException('Invalid JSON body', 400);
-            }
-
+            $body = json_decode((string)$request->getBody(), true, 512, JSON_THROW_ON_ERROR);
             $name = strtolower(trim((string)($body['domain'] ?? '')));
-            error_log("[createDomain][$rid] Parsed domain candidate='{$name}'");
-            if ($name === '') {
-                error_log("[createDomain][$rid] Validation failed: empty domain");
-                throw new RuntimeException('Domain name is required', 400);
-            }
-            if (!preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $name)) {
-                error_log("[createDomain][$rid] Validation failed: invalid format '{$name}'");
+            if ($name === '' || !preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $name)) {
                 throw new RuntimeException('Invalid domain format', 400);
             }
 
-            // 4) Create base entity
+            // 4) Create + persist Domain
             $domain = (new Domain())
                 ->setDomain($name)
                 ->setStatus(Domain::STATUS_PENDING)
                 ->setCreated_at(new \DateTimeImmutable('now', new \DateTimeZone('UTC')))
                 ->setCompany($company);
+            $domainRepo->save($domain);
 
-            // 5) Persist domain
-            try {
-                $domainRepo->save($domain);
-                error_log("[createDomain][$rid] Domain persisted id=" . (int)$domain->getId());
-            } catch (\Throwable $e) {
-                error_log("[createDomain][$rid] Domain save failed: " . $e->getMessage());
-                throw new RuntimeException('Failed to create domain', 500);
-            }
+            // 5) Provision SMTP credentials (your existing logic)
+            $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
 
-            // 5.1) Provision SMTP creds (mask in logs)
-            try {
-                error_log("[createDomain][$rid] Provisioning SMTP credentials (previewDomain={$name})");
-                $creds = $this->smtpProvisioner->provisionForCompany($company, $name, 'smtpuser');
-                error_log("[createDomain][$rid] SMTP provisioned: username=" . $mask($creds['username'] ?? '')
-                    . " ip_pool=" . (($creds['ip_pool'] ?? null) === null ? 'NULL' : $creds['ip_pool']));
-            } catch (\Throwable $e) {
-                error_log("[createDomain][$rid] SMTP provision failed: " . $e->getMessage());
-                throw new RuntimeException('Failed to provision SMTP credentials', 500);
-            }
+            // 6) **Automatic DKIM + OpenDKIM tables** via DomainProvisioner
+            //    - generates key (selector 'monkey'), stores private_key_ref/txt_value
+            //    - writes /etc/opendkim/keytable + signingtable
+            //    - reloads OpenDKIM
+            $bootstrap = $this->provisioner->initializeAndSave($domain);
+            $opendkimError = $bootstrap['opendkim_error'] ?? null;
 
-            // 6) Initialize DNS/SMTP expectations (soft-fail if OpenDKIM tables are not writable)
-            error_log("[createDomain][$rid] Initializing DNS bootstrap for domain_id=" . (int)$domain->getId());
-            $bootstrap = null;
-            $opendkimError = null;
-
-            try {
-                $bootstrap = $this->domainConfig->initializeAndSave($domain);
-                // Let DomainConfig optionally pass back a soft error (if it caught one)
-                $opendkimError = $bootstrap['opendkim_error'] ?? null;
-
-                // Count selectors if DKIM map present
-                $dkimCount = is_array($bootstrap['dns']['dkim'] ?? null) ? count($bootstrap['dns']['dkim']) : 0;
-                error_log("[createDomain][$rid] DNS bootstrap prepared: spf=" . (!empty($bootstrap['dns']['spf']) ? 'yes' : 'no') .
-                    " dmarc=" . (!empty($bootstrap['dns']['dmarc']) ? 'yes' : 'no') .
-                    " mx=" . (!empty($bootstrap['dns']['mx']) ? 'yes' : 'no') .
-                    " dkim=" . ($dkimCount > 0 ? "{$dkimCount} selectors" : "none") .
-                    ($opendkimError ? " (opendkim_error present)" : ""));
-            } catch (\Throwable $e) {
-                // Do NOT fail request: surface as warning and continue
-                $opendkimError = $e->getMessage();
-                error_log("[createDomain][$rid] DNS bootstrap soft-failed: " . $opendkimError);
-                $bootstrap = [
-                    'dns' => [
-                        'txt'   => null,
-                        'spf'   => null,
-                        'dmarc' => null,
-                        'mx'    => null,
-                        'dkim'  => null,
-                    ],
-                ];
-            }
-
-            // === Managed TLS-RPT + MTA-STS expectations (NEW) ===
+            // 7) (Optional) TLS-RPT + MTA-STS you already add afterwards
             $clientDomain  = $domain->getDomain();
-            $stsEdgeTarget = 'mta-sts.monkeysmail.com.';           // your hosted STS edge
+            $stsEdgeTarget = 'mta-sts.monkeysmail.com.';
             $tlsRptMailbox = 'tlsrpt@monkeysmail.com';
             $tlsrptValue   = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
             $domain
                 ->setTlsrpt_rua('mailto:' . $tlsRptMailbox)
                 ->setTlsrpt_expected($tlsrptValue);
 
-            // 2) MTA-STS (TXT + CNAME + optional ACME delegation)
             $mtaStsId   = 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
             $mtaStsHost = 'mta-sts.' . $clientDomain;
             $mtaStsDns  = [
@@ -311,7 +216,6 @@ final class DomainController
                     'value' => $stsEdgeTarget,
                     'ttl'   => 3600,
                 ],
-                // Optional but recommended: let you issue certs via DNS-01
                 'acme_delegate' => [
                     'name'  => '_acme-challenge.' . $mtaStsHost,
                     'type'  => 'CNAME',
@@ -322,16 +226,9 @@ final class DomainController
             $domain
                 ->setMta_sts_id($mtaStsId)
                 ->setMta_sts_expected($mtaStsDns);
+            $domainRepo->save($domain);
 
-            // Persist the new fields
-            try {
-                $domainRepo->save($domain);
-            } catch (\Throwable $e) {
-                // non-fatal; we still return the values in the response
-                error_log("[createDomain][$rid] Warning: saving TLS-RPT/MTA-STS fields failed: " . $e->getMessage());
-            }
-
-            // ---- build response safely (ip_pool may be absent) ----
+            // 8) Response (preserves your existing shape)
             $resp = new JsonResponse([
                 'id'         => $domain->getId(),
                 'domain'     => $domain->getDomain(),
@@ -342,10 +239,7 @@ final class DomainController
                     'spf_expected'   => $bootstrap['dns']['spf']   ?? null,
                     'dmarc_expected' => $bootstrap['dns']['dmarc'] ?? null,
                     'mx_expected'    => $bootstrap['dns']['mx']    ?? null,
-                    // DomainConfig returns selector→{selector,value}
                     'dkim'           => $bootstrap['dns']['dkim']  ?? null,
-
-                    // NEW: TLS-RPT + MTA-STS
                     'tlsrpt'         => [
                         'name'  => '_smtp._tls.' . $domain->getDomain(),
                         'type'  => 'TXT',
@@ -360,28 +254,22 @@ final class DomainController
                     'ports'    => [587, 465],
                     'tls'      => ['starttls' => true, 'implicit' => true],
                     'username' => $creds['username'] ?? null,
-                    // keep full password in response, but DO NOT log it
-                    'password' => $creds['password'] ?? null,
+                    'password' => $creds['password'] ?? null,  // shown to client; not logged
                     'ip_pool'  => $creds['ip_pool']  ?? null,
                 ],
-                // Non-blocking warning the UI can display
                 'opendkim_error' => $opendkimError,
             ], 201);
 
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
-            error_log("[createDomain][$rid] OK 201 company_id={$companyId} domain={$name} planKey={$planKey} dt_ms={$dt}");
+            error_log("[createDomain][$rid] OK 201 company_id={$companyId} domain={$name} planKey=" . strtoupper((string)$planName) . " dt_ms={$dt}");
             return $resp;
 
         } catch (\Throwable $e) {
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
             $trace = explode("\n", $e->getTraceAsString())[0] ?? '';
             error_log("[createDomain][$rid] ERROR code={$e->getCode()} msg=" . $e->getMessage() . " at {$trace} dt_ms={$dt}");
-
             $code = $e instanceof \RuntimeException && $e->getCode() >= 400 ? $e->getCode() : 500;
-            return new JsonResponse([
-                'error'   => $e->getMessage(),
-                'traceId' => $rid,
-            ], $code);
+            return new JsonResponse(['error' => $e->getMessage(), 'traceId' => $rid], $code);
         }
     }
 
