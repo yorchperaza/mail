@@ -13,33 +13,22 @@ final class DomainConfig
     private const string SMTP_HOST     = 'smtp.monkeysmail.com';
     private const string SMTP_IP       = '34.30.122.164';
     private const string DKIM_SELECTOR = 'monkey';
-    private const string DKIM_KEY_DIR  = '/var/lib/rspamd/dkim';
 
     public function __construct(
         private RepositoryFactory $repos,
         private SmtpCredentialProvisioner $smtpProvisioner,
         private DkimKeyService $dkim,
-        private OpenDkimConfigurator $openDkimConfigurator
-    ) {}
+        private OpenDkimConfigurator $openDkimConfigurator,
+        private ?OpenDkimTableSync $tableSync = null  // Add this
+    ) {
+        if ($this->tableSync === null) {
+            $this->tableSync = new OpenDkimTableSync($repos);
+        }
+    }
 
     /**
-     * Initialize DNS expectations + DKIM + SMTP and persist back to Domain.
-     *
-     * @return array{
-     *   dns: array{
-     *     txt: array{name:string, value:string},
-     *     spf: string,
-     *     dmarc: string,
-     *     mx: array<array{host:string, value:string, priority:int}>,
-     *     dkim: array<string, array{selector:string, value:string}>
-     *   },
-     *   smtp: array{
-     *     host:string, ip:string, ports:array<int>, tls: array{starttls:bool, implicit:bool}
-     *   },
-     *   opendkim_error?: string|null
-     * }
+     * @throws \DateMalformedStringException
      * @throws RandomException
-     * @throws \Throwable
      */
     public function initializeAndSave(Domain $domain): array
     {
@@ -58,16 +47,15 @@ final class DomainConfig
         $mxExpected = [[
             'host'     => $name,
             'priority' => 10,
-            // Some UIs want the target separately; we also keep "value" for compatibility.
             'value'    => self::SMTP_HOST . '.',
         ]];
 
-        // 2) DKIM: generate/ensure key (independent of OpenDKIM tables)
+        // 2) DKIM: generate/ensure key
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
-        $dkimTxtName  = $dk['txt_name'];   // e.g. "monkey._domainkey.monkeys.cloud"
-        $dkimTxtValue = $dk['txt_value'];  // "v=DKIM1; k=rsa; p=..."
+        $dkimTxtName  = $dk['txt_name'];
+        $dkimTxtValue = $dk['txt_value'];
 
-        // 2.1) Try to register in OpenDKIM (non-fatal; capture error)
+        // 2.1) Try to register in OpenDKIM (legacy - can be removed if not needed)
         $opendkimError = null;
         try {
             $this->openDkimConfigurator->ensureDomain($name, self::DKIM_SELECTOR, $dk['private_path']);
@@ -75,16 +63,16 @@ final class DomainConfig
             $opendkimError = $e->getMessage();
         }
 
-        /** @var \App\Repository\DkimKeyRepository|\MonkeysLegion\Repository\EntityRepository $dkRepo */
+        /** @var \App\Repository\DkimKeyRepository $dkRepo */
         $dkRepo = $this->repos->getRepository(DkimKey::class);
 
-        // Find existing active row for this domain+selector (idempotent)
+        // Find or create DKIM key record
         $existing = $dkRepo->findOneBy([
             'domain'   => $domain,
             'selector' => self::DKIM_SELECTOR,
         ]);
 
-        if (! $existing) {
+        if (!$existing) {
             $existing = (new DkimKey())
                 ->setDomain($domain)
                 ->setSelector(self::DKIM_SELECTOR)
@@ -96,9 +84,12 @@ final class DomainConfig
         $existing
             ->setPublic_key_pem($dk['public_pem'])
             ->setPrivate_key_ref($dk['private_path']);
+
+        // Add the txt_value if the setter exists
         if (method_exists($existing, 'setTxt_value')) {
             $existing->setTxt_value($dkimTxtValue);
         }
+
         $dkRepo->save($existing);
 
         // 3) Persist expectations back to Domain
@@ -115,7 +106,17 @@ final class DomainConfig
             ->setBimi_enabled(false);
         $domainRepo->save($domain);
 
-        // 4) Return bootstrap payload for UI (DKIM as mapping by selector)
+        // 4) Sync OpenDKIM tables after saving
+        try {
+            if ($this->tableSync->syncTables()) {
+                error_log("OpenDKIM tables synced successfully for domain: {$name}");
+            }
+        } catch (\Throwable $e) {
+            $opendkimError = $opendkimError ?? $e->getMessage();
+            error_log("OpenDKIM sync error: " . $e->getMessage());
+        }
+
+        // 5) Return bootstrap payload
         $payload = [
             'dns' => [
                 'txt'   => ['name' => $txtName,  'value' => $txtValue],

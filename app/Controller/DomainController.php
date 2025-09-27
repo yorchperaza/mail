@@ -469,7 +469,7 @@ final class DomainController
         $tlsRptRua   = method_exists($domain, 'getTlsrpt_rua') ? $domain->getTlsrpt_rua() : null;
         if (!$tlsRptValue) {
             // default to your managed mailbox if not persisted
-            $tlsRptRua   = $tlsRptRua ?: 'mailto:tlsrpt@monkeyslegion.com';
+            $tlsRptRua   = $tlsRptRua ?: 'mailto:tlsrpt@monkeysmail.com';
             $tlsRptValue = sprintf('v=TLSRPTv1; rua=%s', $tlsRptRua);
         }
         $tlsrptRecord = [

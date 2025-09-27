@@ -39,6 +39,9 @@ class DkimKey
     #[manyToOne(targetEntity: Domain::class, inversedBy: 'dkimKeys')]
     public ?Domain $domain = null;
 
+    #[Field(type: 'text', nullable: true)]
+    public ?string $txt_value = null;
+
     public function __construct()
     {
     }
@@ -128,6 +131,17 @@ class DkimKey
     public function removeDomain(): self
     {
         $this->domain = null;
+        return $this;
+    }
+
+    public function getTxt_value(): ?string
+    {
+        return $this->txt_value;
+    }
+
+    public function setTxt_value(?string $txt_value): self
+    {
+        $this->txt_value = $txt_value;
         return $this;
     }
 }

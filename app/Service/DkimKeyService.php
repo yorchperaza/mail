@@ -6,28 +6,29 @@ namespace App\Service;
 final class DkimKeyService
 {
     private string $baseDir;
+    private string $opendkimDir = '/etc/opendkim/keys';
 
     public function __construct(?string $baseDir = null)
     {
-        // Prefer env DKIM_DIR; fall back to rspamd path; if not writable, use local storage
+        // Primary storage location
         $env = getenv('DKIM_DIR') ?: $baseDir;
-        $default = '/var/lib/rspamd/dkim';
-        $local   = __DIR__ . '/../../var/dkim'; // project-local, safe for dev
+        $default = '/var/lib/monkeysmail/dkim';
+        $local   = __DIR__ . '/../../var/dkim';
 
         $candidate = $env ?: $default;
         if (!self::isWritableDir($candidate)) {
-            // fallback for local/dev
             $candidate = $local;
         }
+
         $this->baseDir = rtrim($candidate, '/');
         $this->ensureDir($this->baseDir);
+
+        // Ensure OpenDKIM directory exists
+        if (!is_dir($this->opendkimDir)) {
+            @mkdir($this->opendkimDir, 0755, true);
+        }
     }
 
-    /**
-     * Generate or reuse DKIM key for domain+selector.
-     * Writes private key to {baseDir}/{domain}.{selector}.key (0600).
-     * Returns TXT {name,value} for publishing.
-     */
     public function ensureKeyForDomain(string $domain, string $selector): array
     {
         $domain   = strtolower(trim($domain));
@@ -42,6 +43,9 @@ final class DkimKeyService
 
         $safeDomain = preg_replace('~[^a-z0-9.-]~i', '_', $domain);
         $keyPath    = "{$this->baseDir}/{$safeDomain}.{$selector}.key";
+
+        // OpenDKIM expects keys in its own directory structure
+        $opendkimKeyPath = "{$this->opendkimDir}/{$domain}/{$selector}.private";
 
         if (!is_file($keyPath)) {
             // Generate 2048-bit RSA private key
@@ -61,14 +65,17 @@ final class DkimKeyService
             if (@file_put_contents($tmp, $privPem, LOCK_EX) === false) {
                 throw new \RuntimeException("Unable to write DKIM key temp file: {$tmp}");
             }
-            // Set perms before rename so final file lands correct on some FS
             @chmod($tmp, 0600);
             if (!@rename($tmp, $keyPath)) {
                 @unlink($tmp);
                 throw new \RuntimeException("Unable to move DKIM key into place: {$keyPath}");
             }
-            @chmod($keyPath, 0600);
+            @chmod($keyPath, 0640); // Allow opendkim group read
+            @chgrp($keyPath, 'opendkim'); // Set group to opendkim
         }
+
+        // Create symlink for OpenDKIM
+        $this->ensureOpendkimSymlink($keyPath, $opendkimKeyPath);
 
         $privPem = @file_get_contents($keyPath);
         if ($privPem === false) {
@@ -95,7 +102,33 @@ final class DkimKeyService
             'txt_value'    => $txtVal,
             'public_pem'   => $pubPem,
             'private_path' => $keyPath,
+            'opendkim_path' => $opendkimKeyPath, // Add this for reference
         ];
+    }
+
+    private function ensureOpendkimSymlink(string $source, string $target): void
+    {
+        $targetDir = dirname($target);
+        if (!is_dir($targetDir)) {
+            @mkdir($targetDir, 0755, true);
+        }
+
+        // Remove existing symlink if it exists and points elsewhere
+        if (is_link($target)) {
+            if (readlink($target) !== $source) {
+                @unlink($target);
+            } else {
+                return; // Already correct
+            }
+        }
+
+        // Create symlink
+        if (!@symlink($source, $target)) {
+            // If symlink fails, try copying instead
+            @copy($source, $target);
+            @chmod($target, 0640);
+            @chgrp($target, 'opendkim');
+        }
     }
 
     private static function isWritableDir(string $path): bool
