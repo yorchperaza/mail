@@ -58,7 +58,7 @@ SELECT
   dk.txt_value,
   d.domain   AS domain_name,
   d.id       AS domain_id
-FROM dkim_key dk
+FROM dkimkey dk
 INNER JOIN domain d ON dk.domain_id = d.id
 WHERE dk.active = :dk_active
   AND d.is_active = :dom_active
