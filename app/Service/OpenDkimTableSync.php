@@ -50,7 +50,16 @@ final class OpenDkimTableSync
 
         // --- Query active DKIM keys via PDO from QB
         $pdo = $this->pdo();
-        $sql = <<<SQL
+
+        // Build predicates dynamically (avoid referencing columns that may not exist)
+        $preds = ["dk.active = :dk_active"];
+        $bindDomActive = false;
+        if ($this->hasColumn($pdo, 'domain', 'is_active')) {
+            $preds[] = "d.is_active = :dom_active";
+            $bindDomActive = true;
+        }
+
+        $sql = "
 SELECT
   dk.id,
   dk.selector,
@@ -58,17 +67,18 @@ SELECT
   dk.txt_value,
   d.domain   AS domain_name,
   d.id       AS domain_id
-FROM dkimkey dk
-INNER JOIN domain d ON dk.domain_id = d.id
-WHERE dk.active = :dk_active
-  AND d.is_active = :dom_active
+FROM `dkimkey` dk
+INNER JOIN `domain` d ON dk.domain_id = d.id
+WHERE " . implode(' AND ', $preds) . "
 ORDER BY d.domain ASC, dk.selector ASC
-SQL;
+";
 
         try {
             $stmt = $pdo->prepare($sql);
             $stmt->bindValue(':dk_active', 1, \PDO::PARAM_INT);
-            $stmt->bindValue(':dom_active', 1, \PDO::PARAM_INT);
+            if ($bindDomActive) {
+                $stmt->bindValue(':dom_active', 1, \PDO::PARAM_INT);
+            }
             $stmt->execute();
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
@@ -222,5 +232,24 @@ SQL;
 
         exec('pkill -USR1 -x opendkim 2>&1');
         error_log("[OpenDkimTableSync] Sent SIGUSR1 to opendkim");
+    }
+
+    private function hasColumn(\PDO $pdo, string $table, string $column): bool
+    {
+        try {
+            $stmt = $pdo->prepare("
+            SELECT 1
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = DATABASE()
+              AND TABLE_NAME = :t
+              AND COLUMN_NAME = :c
+            LIMIT 1
+        ");
+            $stmt->execute([':t' => $table, ':c' => $column]);
+            return (bool)$stmt->fetchColumn();
+        } catch (\Throwable $e) {
+            // If INFORMATION_SCHEMA is not accessible for some reason, be conservative.
+            return false;
+        }
     }
 }
