@@ -14,6 +14,7 @@ final class OpenDkimTableSync
     private const KEY_TABLE     = '/etc/opendkim/keytable';
     private const SIGNING_TABLE = '/etc/opendkim/signingtable';
     private const TRUSTED_HOSTS = '/etc/opendkim/trustedhosts';
+    private const ALT_DIR        = '/var/lib/monkeysmail/opendkim';
 
     public function __construct(
         private RepositoryFactory $repos,
@@ -158,8 +159,12 @@ ORDER BY d.domain ASC, dk.selector ASC
         }
 
         try {
-            $this->writeFile(self::KEY_TABLE, implode("\n", $keyTableLines));
-            $this->writeFile(self::SIGNING_TABLE, implode("\n", $signingTableLines));
+            $keyTablePath     = $this->resolveTargetPath(self::KEY_TABLE);
+            $signingTablePath = $this->resolveTargetPath(self::SIGNING_TABLE);
+            $trustedHostsPath = $this->resolveTargetPath(self::TRUSTED_HOSTS);
+
+            $this->writeFile($keyTablePath, implode("\n", $keyTableLines));
+            $this->writeFile($signingTablePath, implode("\n", $signingTableLines));
 
             $trustedHosts = array_unique([
                 '127.0.0.1',
@@ -169,8 +174,18 @@ ORDER BY d.domain ASC, dk.selector ASC
                 'smtp.monkeysmail.com',
                 '*.monkeysmail.com',
             ]);
-            $this->writeFile(self::TRUSTED_HOSTS, implode("\n", $trustedHosts));
+            $this->writeFile($trustedHostsPath, implode("\n", $trustedHosts));
 
+            // If we couldn't write under /etc, warn once how to wire OpenDKIM to the fallback
+            $etcPaths = [self::KEY_TABLE => $keyTablePath, self::SIGNING_TABLE => $signingTablePath, self::TRUSTED_HOSTS => $trustedHostsPath];
+            foreach ($etcPaths as $etc => $actual) {
+                if ($etc !== $actual) {
+                    error_log("[OpenDkimTableSync] NOTICE: wrote {$actual} (no /etc perms). To make OpenDKIM use it, either:");
+                    error_log("  - sudo ln -sf {$actual} {$etc}");
+                    error_log("    OR update /etc/opendkim.conf to point to 'refile:{$actual}' and reload opendkim.");
+                }
+            }
+            // Finally, reload OpenDKIM to pick up changes
             $this->reloadOpenDkim();
         } catch (\Throwable $e) {
             $msg = '[OpenDkimTableSync] write/reload error: ' . $e->getMessage();
@@ -251,5 +266,26 @@ ORDER BY d.domain ASC, dk.selector ASC
             // If INFORMATION_SCHEMA is not accessible for some reason, be conservative.
             return false;
         }
+    }
+
+    private function isWritablePath(string $path): bool
+    {
+        // Writable if file exists and is writable OR parent dir is writable
+        return (is_file($path) && is_writable($path)) || (is_dir(dirname($path)) && is_writable(dirname($path)));
+    }
+
+    private function resolveTargetPath(string $etcPath): string
+    {
+        if ($this->isWritablePath($etcPath)) {
+            return $etcPath; // we can write directly under /etc
+        }
+        // Fallback to ALT_DIR/<basename>
+        $alt = rtrim(self::ALT_DIR, '/') . '/' . basename($etcPath);
+        // Ensure fallback dir exists
+        $dir = dirname($alt);
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0770, true);
+        }
+        return $alt;
     }
 }
