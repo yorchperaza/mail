@@ -157,7 +157,7 @@ final class PhpMailerMailSender implements MailSender
         try {
             $fromEmail = trim($fromEmail);
             if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
-                return; // nothing to do
+                return;
             }
 
             $at = strrpos($fromEmail, '@');
@@ -165,32 +165,55 @@ final class PhpMailerMailSender implements MailSender
             $fromDomain = strtolower(substr($fromEmail, $at + 1));
             if ($fromDomain === '') return;
 
-            // selector: default s1 (overridable)
-            $selector = (string)(getenv('DKIM_SELECTOR') ?: 's1');
-
-            // 1) Ensure/generate key material
-            $dk   = new DkimKeyService();
-            $info = $dk->ensureKeyForDomain($fromDomain, $selector);
-            $privPath = (string)$info['private_path'];
-
-            // 2) Register with OpenDKIM (idempotent) and HUP
             $reg = new OpenDkimRegistrar();
-            $reg->register($fromDomain, $selector, $privPath);
 
-            // 3) Prefer OpenDKIM milter for signing; only enable PHPMailer DKIM if fallback is requested
+            // 1) Selector choice: ENV or first existing for domain
+            $selectorEnv = (string)(getenv('DKIM_SELECTOR') ?: '');
+            $selector    = $selectorEnv !== '' ? strtolower($selectorEnv) : null;
+            $privPath    = null;
+
+            if ($selector === null) {
+                // Try to reuse ANY existing selector for this domain
+                [$selFound, $pathFound] = $reg->resolveAnySelectorForDomain($fromDomain);
+                if ($selFound && $pathFound) {
+                    $selector = $selFound;
+                    $privPath = $pathFound;
+                }
+            } else {
+                // Try to reuse path for the configured selector
+                $pathFound = $reg->resolvePrivateKeyPath($fromDomain, $selector);
+                if ($pathFound) {
+                    $privPath = $pathFound;
+                }
+            }
+
+            // 2) If we still don't have a key path, FALL BACK to generating via DkimKeyService
+            if (!$privPath) {
+                $selector = $selector ?: 's1';
+                $dk   = new DkimKeyService();               // <-- you asked to keep this class unchanged
+                $info = $dk->ensureKeyForDomain($fromDomain, $selector);
+                $privPath = (string)$info['private_path'];  // path managed by DkimKeyService
+                // Ensure KeyTable/SigningTable have the entry (idempotent)
+                $reg->register($fromDomain, $selector, $privPath);
+            } else {
+                // We have an existing key — ensure tables contain it (idempotent, no-op if already there)
+                $reg->register($fromDomain, $selector, $privPath);
+            }
+
+            // 3) Prefer OpenDKIM milter; optionally sign locally as a fallback
             $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
             $useLocal = in_array($fallback, ['1','true','yes','on'], true);
 
-            if ($useLocal) {
+            if ($useLocal && $privPath) {
                 $mail->DKIM_domain   = $fromDomain;
                 $mail->DKIM_selector = $selector;
                 $mail->DKIM_private  = $privPath;
                 $mail->DKIM_identity = $fromEmail;
-                // $mail->DKIM_passphrase = ''; // if your key has one
+                // $mail->DKIM_passphrase = '';
             }
         } catch (\Throwable $e) {
-            // Non-fatal: still try to send without DKIM if provisioning/registration fails.
             error_log('[DKIM] prepare failed: '.$e->getMessage());
         }
     }
+
 }
