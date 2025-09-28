@@ -31,18 +31,75 @@ final class OpenDkimRegistrar
             }
         }
 
+        // Candidate paths (in order of preference)
+        $securePath  = sprintf('/etc/opendkim/keys/%s/%s.private', $domain, $selector);
+        $varLibPath  = sprintf('/var/lib/monkeysmail/dkim/%s.%s.key', $domain, $selector);
+
+        // Helper: check if a key file is "safe" for RequireSafeKeys yes
+        $isSafeKey = static function (string $path): bool {
+            if (!is_file($path)) return false;
+            $perms = fileperms($path) & 0o777;
+            if ($perms > 0o600) return false; // must be 0600 or more restrictive
+
+            // If POSIX is available, also verify owner is 'opendkim'
+            if (function_exists('posix_getpwuid')) {
+                $st = @stat($path);
+                if ($st !== false) {
+                    $owner = @posix_getpwuid($st['uid']);
+                    if (is_array($owner) && isset($owner['name']) && $owner['name'] !== 'opendkim') {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+
+        // Decide which path to use
+        $usePath = null;
+
+        // 1) Prefer secure /etc/opendkim/keys copy if present and safe
+        if ($isSafeKey($securePath)) {
+            $usePath = $securePath;
+        }
+
+        // 2) Else use provided path if it exists; prefer it if already safe
+        if ($usePath === null && is_string($privateKeyPath) && $privateKeyPath !== '' && is_file($privateKeyPath)) {
+            $usePath = $privateKeyPath;
+        }
+
+        // 3) Else fall back to var/lib path if it exists
+        if ($usePath === null && is_file($varLibPath)) {
+            $usePath = $varLibPath;
+        }
+
+        // Final guard: don't write an empty/invalid KeyTable entry
+        if ($usePath === null) {
+            throw new \RuntimeException(sprintf(
+                'No DKIM private key file found for %s selector %s (looked for %s, %s, and provided path).',
+                $domain, $selector, $securePath, $varLibPath
+            ));
+        }
+
+        // Normalize path if possible (avoid duplicate entries differing only by .. or symlinks)
+        $real = @realpath($usePath);
+        if (is_string($real) && $real !== '') {
+            $usePath = $real;
+        }
+
         // Compose lines (idempotent append)
         $ktLine = sprintf(
-            "%s._domainkey.%s %s:%s:%s",
-            $selector, $domain, $domain, $selector, $privateKeyPath
+            '%s._domainkey.%s %s:%s:%s',
+            $selector, $domain, $domain, $selector, $usePath
         );
         $stLine = sprintf(
-            "*@%s %s._domainkey.%s",
+            '*@%s %s._domainkey.%s',
             $domain, $selector, $domain
         );
 
         $this->appendOnce($this->keyTable, $ktLine);
         $this->appendOnce($this->signingTable, $stLine);
+
+        // Ensure trusted hosts contains our basics (idempotent)
         $this->ensureTrustedHosts([
             '127.0.0.1',
             '::1',
@@ -50,6 +107,7 @@ final class OpenDkimRegistrar
             gethostname() ?: 'mta-1.monkeysmail.com',
             getenv('PUBLIC_IP') ?: '34.30.122.164',
         ]);
+
         $this->hupOpenDkim();
     }
 
