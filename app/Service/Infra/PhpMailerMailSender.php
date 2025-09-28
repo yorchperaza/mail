@@ -165,55 +165,48 @@ final class PhpMailerMailSender implements MailSender
             $fromDomain = strtolower(substr($fromEmail, $at + 1));
             if ($fromDomain === '') return;
 
-            $reg = new OpenDkimRegistrar();
+            // Discover an existing key first: /var/lib/monkeysmail/dkim/<domain>.<selector>.key
+            $dkimDir = getenv('DKIM_DIR') ?: '/var/lib/monkeysmail/dkim';
+            $existing = glob(rtrim($dkimDir, '/')."/{$fromDomain}.*.key") ?: [];
+            $selector = null;
+            foreach ($existing as $path) {
+                // match "<domain>.<selector>.key"
+                if (preg_match('~^'.preg_quote($fromDomain, '~').'\.([A-Za-z0-9._-]+)\.key$~', basename($path), $m)) {
+                    $selector = strtolower($m[1]);
+                    $privPath = $path;
+                    break;
+                }
+            }
 
-            // 1) Selector choice: ENV or first existing for domain
-            $selectorEnv = (string)(getenv('DKIM_SELECTOR') ?: '');
-            $selector    = $selectorEnv !== '' ? strtolower($selectorEnv) : null;
-            $privPath    = null;
-
+            // If no existing key, use env/default selector "monkey"
             if ($selector === null) {
-                // Try to reuse ANY existing selector for this domain
-                [$selFound, $pathFound] = $reg->resolveAnySelectorForDomain($fromDomain);
-                if ($selFound && $pathFound) {
-                    $selector = $selFound;
-                    $privPath = $pathFound;
-                }
-            } else {
-                // Try to reuse path for the configured selector
-                $pathFound = $reg->resolvePrivateKeyPath($fromDomain, $selector);
-                if ($pathFound) {
-                    $privPath = $pathFound;
-                }
-            }
-
-            // 2) If we still don't have a key path, FALL BACK to generating via DkimKeyService
-            if (!$privPath) {
-                $selector = $selector ?: 's1';
-                $dk   = new DkimKeyService();               // <-- you asked to keep this class unchanged
+                $selector = (string)(getenv('DKIM_SELECTOR') ?: 'monkey');
+                $dk   = new DkimKeyService();
                 $info = $dk->ensureKeyForDomain($fromDomain, $selector);
-                $privPath = (string)$info['private_path'];  // path managed by DkimKeyService
-                // Ensure KeyTable/SigningTable have the entry (idempotent)
-                $reg->register($fromDomain, $selector, $privPath);
-            } else {
-                // We have an existing key — ensure tables contain it (idempotent, no-op if already there)
-                $reg->register($fromDomain, $selector, $privPath);
+                $privPath = (string)$info['private_path'];
             }
 
-            // 3) Prefer OpenDKIM milter; optionally sign locally as a fallback
-            $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
-            $useLocal = in_array($fallback, ['1','true','yes','on'], true);
+            // Register with OpenDKIM tables (idempotent) and HUP
+            $reg = new \App\Service\OpenDkimRegistrar(
+                keyTable: '/var/lib/monkeysmail/opendkim/keytable',
+                signingTable: '/var/lib/monkeysmail/opendkim/signingtable',
+                pidFile: '/run/opendkim/opendkim.pid',
+                sudoKillCmd: 'sudo /bin/kill -HUP',
+            );
+            $reg->register($fromDomain, $selector, $privPath);
 
-            if ($useLocal && $privPath) {
+            // Local-signing fallback (optional)
+            $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
+            if (in_array($fallback, ['1','true','yes','on'], true)) {
                 $mail->DKIM_domain   = $fromDomain;
                 $mail->DKIM_selector = $selector;
                 $mail->DKIM_private  = $privPath;
                 $mail->DKIM_identity = $fromEmail;
-                // $mail->DKIM_passphrase = '';
             }
         } catch (\Throwable $e) {
             error_log('[DKIM] prepare failed: '.$e->getMessage());
         }
     }
+
 
 }
