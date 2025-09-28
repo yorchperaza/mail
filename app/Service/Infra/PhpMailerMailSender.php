@@ -12,6 +12,11 @@ use App\Service\OpenDkimRegistrar;
 
 final class PhpMailerMailSender implements MailSender
 {
+    private array $internalDomains = [
+        'monkeysmail.com',
+        'notify.monkeysmail.com',
+    ];
+
     public function __construct(
         private string  $host = 'smtp.monkeysmail.com',
         private int     $port = 587,
@@ -152,6 +157,10 @@ final class PhpMailerMailSender implements MailSender
      * (KeyTable/SigningTable + HUP), and optionally enables PHPMailer local DKIM
      * signing when DKIM_FALLBACK_LOCAL=1.
      */
+    /**
+     * Generates/registers DKIM for client domains.
+     * For internal domains, use the fixed notify.monkeysmail.com key (no generation).
+     */
     private function prepareDkimForFrom(string $fromEmail, PHPMailer $mail): void
     {
         try {
@@ -159,18 +168,37 @@ final class PhpMailerMailSender implements MailSender
             if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
                 return;
             }
-
-            $at = strrpos($fromEmail, '@');
-            if ($at === false) return;
-            $fromDomain = strtolower(substr($fromEmail, $at + 1));
+            $fromDomain = strtolower(substr($fromEmail, strrpos($fromEmail, '@') + 1));
             if ($fromDomain === '') return;
 
-            // Discover an existing key first: /var/lib/monkeysmail/dkim/<domain>.<selector>.key
-            $dkimDir = getenv('DKIM_DIR') ?: '/var/lib/monkeysmail/dkim';
+            // ---- INTERNAL PATH: use the known DKIM key (no OpenDKIM table writes here) ----
+            if ($this->isInternalDomain($fromDomain)) {
+                // Allow overrides via env, but default to your known-good values
+                $dkimDomain   = getenv('NOTIFY_DKIM_DOMAIN')   ?: 'notify.monkeysmail.com';
+                $dkimSelector = getenv('NOTIFY_DKIM_SELECTOR') ?: 's1';
+                $dkimPrivate  = getenv('NOTIFY_DKIM_PRIVATE')  ?: '/etc/opendkim/keys/notify.monkeysmail.com/s1.private';
+
+                // If the private key file is readable, enable PHPMailer local signing.
+                // (If not, OpenDKIM milter will still sign using its tables.)
+                if (is_readable($dkimPrivate)) {
+                    $mail->DKIM_domain   = $dkimDomain;
+                    $mail->DKIM_selector = $dkimSelector;
+                    $mail->DKIM_private  = $dkimPrivate;
+                    $mail->DKIM_identity = $fromEmail;
+                }
+                // Done: do NOT attempt to generate keys for internal domains.
+                return;
+            }
+
+            // ---- CLIENT PATH: existing behavior (ensure/generate + register with OpenDKIM) ----
+
+            // Try discover an existing key: /var/lib/monkeysmail/dkim/<domain>.<selector>.key
+            $dkimDir  = getenv('DKIM_DIR') ?: '/var/lib/monkeysmail/dkim';
             $existing = glob(rtrim($dkimDir, '/')."/{$fromDomain}.*.key") ?: [];
             $selector = null;
+            $privPath = null;
+
             foreach ($existing as $path) {
-                // match "<domain>.<selector>.key"
                 if (preg_match('~^'.preg_quote($fromDomain, '~').'\.([A-Za-z0-9._-]+)\.key$~', basename($path), $m)) {
                     $selector = strtolower($m[1]);
                     $privPath = $path;
@@ -178,35 +206,42 @@ final class PhpMailerMailSender implements MailSender
                 }
             }
 
-            // If no existing key, use env/default selector "monkey"
-            if ($selector === null) {
+            if ($selector === null || $privPath === null) {
+                // No existing key => generate using your DkimKeyService
                 $selector = (string)(getenv('DKIM_SELECTOR') ?: 'monkey');
-                $dk   = new DkimKeyService();
-                $info = $dk->ensureKeyForDomain($fromDomain, $selector);
+                $dk       = new DkimKeyService();
+                $info     = $dk->ensureKeyForDomain($fromDomain, $selector);
                 $privPath = (string)$info['private_path'];
             }
 
             // Register with OpenDKIM tables (idempotent) and HUP
-            $reg = new \App\Service\OpenDkimRegistrar(
-                keyTable: '/var/lib/monkeysmail/opendkim/keytable',
+            $reg = new OpenDkimRegistrar(
+                keyTable:     '/var/lib/monkeysmail/opendkim/keytable',
                 signingTable: '/var/lib/monkeysmail/opendkim/signingtable',
-                pidFile: '/run/opendkim/opendkim.pid',
-                sudoKillCmd: 'sudo /bin/kill -HUP',
+                pidFile:      '/run/opendkim/opendkim.pid',
+                sudoKillCmd:  'sudo /bin/kill -HUP',
             );
             $reg->register($fromDomain, $selector, $privPath);
 
-            // Local-signing fallback (optional)
+            // Local-signing fallback only if explicitly enabled
             $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
-            if (in_array($fallback, ['1','true','yes','on'], true)) {
+            if (in_array($fallback, ['1','true','yes','on'], true) && is_readable($privPath)) {
                 $mail->DKIM_domain   = $fromDomain;
                 $mail->DKIM_selector = $selector;
                 $mail->DKIM_private  = $privPath;
                 $mail->DKIM_identity = $fromEmail;
             }
         } catch (\Throwable $e) {
+            // Non-fatal: sending can continue and OpenDKIM milter may still sign
             error_log('[DKIM] prepare failed: '.$e->getMessage());
         }
     }
 
+    private function isInternalDomain(string $domain): bool
+    {
+        $domain = strtolower($domain);
+        // exact match only; monkeys.cloud is NOT internal
+        return $domain === 'monkeysmail.com' || $domain === 'notify.monkeysmail.com';
+    }
 
 }

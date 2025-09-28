@@ -46,14 +46,7 @@ final class SystemMailSender implements MailSender
             $mail->Helo     = 'smtp.monkeysmail.com';
 
             // Envelope-From / Return-Path (MAIL FROM)
-            $rcpts = (array)($payload['to'] ?? []);
-            $anyInternal = false;
-            foreach ($rcpts as $r) {
-                if (is_string($r) && str_ends_with(strtolower($r), '@monkeysmail.com')) {
-                    $anyInternal = true; break;
-                }
-            }
-            $mail->Sender = $anyInternal ? 'system@monkeysmail.com' : 'bounce@notify.monkeysmail.com';
+            $mail->Sender   = 'bounce@notify.monkeysmail.com';
 
             // From / Reply-To
             $fromEmail = (string)($payload['from_email'] ?? '');
