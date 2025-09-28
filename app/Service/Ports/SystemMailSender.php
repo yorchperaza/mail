@@ -64,6 +64,8 @@ final class SystemMailSender implements MailSender
             }
 
             // --- DKIM: fixed for notify.monkeysmail.com (no per-client provisioning) ---
+            $mail->DKIM_private       = $_ENV['SYSTEM_DKIM_KEY'] ??
+                '/etc/monkeysmail/dkim/s1.private';
 //            $mail->DKIM_domain   = $_ENV['SYSTEM_DKIM_DOMAIN']   ?? 'notify.monkeysmail.com';
 //            $mail->DKIM_selector = $_ENV['SYSTEM_DKIM_SELECTOR'] ?? 's1';
 //            $mail->DKIM_private  = $_ENV['SYSTEM_DKIM_KEY']      ?? '/etc/opendkim/keys/notify.monkeysmail.com/s1.private';
