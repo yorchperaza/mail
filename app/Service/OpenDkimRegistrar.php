@@ -5,6 +5,8 @@ namespace App\Service;
 
 final class OpenDkimRegistrar
 {
+    private string $trustedHosts = '/var/lib/monkeysmail/opendkim/trustedhosts';
+
     public function __construct(
         private string $keyTable     = '/var/lib/monkeysmail/opendkim/keytable',
         private string $signingTable = '/var/lib/monkeysmail/opendkim/signingtable',
@@ -41,8 +43,41 @@ final class OpenDkimRegistrar
 
         $this->appendOnce($this->keyTable, $ktLine);
         $this->appendOnce($this->signingTable, $stLine);
-
+        $this->ensureTrustedHosts([
+            '127.0.0.1',
+            '::1',
+            'localhost',
+            gethostname() ?: 'mta-1.monkeysmail.com',
+            getenv('PUBLIC_IP') ?: '34.30.122.164',
+        ]);
         $this->hupOpenDkim();
+    }
+
+    private function ensureTrustedHosts(array $hosts): void
+    {
+        $dir = \dirname($this->trustedHosts);
+        if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+
+        $fh = @fopen($this->trustedHosts, 'c+');
+        if (!$fh) return;
+        try {
+            flock($fh, LOCK_EX);
+            $current = stream_get_contents($fh) ?: '';
+            $lines = array_flip(array_map('trim', preg_split('/\R+/', $current) ?: []));
+            foreach ($hosts as $h) {
+                if ($h !== '' && !isset($lines[$h])) {
+                    $current .= ($current && !str_ends_with($current, "\n") ? "\n" : '') . $h . "\n";
+                    $lines[$h] = true;
+                }
+            }
+            rewind($fh);
+            ftruncate($fh, 0);
+            fwrite($fh, $current);
+        } finally {
+            flock($fh, LOCK_UN);
+            fclose($fh);
+        }
+        @chmod($this->trustedHosts, 0644);
     }
 
     /**
