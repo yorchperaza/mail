@@ -102,8 +102,9 @@ final class InternalMailService
     /** Sends via platform transport. No quotas, no tracking. */
     private function sendSystem(string $to, string $subject, string $html, string $text, array $headers = []): void
     {
-        $fromEmail = $_ENV['SYSTEM_FROM_EMAIL'] ?? 'no-reply@monkeysmail.com';
-        $fromName  = $_ENV['SYSTEM_FROM_NAME']  ?? 'MonkeysMail';
+        // Force internal/system identity on the notify node
+        $fromEmail = $_ENV['SYSTEM_FROM_EMAIL'] ?? 'no-reply@notify.monkeysmail.com';
+        $fromName  = $_ENV['SYSTEM_FROM_NAME']  ?? 'MonkeysMail System';
 
         // Always include text
         $text = $this->normalizeText($text ?: $this->fallbackText($html));
@@ -111,7 +112,7 @@ final class InternalMailService
         $payload = [
             'from_email' => $fromEmail,
             'from_name'  => $fromName,
-            'reply_to'   => $fromEmail,
+            'reply_to'   => $_ENV['SYSTEM_REPLY_TO'] ?? $fromEmail,
             'to'         => [$to],
             'subject'    => $subject,
             'html_body'  => $html,
@@ -123,6 +124,7 @@ final class InternalMailService
         ];
 
         try {
+            // IMPORTANT: $this->sender will be the internal-only sender below
             if (method_exists($this->sender, 'sendRaw')) {
                 $this->sender->sendRaw($payload);
             } else {
