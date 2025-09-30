@@ -31,12 +31,14 @@ final class SupportController
      * Notes:
      *  - Requires authenticated user (uses request attribute 'user_id')
      *  - Enforces basic size limits (10 MB per file, 20 MB total)
+     * @throws \ReflectionException
      */
     #[Route(methods: 'POST', path: '/support')]
     public function send(ServerRequestInterface $request): JsonResponse
     {
         // 1) Auth
         $userId = (int) $request->getAttribute('user_id', 0);
+        error_log('SupportController: user_id=' . $userId);
         if ($userId <= 0) {
             throw new RuntimeException('Unauthorized', 401);
         }
