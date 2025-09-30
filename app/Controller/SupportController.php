@@ -9,6 +9,7 @@ use MonkeysLegion\Http\Message\JsonResponse;
 use MonkeysLegion\Repository\RepositoryFactory;
 use MonkeysLegion\Router\Attributes\Route;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\UploadedFileInterface;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
 
@@ -32,6 +33,7 @@ final class SupportController
      *  - Requires authenticated user (uses request attribute 'user_id')
      *  - Enforces basic size limits (10 MB per file, 20 MB total)
      * @throws \ReflectionException
+     * @throws \Throwable
      */
     #[Route(methods: 'POST', path: '/support')]
     public function send(ServerRequestInterface $request): JsonResponse
@@ -69,37 +71,39 @@ final class SupportController
 
         // 3) Collect attachments (optional; multipart/form-data)
         $attachments = [];
-        $files = $request->getUploadedFiles();
-        $maybe = $files['attachments'] ?? null;
+        $filesMap    = $request->getUploadedFiles();
 
-        // Normalize to array of UploadedFileInterface
-        if ($maybe !== null) {
-            $list = is_array($maybe) ? $maybe : [$maybe];
+        // Flatten only real UploadedFileInterface instances
+        $uploads = $this->flattenUploads($filesMap['attachments'] ?? null);
 
-            $totalBytes = 0;
-            foreach ($list as $idx => $file) {
-                if ($file->getError() !== UPLOAD_ERR_OK) {
-                    $this->logger?->warning('Skipping failed upload', ['index' => $idx, 'err' => $file->getError()]);
-                    continue;
-                }
-
-                $size = $file->getSize() ?? 0;
-                if ($size > 10 * 1024 * 1024) { // 10 MB per file
-                    throw new RuntimeException('Each attachment must be ≤ 10 MB', 400);
-                }
-                $totalBytes += $size;
-                if ($totalBytes > 20 * 1024 * 1024) { // 20 MB total
-                    throw new RuntimeException('Total attachments size must be ≤ 20 MB', 400);
-                }
-
-                $stream = $file->getStream();
-                $content = $stream->getContents(); // raw bytes
-                $attachments[] = [
-                    'filename'     => $file->getClientFilename() ?: ('attachment-' . ($idx + 1)),
-                    'content'      => $content, // raw bytes; MailSender should handle/base64 if needed
-                    'content_type' => $file->getClientMediaType() ?: 'application/octet-stream',
-                ];
+        $totalBytes = 0;
+        foreach ($uploads as $idx => $file) {
+            // Skip empty/no-file entries
+            if ($file->getError() === UPLOAD_ERR_NO_FILE) {
+                $this->logger?->debug('Skipping empty upload slot', ['index' => $idx]);
+                continue;
             }
+
+            if ($file->getError() !== UPLOAD_ERR_OK) {
+                $this->logger?->warning('Skipping failed upload', ['index' => $idx, 'err' => $file->getError()]);
+                continue;
+            }
+
+            $size = (int)($file->getSize() ?? 0);
+            if ($size > 10 * 1024 * 1024) {
+                throw new RuntimeException('Each attachment must be ≤ 10 MB', 400);
+            }
+            $totalBytes += $size;
+            if ($totalBytes > 20 * 1024 * 1024) {
+                throw new RuntimeException('Total attachments size must be ≤ 20 MB', 400);
+            }
+
+            $content = (string)$file->getStream()->getContents();
+            $attachments[] = [
+                'filename'     => $file->getClientFilename() ?: ('attachment-' . ($idx + 1)),
+                'content'      => $content,
+                'content_type' => $file->getClientMediaType() ?: 'application/octet-stream',
+            ];
         }
 
         // 4) Build a lightweight HTML body (you can also move this to a view)
@@ -149,6 +153,45 @@ HTML;
         );
 
         return new JsonResponse(['status' => 'ok'], 202);
+    }
+
+    /**
+     * Flatten nested uploaded files into a simple list of UploadedFileInterface.
+     * Ignores scalars/strings so we never call methods on non-files.
+     *
+     * @param mixed $node
+     * @return UploadedFileInterface[]
+     */
+    private function flattenUploads(mixed $node): array
+    {
+        $out = [];
+        $stack = [$node];
+
+        while (!empty($stack)) {
+            $curr = array_pop($stack);
+            if ($curr === null) continue;
+
+            if ($curr instanceof UploadedFileInterface) {
+                $out[] = $curr;
+                continue;
+            }
+
+            if (is_array($curr)) {
+                // Could be a tree like [0 => UploadedFileInterface, 1 => [...]]
+                foreach ($curr as $v) {
+                    $stack[] = $v;
+                }
+                continue;
+            }
+
+            // Anything else (string/int/etc.) is not a file: skip but log for visibility
+            if ($this->logger) {
+                $type = gettype($curr);
+                $this->logger->debug('Ignoring non-file value in attachments', ['type' => $type]);
+            }
+        }
+
+        return $out;
     }
 
     // Minimal escaper for inline HTML fields (already using htmlspecialchars above for $description)
