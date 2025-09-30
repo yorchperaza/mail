@@ -100,34 +100,55 @@ final class InternalMailService
     /* -------------------- Core send (no tracking/quotas) -------------------- */
 
     /** Sends via platform transport. No quotas, no tracking. */
-    private function sendSystem(string $to, string $subject, string $html, string $text, array $headers = []): void
-    {
-        // Force internal/system identity on the notify node
-        $fromEmail = $_ENV['SYSTEM_FROM_EMAIL'] ?? 'no-reply@notify.monkeysmail.com';
-        $fromName  = $_ENV['SYSTEM_FROM_NAME']  ?? 'MonkeysMail System';
+    private function sendSystem(
+        string $to,
+        string $subject,
+        string $html,
+        string $text,
+        array $headers = [],
+        ?string $fromEmail = null,
+        ?string $fromName = null,
+        ?string $replyTo = null,
+        ?array $attachments = null
+    ): void {
+        // Defaults (can be overridden by supportRequest)
+        $fromEmail = $fromEmail ?? ($_ENV['SYSTEM_FROM_EMAIL'] ?? 'no-reply@notify.monkeysmail.com');
+        $fromName  = $fromName  ?? ($_ENV['SYSTEM_FROM_NAME']  ?? 'MonkeysMail System');
+        $replyTo   = $replyTo   ?? ($_ENV['SYSTEM_REPLY_TO']   ?? $fromEmail);
 
         // Always include text
         $text = $this->normalizeText($text ?: $this->fallbackText($html));
 
         $payload = [
-            'from_email' => $fromEmail,
-            'from_name'  => $fromName,
-            'reply_to'   => $_ENV['SYSTEM_REPLY_TO'] ?? $fromEmail,
-            'to'         => [$to],
-            'subject'    => $subject,
-            'html_body'  => $html,
-            'text_body'  => $text,
-            'headers'    => array_merge([
+            'from_email'  => $fromEmail,
+            'from_name'   => $fromName,
+            'reply_to'    => $replyTo,
+            'to'          => [$to],
+            'subject'     => $subject,
+            'html_body'   => $html,
+            'text_body'   => $text,
+            'headers'     => array_merge([
                 'X-Product'  => 'monkeysmail',
                 'X-Internal' => 'true',
             ], $headers),
         ];
 
+        if ($attachments && \count($attachments) > 0) {
+            // Expected shape: [['filename' => 'x', 'content' => <bytes>, 'content_type' => '...'], ...]
+            $payload['attachments'] = array_map(static function (array $a): array {
+                return [
+                    'filename'     => (string)($a['filename'] ?? 'attachment'),
+                    'content'      => (string)($a['content'] ?? ''),        // raw bytes; transport decides on encoding
+                    'content_type' => (string)($a['content_type'] ?? 'application/octet-stream'),
+                ];
+            }, $attachments);
+        }
+
         try {
-            // IMPORTANT: $this->sender will be the internal-only sender below
             if (method_exists($this->sender, 'sendRaw')) {
                 $this->sender->sendRaw($payload);
             } else {
+                // Fallback: some senders accept attachments inside $payload already
                 $this->sender->send($payload, ['to' => [$to]]);
             }
         } catch (\Throwable $e) {
@@ -135,6 +156,7 @@ final class InternalMailService
             throw $e;
         }
     }
+
 
     /* -------------------- View rendering helpers -------------------- */
 
@@ -272,4 +294,75 @@ HTML;
         $text = preg_replace("/\n{3,}/", "\n\n", $text);
         return trim((string)$text);
     }
+
+    public function supportRequest(
+        string $fromEmail,
+        string $fromName,
+        string $subject,
+        string $html,
+        ?string $text = null,
+        array $attachments = [],
+        array $headers = []
+    ): void {
+        $to       = $_ENV['SUPPORT_TO']       ?? 'support@monkeysmail.com';
+        $sysFrom  = $_ENV['SYSTEM_FROM_EMAIL']?? 'no-reply@notify.monkeysmail.com';
+        $sysName  = $_ENV['SYSTEM_FROM_NAME'] ?? 'MonkeysMail System';
+        $replyTo  = $fromEmail ?: $sysFrom;
+
+        // Always have a text body
+        $textBody = $this->normalizeText($text ?: $this->fallbackText($html));
+
+        // Normalize/encode attachments if present
+        $normAttachments = [];
+        foreach ($attachments as $a) {
+            $filename = (string)($a['filename'] ?? 'attachment');
+            $bytes    = (string)($a['content']  ?? '');
+            $ctype    = (string)($a['content_type'] ?? 'application/octet-stream');
+
+            $normAttachments[] = [
+                'filename'     => $filename,
+                'content'      => base64_encode($bytes),   // encode here; most transports expect base64
+                'content_type' => $ctype,
+                'encoding'     => 'base64',
+            ];
+        }
+
+        $payload = [
+            'from_email'   => $sysFrom,
+            'from_name'    => $sysName,
+            'reply_to'     => $replyTo,
+            'to'           => [$to],
+            'subject'      => $subject,
+            'html_body'    => $html,
+            'text_body'    => $textBody,
+            'headers'      => array_merge([
+                'X-Product'   => 'monkeysmail',
+                'X-Internal'  => 'true',
+                'X-Category'  => 'system-support',
+                'X-From-User' => $fromEmail,
+            ], $headers),
+        ];
+
+        if ($normAttachments) {
+            $payload['attachments'] = $normAttachments;
+        }
+
+        try {
+            if (method_exists($this->sender, 'sendRaw')) {
+                $this->sender->sendRaw($payload);
+            } else {
+                // If your MailSender::send() also accepts attachments via $payload, this will work too.
+                $this->sender->send($payload, ['to' => [$to]]);
+            }
+        } catch (\Throwable $e) {
+            $this->logger?->error('Support mail send failed', [
+                'to' => $to,
+                'subject' => $subject,
+                'e' => $e,
+            ]);
+            throw $e;
+        }
+    }
+
+
 }
