@@ -31,7 +31,7 @@ final class HomeController
     {
         // 1) Render template
         $html = $this->renderer->render('home', [
-            'title' => 'Home',
+            'title' => 'MonkeysMail',
         ]);
 
         // 2) Build a Stream from the HTML
