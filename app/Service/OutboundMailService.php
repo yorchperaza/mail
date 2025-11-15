@@ -331,20 +331,29 @@ final class OutboundMailService
             // Get fresh connection
             $pdo = $this->getDirectDbConnection();
 
-            // Get message
-            $stmt = $pdo->prepare('SELECT * FROM message WHERE id = ?');
+            // Get message - EXPLICITLY SELECT attachments field
+            $stmt = $pdo->prepare('
+            SELECT id, company_id, domain_id, from_email, from_name, reply_to, 
+                   subject, html_body, text_body, headers, open_tracking, click_tracking,
+                   attachments, created_at, queued_at, sent_at, final_state, message_id
+            FROM message 
+            WHERE id = ?
+        ');
             $stmt->execute([$id]);
             $msgData = $stmt->fetch();
 
             if (!$msgData) {
+                error_log('[Mail][processJob] Message not found: id=' . $id);
                 return;
             }
+
+            error_log('[Mail][processJob] Message loaded: id=' . $id);
 
             // Get envelope from job
             $envelope = (array)($job['envelope'] ?? []);
 
             // Get tracking settings
-            $opensEnabled  = (bool)($msgData['open_tracking'] ?? false);
+            $opensEnabled = (bool)($msgData['open_tracking'] ?? false);
             $clicksEnabled = (bool)($msgData['click_tracking'] ?? false);
 
             // Get ALL recipients with their tracking tokens
@@ -366,6 +375,82 @@ final class OutboundMailService
                 }
             }
 
+            // ============ ENHANCED ATTACHMENT EXTRACTION ============
+            $attachments = [];
+
+            // Debug: Log raw attachments value
+            $rawAttachments = $msgData['attachments'] ?? null;
+            error_log(sprintf('[Mail][processJob][ATTACHMENTS] Raw value type=%s, empty=%s, value=%s',
+                gettype($rawAttachments),
+                empty($rawAttachments) ? 'YES' : 'NO',
+                is_string($rawAttachments) ? substr($rawAttachments, 0, 200) : json_encode($rawAttachments)
+            ));
+
+            if (!empty($rawAttachments)) {
+                // Handle string (JSON) from database
+                if (is_string($rawAttachments)) {
+                    error_log('[Mail][processJob][ATTACHMENTS] Decoding JSON string...');
+                    $decoded = json_decode($rawAttachments, true);
+
+                    if (json_last_error() !== JSON_ERROR_NONE) {
+                        error_log('[Mail][processJob][ATTACHMENTS] JSON decode error: ' . json_last_error_msg());
+                    } else {
+                        error_log('[Mail][processJob][ATTACHMENTS] JSON decoded successfully, count=' . (is_array($decoded) ? count($decoded) : 0));
+                        $rawAttachments = $decoded;
+                    }
+                }
+
+                // Normalize attachments array
+                if (is_array($rawAttachments)) {
+                    error_log('[Mail][processJob][ATTACHMENTS] Processing array with ' . count($rawAttachments) . ' items');
+
+                    foreach ($rawAttachments as $idx => $att) {
+                        if (!is_array($att)) {
+                            error_log('[Mail][processJob][ATTACHMENTS] Index ' . $idx . ' is not an array, skipping');
+                            continue;
+                        }
+
+                        $filename = trim((string)($att['filename'] ?? ''));
+                        $content = (string)($att['content'] ?? '');
+                        $contentType = trim((string)(
+                            $att['contentType']
+                            ?? $att['content_type']
+                            ?? $att['type']
+                            ?? 'application/octet-stream'
+                        ));
+
+                        error_log(sprintf('[Mail][processJob][ATTACHMENTS] Index %d: filename=%s, contentType=%s, contentLength=%d',
+                            $idx, $filename, $contentType, strlen($content)
+                        ));
+
+                        if ($filename === '' || $content === '') {
+                            error_log('[Mail][processJob][ATTACHMENTS] Index ' . $idx . ' missing filename or content, skipping');
+                            continue;
+                        }
+
+                        // Verify base64 is valid
+                        $testDecode = base64_decode($content, true);
+                        if ($testDecode === false) {
+                            error_log('[Mail][processJob][ATTACHMENTS] Index ' . $idx . ' has invalid base64 content');
+                            continue;
+                        }
+
+                        $attachments[] = [
+                            'filename' => $filename,
+                            'contentType' => $contentType,
+                            'content' => $content,  // Keep as base64 string
+                        ];
+
+                        error_log(sprintf('[Mail][processJob][ATTACHMENTS] Added attachment: %s (%s) - %d bytes encoded',
+                            $filename, $contentType, strlen($content)
+                        ));
+                    }
+                }
+            }
+
+            error_log(sprintf('[Mail][processJob][ATTACHMENTS] Final count: %d attachments to send', count($attachments)));
+            // ============ END ATTACHMENT EXTRACTION ============
+
             // For single recipient messages, inject tracking into HTML
             $htmlBody = $msgData['html_body'] ?? null;
             if (
@@ -376,7 +461,7 @@ final class OutboundMailService
             ) {
                 // Single recipient - we can inject tracking
                 $recipientEmail = $envelope['to'][0] ?? null;
-                $trackToken     = $recipientTokens[$recipientEmail] ?? null;
+                $trackToken = $recipientTokens[$recipientEmail] ?? null;
 
                 if ($trackToken && $recipientEmail) {
                     $base = getenv('TRACK_BASE_URL') ?: 'https://smtp.monkeysmail.com';
@@ -386,7 +471,7 @@ final class OutboundMailService
                         $htmlBody = preg_replace_callback(
                             '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
                             function ($m) use ($base, $trackToken) {
-                                $url     = $m[2];
+                                $url = $m[2];
                                 $encoded = rtrim(strtr(base64_encode($url), '+/', '-_'), '=');
                                 return $m[1] . $base . '/t/c/' . $trackToken . '?u=' . $encoded . $m[3];
                             },
@@ -397,13 +482,13 @@ final class OutboundMailService
                     // Add open tracking pixel
                     if ($opensEnabled) {
                         $pixelBase = getenv('TRACK_BASE_URL') ?: 'https://smtp.monkeysmail.com';
-                        $pixelUrl  = rtrim($pixelBase, '/') . '/t/o/' . rawurlencode($trackToken) . '.gif';
-                        $pixel     = '<img src="' . $pixelUrl . '" width="1" height="1" alt="" ' .
+                        $pixelUrl = rtrim($pixelBase, '/') . '/t/o/' . rawurlencode($trackToken) . '.gif';
+                        $pixel = '<img src="' . $pixelUrl . '" width="1" height="1" alt="" ' .
                             'style="display:block;border:0;outline:none;text-decoration:none;' .
                             'width:1px;height:1px;max-width:1px;opacity:0;" />';
 
                         // place BEFORE </body>, fallback to append
-                        $count    = 0;
+                        $count = 0;
                         $htmlBody = preg_replace('/<\/body\s*>/i', $pixel . '</body>', (string)$htmlBody, 1, $count);
                         if ($count === 0) {
                             $htmlBody .= $pixel;
@@ -412,61 +497,35 @@ final class OutboundMailService
 
                     error_log('[Mail] Tracking injected for ' . $recipientEmail . ' with token ' . $trackToken);
                 }
-            } elseif (count($recipientTokens) > 1) {
-                // Multiple recipients - we should queue separate jobs for each
-                // For now, log a warning
             }
 
-            // ----------------- Attachments from DB -----------------
-            $attachments = [];
-            if (!empty($msgData['attachments'])) {
-                $rawAtts = is_string($msgData['attachments'])
-                    ? json_decode($msgData['attachments'], true)
-                    : $msgData['attachments'];
-
-                if (is_array($rawAtts)) {
-                    $norm = [];
-                    foreach ($rawAtts as $att) {
-                        if (!is_array($att)) {
-                            continue;
-                        }
-                        $fn  = trim((string)($att['filename'] ?? ''));
-                        $ct  = trim((string)($att['contentType'] ?? 'application/octet-stream'));
-                        $c   = (string)($att['content'] ?? '');
-                        if ($fn !== '' && $c !== '') {
-                            $norm[] = [
-                                'filename'    => $fn,
-                                'contentType' => $ct,
-                                'content'     => $c,
-                            ];
-                        }
-                    }
-                    $attachments = $norm;
-                }
-            }
-
-            // Build email data with tracking-enabled HTML
+            // Build email data with tracking-enabled HTML and attachments
             $emailData = [
                 'from_email' => $envelope['fromEmail'] ?? ($msgData['from_email'] ?? null),
-                'from_name'  => $envelope['fromName']  ?? ($msgData['from_name'] ?? null),
-                'reply_to'   => $envelope['replyTo']   ?? ($msgData['reply_to'] ?? null),
-                'subject'    => $msgData['subject']    ?? null,
-                'html_body'  => $htmlBody,
-                'text_body'  => $msgData['text_body']  ?? null,
-                'to'         => $envelope['to']  ?? [],
-                'cc'         => $envelope['cc']  ?? [],
-                'bcc'        => $envelope['bcc'] ?? [],
+                'from_name' => $envelope['fromName'] ?? ($msgData['from_name'] ?? null),
+                'reply_to' => $envelope['replyTo'] ?? ($msgData['reply_to'] ?? null),
+                'subject' => $msgData['subject'] ?? null,
+                'html_body' => $htmlBody,
+                'text_body' => $msgData['text_body'] ?? null,
+                'to' => $envelope['to'] ?? [],
+                'cc' => $envelope['cc'] ?? [],
+                'bcc' => $envelope['bcc'] ?? [],
             ];
 
+            // CRITICAL: Always add attachments to emailData if they exist
             if (!empty($attachments)) {
                 $emailData['attachments'] = $attachments;
+                error_log('[Mail][processJob] Added ' . count($attachments) . ' attachments to emailData');
+            } else {
+                error_log('[Mail][processJob] NO attachments to add to emailData');
             }
 
             // ----------------- Actually send -----------------
             if (method_exists($this->sender, 'sendRaw')) {
-                // New-style sender that accepts a flat payload including attachments
+                error_log('[Mail][processJob] Using sendRaw method');
                 $res = $this->sender->sendRaw($emailData);
             } else {
+                error_log('[Mail][processJob] Using legacy send method');
                 // Legacy sender: use Message entity, make sure we include attachments
                 $msg = new Message();
                 $msg->setFrom_email($emailData['from_email']);
@@ -477,7 +536,7 @@ final class OutboundMailService
                 $msg->setText_body($emailData['text_body']);
 
                 if (!empty($attachments)) {
-                    // 👈 THIS is what your MailSender::send() must use to attach files
+                    error_log('[Mail][processJob] Setting attachments on Message entity: ' . count($attachments));
                     $msg->setAttachments($attachments);
                 }
 
@@ -485,9 +544,13 @@ final class OutboundMailService
             }
 
             // Update message status
-            $now       = date('Y-m-d H:i:s');
-            $status    = ($res['ok'] ?? false) ? 'sent' : 'failed';
+            $now = date('Y-m-d H:i:s');
+            $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
             $messageId = $res['message_id'] ?? null;
+
+            error_log(sprintf('[Mail][processJob] Send result: status=%s, messageId=%s, ok=%s',
+                $status, $messageId ?? 'NULL', ($res['ok'] ?? false) ? 'YES' : 'NO'
+            ));
 
             if ($messageId) {
                 $updateStmt = $pdo->prepare('UPDATE message SET final_state = ?, sent_at = ?, message_id = ? WHERE id = ?');
@@ -504,30 +567,30 @@ final class OutboundMailService
             /* ------------------- per-recipient event ------------------- */
             // Determine the single recipient this job targeted
             $recipientEmail =
-                ($envelope['to'][0]  ?? null) ?:
-                    ($envelope['cc'][0]  ?? null) ?:
+                ($envelope['to'][0] ?? null) ?:
+                    ($envelope['cc'][0] ?? null) ?:
                         ($envelope['bcc'][0] ?? null);
 
-            // Create a thin Message entity with id for the relation (if your repo needs it)
+            // Create a thin Message entity with id for the relation
             $msgEntity = new Message();
 
             // Persist event with recipient
             $this->addMessageEvent(
                 $msgEntity,
-                $status,                          // 'sent' or 'failed'
+                $status,
                 $recipientEmail,
                 [
                     'providerMessageId' => $messageId ?? null,
-                    'error'             => $res['error'] ?? null,
+                    'error' => $res['error'] ?? null,
+                    'attachmentCount' => count($attachments),
                 ]
             );
-            /* ---------------------------------------------------------------- */
 
         } catch (\PDOException $e) {
             error_log('[Mail] processJob DB error: ' . $e->getMessage());
-            throw $e;  // Re-throw to trigger retry
+            throw $e;
         } catch (\Throwable $e) {
-            error_log('[Mail] processJob unexpected error: ' . $e->getMessage());
+            error_log('[Mail] processJob unexpected error: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
             throw $e;
         }
     }
