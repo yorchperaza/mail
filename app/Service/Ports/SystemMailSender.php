@@ -23,8 +23,9 @@ final class SystemMailSender implements MailSender
      *   headers?:array<string,string>,
      *   attachments?:array<int,array{
      *      filename:string,
-     *      content:string,        // base64
-     *      contentType?:string    // MIME type
+     *      content:string,           // base64
+     *      contentType?:string,      // MIME
+     *      content_type?:string      // fallback snake_case
      *   }>
      * } $payload
      */
@@ -32,7 +33,7 @@ final class SystemMailSender implements MailSender
     {
         $mail = $this->mailer ?? new PHPMailer(true);
 
-        // If we reuse the same PHPMailer instance, clean previous state
+        // If the same PHPMailer instance is reused, clean it first
         $mail->clearAllRecipients();
         $mail->clearAttachments();
         $mail->clearReplyTos();
@@ -97,8 +98,11 @@ final class SystemMailSender implements MailSender
             // ✅ Attachments
             $attachments = $payload['attachments'] ?? [];
             if (!empty($attachments) && is_array($attachments)) {
-                foreach ($attachments as $att) {
+                error_log('[SystemMailSender] attachments in payload count=' . count($attachments));
+
+                foreach ($attachments as $idx => $att) {
                     if (!is_array($att)) {
+                        error_log('[SystemMailSender] attachment index '.$idx.' is not array, skipping');
                         continue;
                     }
 
@@ -111,17 +115,21 @@ final class SystemMailSender implements MailSender
                     ));
 
                     if ($filename === '' || $b64 === '') {
+                        error_log('[SystemMailSender] attachment index '.$idx.' has empty filename/content, skipping');
                         continue;
                     }
 
                     $binary = base64_decode($b64, true);
                     if ($binary === false) {
-                        error_log('[SystemMailSender] invalid base64 attachment, skipping filename='.$filename);
+                        error_log('[SystemMailSender] invalid base64 for attachment index '.$idx.' filename='.$filename);
                         continue;
                     }
 
                     $mail->addStringAttachment($binary, $filename, 'base64', $ctype);
+                    error_log('[SystemMailSender] added attachment idx='.$idx.' filename='.$filename.' type='.$ctype);
                 }
+            } else {
+                error_log('[SystemMailSender] no attachments in payload');
             }
 
             $ok = $mail->send();
@@ -141,7 +149,6 @@ final class SystemMailSender implements MailSender
             return (is_object($obj) && method_exists($obj, $method)) ? $obj->{$method}() : $default;
         };
 
-        // Base payload
         $payload = [
             'from_email' => $get($message, 'getFrom_email', $envelope['fromEmail'] ?? ''),
             'from_name'  => $get($message, 'getFrom_name',  $envelope['fromName']  ?? ''),
@@ -154,10 +161,8 @@ final class SystemMailSender implements MailSender
         ];
 
         // ✅ Attachments from entity or envelope
-        // Message::getAttachments() in your code stores: ['filename','contentType','content'] (JSON or array)
         $atts = $get($message, 'getAttachments', null);
 
-        // If envelope already contains attachments (e.g. caller constructed them), prefer those
         if (!empty($envelope['attachments']) && is_array($envelope['attachments'])) {
             $payload['attachments'] = $envelope['attachments'];
         } elseif (!empty($atts)) {
