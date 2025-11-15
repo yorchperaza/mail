@@ -484,8 +484,6 @@ final class OutboundMailService
                 $res = $this->sender->send($msg, $envelope);
             }
 
-            error_log('[Mail] Send result: ' . json_encode($res));
-
             // Update message status
             $now       = date('Y-m-d H:i:s');
             $status    = ($res['ok'] ?? false) ? 'sent' : 'failed';
@@ -524,7 +522,7 @@ final class OutboundMailService
                 ]
             );
             /* ---------------------------------------------------------------- */
-            
+
         } catch (\PDOException $e) {
             error_log('[Mail] processJob DB error: ' . $e->getMessage());
             throw $e;  // Re-throw to trigger retry
@@ -599,7 +597,7 @@ final class OutboundMailService
                 return;
             }
 
-            $r = (new MessageRecipient())
+            $r = new MessageRecipient()
                 ->setMessage($msg)
                 ->setType($type)
                 ->setEmail($email)
@@ -678,8 +676,6 @@ final class OutboundMailService
                     ->setSent(0)->setDelivered(0)->setBounced(0)->setComplained(0)->setOpens(0)->setClicks(0);
                 $created = true;
             } else {
-                error_log(sprintf('[Usage] Found existing row id=%s',
-                    method_exists($row, 'getId') ? $row->getId() : 'N/A'));
             }
 
             $before = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
@@ -687,14 +683,12 @@ final class OutboundMailService
 
             foreach ($deltas as $field => $inc) {
                 if (!isset($map[$field])) {
-                    error_log(sprintf('[Usage] Skipping unknown field: %s', $field));
                     continue;
                 }
                 [$g,$s] = $map[$field];
                 $oldVal = (int)($row->{$g}() ?? 0);
                 $newVal = max(0, $oldVal + (int)$inc);
                 $row->{$s}($newVal);
-                error_log(sprintf('[Usage] Updated %s: %d -> %d (delta=%d)', $field, $oldVal, $newVal, $inc));
             }
 
             if (!method_exists($repo, 'save')) {
@@ -705,8 +699,6 @@ final class OutboundMailService
             $repo->save($row);
 
             $after = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
-            error_log(sprintf('[Usage] %s company=%d day=%s before=%s delta=%s after=%s',
-                $created ? 'created' : 'updated', $company->getId(), $dayStart->format('Y-m-d'), json_encode($before), json_encode($deltas), json_encode($after)));
 
         } catch (\Throwable $e) {
             error_log(sprintf('[Usage][EXCEPTION] %s at %s:%d\nTrace: %s',

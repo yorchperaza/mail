@@ -20,12 +20,23 @@ final class SystemMailSender implements MailSender
      *   subject:string,
      *   html_body:string,
      *   text_body?:?string,
-     *   headers?:array<string,string>
+     *   headers?:array<string,string>,
+     *   attachments?:array<int,array{
+     *      filename:string,
+     *      content:string,        // base64
+     *      contentType?:string    // MIME type
+     *   }>
      * } $payload
      */
     public function sendRaw(array $payload): array
     {
         $mail = $this->mailer ?? new PHPMailer(true);
+
+        // If we reuse the same PHPMailer instance, clean previous state
+        $mail->clearAllRecipients();
+        $mail->clearAttachments();
+        $mail->clearReplyTos();
+        $mail->clearCustomHeaders();
 
         try {
             $mail->isSMTP();
@@ -63,17 +74,6 @@ final class SystemMailSender implements MailSender
                 $mail->addReplyTo($replyTo);
             }
 
-            // --- DKIM: fixed for notify.monkeysmail.com (no per-client provisioning) ---
-//            $mail->DKIM_domain    = $_ENV['SYSTEM_DKIM_DOMAIN']   ?? 'notify.monkeysmail.com';
-//            $mail->DKIM_selector  = $_ENV['SYSTEM_DKIM_SELECTOR'] ?? 's1';
-//            $mail->DKIM_identity  = $fromEmail;
-//            $mail->DKIM_private   = $_ENV['SYSTEM_DKIM_KEY'] ?? '/etc/monkeysmail/dkim/s1.private';
-
-//            $mail->DKIM_domain   = $_ENV['SYSTEM_DKIM_DOMAIN']   ?? 'notify.monkeysmail.com';
-//            $mail->DKIM_selector = $_ENV['SYSTEM_DKIM_SELECTOR'] ?? 's1';
-//            $mail->DKIM_private  = $_ENV['SYSTEM_DKIM_KEY']      ?? '/etc/opendkim/keys/notify.monkeysmail.com/s1.private';
-//            $mail->DKIM_identity = $fromEmail;
-
             // To
             foreach ((array)$payload['to'] as $rcpt) {
                 if ($rcpt !== '') {
@@ -94,6 +94,36 @@ final class SystemMailSender implements MailSender
             $mail->Body    = (string)$payload['html_body'];
             $mail->AltBody = (string)($payload['text_body'] ?? '') ?: strip_tags($mail->Body);
 
+            // ✅ Attachments
+            $attachments = $payload['attachments'] ?? [];
+            if (!empty($attachments) && is_array($attachments)) {
+                foreach ($attachments as $att) {
+                    if (!is_array($att)) {
+                        continue;
+                    }
+
+                    $filename = trim((string)($att['filename'] ?? 'attachment.bin'));
+                    $b64      = (string)($att['content']   ?? '');
+                    $ctype    = trim((string)(
+                        $att['contentType']
+                        ?? $att['content_type']
+                        ?? 'application/octet-stream'
+                    ));
+
+                    if ($filename === '' || $b64 === '') {
+                        continue;
+                    }
+
+                    $binary = base64_decode($b64, true);
+                    if ($binary === false) {
+                        error_log('[SystemMailSender] invalid base64 attachment, skipping filename='.$filename);
+                        continue;
+                    }
+
+                    $mail->addStringAttachment($binary, $filename, 'base64', $ctype);
+                }
+            }
+
             $ok = $mail->send();
 
             return [
@@ -111,6 +141,7 @@ final class SystemMailSender implements MailSender
             return (is_object($obj) && method_exists($obj, $method)) ? $obj->{$method}() : $default;
         };
 
+        // Base payload
         $payload = [
             'from_email' => $get($message, 'getFrom_email', $envelope['fromEmail'] ?? ''),
             'from_name'  => $get($message, 'getFrom_name',  $envelope['fromName']  ?? ''),
@@ -122,7 +153,25 @@ final class SystemMailSender implements MailSender
             'headers'    => (array)($envelope['headers'] ?? []),
         ];
 
+        // ✅ Attachments from entity or envelope
+        // Message::getAttachments() in your code stores: ['filename','contentType','content'] (JSON or array)
+        $atts = $get($message, 'getAttachments', null);
+
+        // If envelope already contains attachments (e.g. caller constructed them), prefer those
+        if (!empty($envelope['attachments']) && is_array($envelope['attachments'])) {
+            $payload['attachments'] = $envelope['attachments'];
+        } elseif (!empty($atts)) {
+            if (is_string($atts)) {
+                $decoded = json_decode($atts, true);
+                if (is_array($decoded)) {
+                    $atts = $decoded;
+                }
+            }
+            if (is_array($atts)) {
+                $payload['attachments'] = $atts;
+            }
+        }
+
         return $this->sendRaw($payload);
     }
 }
-
