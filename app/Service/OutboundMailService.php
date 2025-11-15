@@ -1124,11 +1124,67 @@ final class OutboundMailService
 
     /* ================= Your existing internals (stubs to integrate) ================= */
 
-    private function createMessageEntityFromBody(array $body, Company $company, Domain $domain)
+    /**
+     * @throws \DateMalformedStringException
+     */
+    private function createMessageEntityFromBody(array $body, Company $company, Domain $domain): Message
     {
-        // TODO: hydrate Message + set company/domain bindings, headers, body, tracking, attachments, etc.
-        // return $msg;
+        $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
+
+        $fromEmail = trim((string)($body['from']['email'] ?? ''));
+        if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
+            throw new \RuntimeException('A valid from.email is required', 422);
+        }
+
+        $fromName = isset($body['from']['name']) ? trim((string)$body['from']['name']) : null;
+        $replyTo  = isset($body['replyTo']) ? trim((string)$body['replyTo']) : null;
+        if ($replyTo && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
+            throw new \RuntimeException('replyTo must be a valid email', 422);
+        }
+
+        $subject = isset($body['subject']) ? trim((string)$body['subject']) : null;
+        $text    = isset($body['text'])    ? (string)$body['text'] : null;
+        $html    = isset($body['html'])    ? (string)$body['html'] : null;
+
+        $to  = $this->normalizeEmails($body['to']  ?? []);
+        $cc  = $this->normalizeEmails($body['cc']  ?? []);
+        $bcc = $this->normalizeEmails($body['bcc'] ?? []);
+        if (empty($to) && empty($cc) && empty($bcc)) {
+            throw new \RuntimeException('At least one recipient (to/cc/bcc) is required', 422);
+        }
+
+        $headers = isset($body['headers']) && is_array($body['headers'])
+            ? $this->sanitizeHeaders($body['headers'])
+            : null;
+
+        $tracking       = is_array($body['tracking'] ?? null) ? $body['tracking'] : [];
+        $opensEnabled   = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
+        $clicksEnabled  = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
+        $attachments    = $this->normalizeAttachments($body['attachments'] ?? []);
+
+        $msg = new Message()
+            ->setCompany($company)
+            ->setDomain($domain)
+            ->setFrom_email($fromEmail)
+            ->setFrom_name($fromName)
+            ->setReply_to($replyTo)
+            ->setSubject($subject)
+            ->setHtml_body($html)
+            ->setText_body($text)
+            ->setHeaders($headers)
+            ->setOpen_tracking($opensEnabled)
+            ->setClick_tracking($clicksEnabled)
+            ->setAttachments(!empty($attachments) ? $attachments : null)
+            ->setCreated_at($nowUtc)
+            ->setQueued_at($nowUtc)
+            ->setFinal_state('queued'); // or 'sending' depending on your semantics
+
+        // optional: persist recipients here or via a helper
+        $this->persistRecipients($msg, $to, $cc, $bcc, 'queued');
+
+        return $msg;
     }
+
 
     private function persistMessage(Message $msg): void
     {
@@ -1147,7 +1203,6 @@ final class OutboundMailService
 
     private function buildEnvelopeFromBody(array $body): array
     {
-        // Extract from/replyTo/to/cc/bcc/headers safely. Normalize strings/arrays.
         return [
             'from'    => $body['from']['email'] ?? null,
             'fromName'=> $body['from']['name']  ?? null,
