@@ -352,24 +352,29 @@ final class OutboundMailService
             // Get envelope from job
             $envelope = (array)($job['envelope'] ?? []);
 
-            // IDEMPOTENCY CHECK: Skip if this specific recipient was already processed
-            // This prevents duplicate sends when worker restarts and drains backlog
+            // ATOMIC IDEMPOTENCY: Use UPDATE with WHERE to claim the job
+            // Only ONE worker can successfully update status from 'queued' to 'sending'
+            // This prevents the race condition where multiple workers check status simultaneously
             $targetRecipient = ($envelope['to'][0] ?? null)
                             ?: ($envelope['cc'][0] ?? null)
                             ?: ($envelope['bcc'][0] ?? null);
 
             if ($targetRecipient) {
-                $checkStmt = $pdo->prepare('
-                    SELECT status FROM messagerecipient 
-                    WHERE message_id = ? AND email = ? AND status IN ("sent", "failed", "delivered")
+                $claimStmt = $pdo->prepare('
+                    UPDATE messagerecipient 
+                    SET status = "sending"
+                    WHERE message_id = ? AND email = ? AND status = "queued"
                 ');
-                $checkStmt->execute([$id, $targetRecipient]);
-                $existing = $checkStmt->fetch();
-                if ($existing) {
-                    error_log(sprintf('[Mail][processJob] SKIP - already processed: message_id=%d, recipient=%s, status=%s',
-                        $id, $targetRecipient, $existing['status']));
+                $claimStmt->execute([$id, $targetRecipient]);
+                $claimed = $claimStmt->rowCount();
+                
+                if ($claimed === 0) {
+                    // Another worker already claimed this job, or it was already processed
+                    error_log(sprintf('[Mail][processJob] SKIP - already claimed by another worker: message_id=%d, recipient=%s',
+                        $id, $targetRecipient));
                     return;
                 }
+                error_log(sprintf('[Mail][processJob] CLAIMED job: message_id=%d, recipient=%s', $id, $targetRecipient));
             }
 
             // Get tracking settings
