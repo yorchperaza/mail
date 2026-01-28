@@ -41,7 +41,13 @@ final class OutboundMailService
         $requestId = (string)($payload['request_id'] ?? '');
         if ($requestId === '') {
             // Force client to send request_id for idempotency; do NOT auto-generate
-            throw new \RuntimeException('request_id is required for idempotency', 422);
+            error_log('[Mail][IDEMPOTENCY] Missing request_id in payload');
+            return [
+                'status' => 'error',
+                'error' => 'request_id_required',
+                'message' => 'request_id is required for idempotency',
+                'http_status' => 422,
+            ];
         }
 
         $idemKey = sprintf('mail:idempotency:%d:%s', (int)$company->getId(), $requestId);

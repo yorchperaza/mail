@@ -134,19 +134,24 @@ final class ApiSendController
             // --- Enqueue (default)
             $result = $this->mailService->createAndEnqueue($body, $company, $domain);
             $status = (string)($result['status'] ?? '');
-            $http   = match ($status) {
+            
+            // Use http_status from result if provided, otherwise determine from status
+            $http = (int)($result['http_status'] ?? match ($status) {
                 'queued'       => 202,
                 'preview'      => 200,
                 'queue_failed' => 503,
                 'sent'         => 201,
+                'error'        => 422,
+                'duplicate'    => 200,
                 default        => 200,
-            };
+            });
 
             return new JsonResponse([
                 'mode'       => 'enqueue',
                 'status'     => $status ?: 'queued',
                 'recipients' => $units,
                 'message'    => $result['message'] ?? null,
+                'error'      => $result['error'] ?? null,
             ], $http);
 
         } catch (\Throwable $e) {
