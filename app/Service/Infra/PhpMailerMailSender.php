@@ -64,11 +64,31 @@ final class PhpMailerMailSender implements MailSender
                 $mail->addBCC($email);
             }
 
+            // Custom headers (includes X-MonkeysMail-* debug headers)
+            foreach ($data['headers'] ?? [] as $k => $v) {
+                if (is_string($k) && is_string($v)) {
+                    $mail->addCustomHeader($k, $v);
+                }
+            }
+
             // Content
             $mail->Subject = $data['subject'] ?? '';
             $mail->Body    = $data['html_body'] ?? '';
             $mail->AltBody = $data['text_body'] ?? '';
             $mail->isHTML(!empty($data['html_body']));
+
+            // Attachments (base64 encoded)
+            foreach ((array)($data['attachments'] ?? []) as $a) {
+                if (!isset($a['filename'], $a['content'])) continue;
+                $bin = base64_decode((string)$a['content'], true);
+                if ($bin === false) continue;
+                $mail->addStringAttachment(
+                    $bin,
+                    (string)$a['filename'],
+                    PHPMailer::ENCODING_BASE64,
+                    isset($a['contentType']) ? (string)$a['contentType'] : 'application/octet-stream'
+                );
+            }
 
             // --- DKIM: provision/register for From: domain (milter-first; local fallback opt-in)
             $this->prepareDkimForFrom($fromEmail, $mail);

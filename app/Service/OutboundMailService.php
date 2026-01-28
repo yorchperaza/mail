@@ -37,13 +37,29 @@ final class OutboundMailService
     /** Persist Message as queued/preview and push to Redis (always queues when not dryRun). */
     public function createAndEnqueue(array $payload, Company $company, Domain $domain): array
     {
-        // Add request tracking to detect duplicate calls
-        $requestId = $payload['request_id'] ?? uniqid('req_', true);
-        static $processedRequests = [];
+        // REDIS-BASED IDEMPOTENCY: Require request_id and use SET NX to prevent duplicates
+        $requestId = (string)($payload['request_id'] ?? '');
+        if ($requestId === '') {
+            // Force client to send request_id for idempotency; do NOT auto-generate
+            throw new \RuntimeException('request_id is required for idempotency', 422);
+        }
 
-        if (isset($processedRequests[$requestId])) {
-            error_log(sprintf('[Mail][DUPLICATE] Request already processed: %s', $requestId));
-            return $processedRequests[$requestId];
+        $idemKey = sprintf('mail:idempotency:%d:%s', (int)$company->getId(), $requestId);
+
+        // SET key "1" EX 3600 NX (only first request wins, expires in 1 hour)
+        $ok = false;
+        if ($this->redis instanceof \Redis) {
+            $ok = $this->redis->set($idemKey, '1', ['nx', 'ex' => 3600]);
+        } else {
+            // Predis
+            $resp = $this->redis->executeRaw(['SET', $idemKey, '1', 'EX', '3600', 'NX']);
+            $ok = ($resp === 'OK');
+        }
+
+        if (!$ok) {
+            error_log(sprintf('[Mail][IDEMPOTENCY] Duplicate request blocked: requestId=%s company=%d', 
+                $requestId, $company->getId()));
+            return ['status' => 'duplicate', 'request_id' => $requestId, 'message' => 'Request already processed'];
         }
 
         $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
@@ -535,6 +551,12 @@ final class OutboundMailService
                 'to' => $envelope['to'] ?? [],
                 'cc' => $envelope['cc'] ?? [],
                 'bcc' => $envelope['bcc'] ?? [],
+                // DEBUG HEADERS: Add these to trace duplicate sources in logs/email headers
+                'headers' => array_merge($envelope['headers'] ?? [], [
+                    'X-MonkeysMail-Message-Id' => (string)$id,
+                    'X-MonkeysMail-Recipient' => $targetRecipient ?? 'unknown',
+                    'X-MonkeysMail-Timestamp' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+                ]),
             ];
 
             // CRITICAL: Always add attachments to emailData if they exist
