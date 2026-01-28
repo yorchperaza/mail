@@ -589,9 +589,9 @@ final class ApiSendController
         $plan   = $c->getPlan();
         $name   = strtolower(trim((string)($plan?->getName() ?? 'starter')));
         $window = ($name === 'starter') ? 'day' : 'month';
-        $limit  = ($name === 'starter')
-            ? 150
-            : (int)($plan?->getIncludedMessages() ?? 0); // 0/null => unlimited
+        
+        // Read limit from plan's includedMessages (not hardcoded)
+        $limit  = (int)($plan?->getIncludedMessages() ?? 0); // 0/null => unlimited
 
         return ['window' => $window, 'limit' => ($limit > 0 ? $limit : null)];
     }
