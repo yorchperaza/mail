@@ -37,35 +37,34 @@ final class OutboundMailService
     /** Persist Message as queued/preview and push to Redis (always queues when not dryRun). */
     public function createAndEnqueue(array $payload, Company $company, Domain $domain): array
     {
-        // REDIS-BASED IDEMPOTENCY: Require request_id and use SET NX to prevent duplicates
+        // REDIS-BASED IDEMPOTENCY: If request_id is provided, use SET NX to prevent duplicates
+        // If not provided, auto-generate (backward compatible, but no cross-request protection)
         $requestId = (string)($payload['request_id'] ?? '');
-        if ($requestId === '') {
-            // Force client to send request_id for idempotency; do NOT auto-generate
-            error_log('[Mail][IDEMPOTENCY] Missing request_id in payload');
-            return [
-                'status' => 'error',
-                'error' => 'request_id_required',
-                'message' => 'request_id is required for idempotency',
-                'http_status' => 422,
-            ];
-        }
-
-        $idemKey = sprintf('mail:idempotency:%d:%s', (int)$company->getId(), $requestId);
-
-        // SET key "1" EX 3600 NX (only first request wins, expires in 1 hour)
-        $ok = false;
-        if ($this->redis instanceof \Redis) {
-            $ok = $this->redis->set($idemKey, '1', ['nx', 'ex' => 3600]);
+        $clientProvidedRequestId = ($requestId !== '');
+        
+        if (!$clientProvidedRequestId) {
+            // Auto-generate for backward compatibility (no cross-request idempotency, but atomic UPDATE in processJob still protects)
+            $requestId = uniqid('auto_', true);
+            error_log('[Mail][IDEMPOTENCY] No request_id provided, auto-generated: ' . $requestId);
         } else {
-            // Predis
-            $resp = $this->redis->executeRaw(['SET', $idemKey, '1', 'EX', '3600', 'NX']);
-            $ok = ($resp === 'OK');
-        }
+            // Client provided request_id - enforce Redis idempotency
+            $idemKey = sprintf('mail:idempotency:%d:%s', (int)$company->getId(), $requestId);
 
-        if (!$ok) {
-            error_log(sprintf('[Mail][IDEMPOTENCY] Duplicate request blocked: requestId=%s company=%d', 
-                $requestId, $company->getId()));
-            return ['status' => 'duplicate', 'request_id' => $requestId, 'message' => 'Request already processed'];
+            // SET key "1" EX 3600 NX (only first request wins, expires in 1 hour)
+            $ok = false;
+            if ($this->redis instanceof \Redis) {
+                $ok = $this->redis->set($idemKey, '1', ['nx', 'ex' => 3600]);
+            } else {
+                // Predis
+                $resp = $this->redis->executeRaw(['SET', $idemKey, '1', 'EX', '3600', 'NX']);
+                $ok = ($resp === 'OK');
+            }
+
+            if (!$ok) {
+                error_log(sprintf('[Mail][IDEMPOTENCY] Duplicate request blocked: requestId=%s company=%d', 
+                    $requestId, $company->getId()));
+                return ['status' => 'duplicate', 'request_id' => $requestId, 'message' => 'Request already processed'];
+            }
         }
 
         $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
