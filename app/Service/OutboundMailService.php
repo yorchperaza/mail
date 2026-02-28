@@ -676,7 +676,7 @@ final class OutboundMailService
 
             // Create a thin Message entity with id for the relation
             $msgEntity = new Message();
-            $msgEntity->setId($id);
+            $msgEntity->id = $id;
 
             // Persist event with recipient
             $this->addMessageEvent(
