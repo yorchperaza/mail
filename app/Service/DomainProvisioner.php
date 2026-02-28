@@ -12,17 +12,18 @@ use RuntimeException;
 
 final class DomainProvisioner
 {
-    private const SMTP_HOST     = 'smtp.monkeysmail.com';
-    private const SMTP_IP       = '34.30.122.164';            // adjust if needed
+    private const SMTP_HOST = 'smtp.monkeysmail.com';
+    private const SMTP_IP = '136.113.102.76';            // adjust if needed
     private const DKIM_SELECTOR = 'monkey';                   // <— your selector
 
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb,
-        private DkimKeyService    $dkim,
+        private QueryBuilder $qb,
+        private DkimKeyService $dkim,
         private OpenDkimTableSync $tableSync,
         private ?OpenDkimConfigurator $openDkimConfigurator = null,
-    ) {}
+    ) {
+    }
 
     /**
      * Generates DKIM, persists Domain & DkimKey, then syncs OpenDKIM tables.
@@ -32,28 +33,31 @@ final class DomainProvisioner
      */
     public function initializeAndSave(Domain $domain): array
     {
-        $name = strtolower(trim((string)$domain->getDomain()));
-        if ($name === '') throw new RuntimeException('Domain name required', 422);
+        $name = strtolower(trim((string) $domain->getDomain()));
+        if ($name === '')
+            throw new RuntimeException('Domain name required', 422);
 
         // 1) TXT / SPF / DMARC / MX expectations
-        $txtName  = "_monkeys-verify.$name";
+        $txtName = "_monkeys-verify.$name";
         $txtValue = 'monkeys-site-verification=' . bin2hex(random_bytes(16));
 
-        $spfExpected   = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
+        $spfExpected = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
         $managedDmarcMailbox = 'dmarc@monkeysmail.com';
         $dmarcExpected = sprintf(
             'v=DMARC1; p=none; rua=mailto:%1$s; ruf=mailto:%1$s; fo=1; adkim=s; aspf=s',
             $managedDmarcMailbox
         );
-        $mxExpected = [[
-            'host'     => $name,
-            'priority' => 10,
-            'value'    => self::SMTP_HOST . '.',
-        ]];
+        $mxExpected = [
+            [
+                'host' => $name,
+                'priority' => 10,
+                'value' => self::SMTP_HOST . '.',
+            ]
+        ];
 
         // 2) DKIM: generate/ensure key (selector = 'monkey')
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
-        $dkimTxtName  = $dk['txt_name'];   // "monkey._domainkey.<domain>"
+        $dkimTxtName = $dk['txt_name'];   // "monkey._domainkey.<domain>"
         $dkimTxtValue = $dk['txt_value'];  // "v=DKIM1; k=rsa; p=..."
 
         // (Optional) legacy configurator hook
@@ -72,7 +76,7 @@ final class DomainProvisioner
         // 2.1) Upsert DkimKey row for this domain+selector
         /** @var ?DkimKey $existing */
         $existing = $dkRepo->findOneBy([
-            'domain'   => $domain,
+            'domain' => $domain,
             'selector' => self::DKIM_SELECTOR,
         ]);
 
@@ -111,32 +115,34 @@ final class DomainProvisioner
         // 4) Sync OpenDKIM tables (and reload)
         $sync = $this->tableSync->syncTables();      // returns array
         if (!($sync['success'] ?? false)) {
-            $opendkimError = $opendkimError ?? implode('; ', (array)($sync['errors'] ?? []));
+            $opendkimError = $opendkimError ?? implode('; ', (array) ($sync['errors'] ?? []));
             error_log('[DKIM] Table sync failed: ' . json_encode($sync));
         } else {
-            error_log("[DKIM] Table sync OK, domains_synced=" . (int)$sync['domains_synced']);
+            error_log("[DKIM] Table sync OK, domains_synced=" . (int) $sync['domains_synced']);
         }
 
         // 5) Return bootstrap payload for UI/DNS
         $payload = [
             'dns' => [
-                'txt'   => ['name' => $txtName,  'value' => $txtValue],
-                'spf'   => $spfExpected,
+                'txt' => ['name' => $txtName, 'value' => $txtValue],
+                'spf' => $spfExpected,
                 'dmarc' => $dmarcExpected,
-                'mx'    => $mxExpected,
-                'dkim'  => [
+                'mx' => $mxExpected,
+                'dkim' => [
                     self::DKIM_SELECTOR => [
                         'selector' => self::DKIM_SELECTOR,
-                        'value'    => $dkimTxtValue,
-                        'name'     => $dkimTxtName,
+                        'value' => $dkimTxtValue,
+                        'name' => $dkimTxtName,
+                        'txt_chunks' => $dk['txt_chunks'] ?? [$dkimTxtValue],
+                        'algorithm' => $dk['algorithm'] ?? 'rsa',
                     ],
                 ],
             ],
             'smtp' => [
-                'host'  => self::SMTP_HOST,
-                'ip'    => self::SMTP_IP,
+                'host' => self::SMTP_HOST,
+                'ip' => self::SMTP_IP,
                 'ports' => [587, 465],
-                'tls'   => ['starttls' => true, 'implicit' => true],
+                'tls' => ['starttls' => true, 'implicit' => true],
             ],
         ];
 
