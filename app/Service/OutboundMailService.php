@@ -25,11 +25,11 @@ final class OutboundMailService
 
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb,
-        private MailQueue         $queue,
-        private MailSender        $sender,
+        private QueryBuilder $qb,
+        private MailQueue $queue,
+        private MailSender $sender,
         private \Redis|Predis|null $redis = null,
-        private int               $statusTtlSec = 3600,
+        private int $statusTtlSec = 3600,
     ) {
         $this->redis = $this->redis ?: self::makeRedisFromEnv();
     }
@@ -39,16 +39,16 @@ final class OutboundMailService
     {
         // REDIS-BASED IDEMPOTENCY: If request_id is provided, use SET NX to prevent duplicates
         // If not provided, auto-generate (backward compatible, but no cross-request protection)
-        $requestId = (string)($payload['request_id'] ?? '');
+        $requestId = (string) ($payload['request_id'] ?? '');
         $clientProvidedRequestId = ($requestId !== '');
-        
+
         if (!$clientProvidedRequestId) {
             // Auto-generate for backward compatibility (no cross-request idempotency, but atomic UPDATE in processJob still protects)
             $requestId = uniqid('auto_', true);
             error_log('[Mail][IDEMPOTENCY] No request_id provided, auto-generated: ' . $requestId);
         } else {
             // Client provided request_id - enforce Redis idempotency
-            $idemKey = sprintf('mail:idempotency:%d:%s', (int)$company->getId(), $requestId);
+            $idemKey = sprintf('mail:idempotency:%d:%s', (int) $company->getId(), $requestId);
 
             // SET key "1" EX 3600 NX (only first request wins, expires in 1 hour)
             $ok = false;
@@ -61,50 +61,64 @@ final class OutboundMailService
             }
 
             if (!$ok) {
-                error_log(sprintf('[Mail][IDEMPOTENCY] Duplicate request blocked: requestId=%s company=%d', 
-                    $requestId, $company->getId()));
+                error_log(sprintf(
+                    '[Mail][IDEMPOTENCY] Duplicate request blocked: requestId=%s company=%d',
+                    $requestId,
+                    $company->getId()
+                ));
                 return ['status' => 'duplicate', 'request_id' => $requestId, 'message' => 'Request already processed'];
             }
         }
 
         $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        error_log(sprintf('[Mail] createAndEnqueue start requestId=%s company=%d domain=%d dryRun=%s now=%s',
-            $requestId, $company->getId(), $domain->getId(), json_encode((bool)($payload['dryRun'] ?? false)), $nowUtc->format(DATE_ATOM)));
+        error_log(sprintf(
+            '[Mail] createAndEnqueue start requestId=%s company=%d domain=%d dryRun=%s now=%s',
+            $requestId,
+            $company->getId(),
+            $domain->getId(),
+            json_encode((bool) ($payload['dryRun'] ?? false)),
+            $nowUtc->format(DATE_ATOM)
+        ));
 
         // -------- validate / normalize ----------
-        $fromEmail = trim((string)($payload['from']['email'] ?? ''));
+        $fromEmail = trim((string) ($payload['from']['email'] ?? ''));
         if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
             error_log('[Mail] invalid from.email');
             throw new \RuntimeException('A valid from.email is required', 422);
         }
-        $fromName  = isset($payload['from']['name']) ? trim((string)$payload['from']['name']) : null;
-        $replyTo   = isset($payload['replyTo']) ? trim((string)$payload['replyTo']) : null;
+        $fromName = isset($payload['from']['name']) ? trim((string) $payload['from']['name']) : null;
+        $replyTo = isset($payload['replyTo']) ? trim((string) $payload['replyTo']) : null;
         if ($replyTo && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
             error_log('[Mail] invalid replyTo');
             throw new \RuntimeException('replyTo must be a valid email', 422);
         }
 
-        $subject = isset($payload['subject']) ? trim((string)$payload['subject']) : null;
-        $text    = isset($payload['text']) ? (string)$payload['text'] : null;
-        $html    = isset($payload['html']) ? (string)$payload['html'] : null;
+        $subject = isset($payload['subject']) ? trim((string) $payload['subject']) : null;
+        $text = isset($payload['text']) ? (string) $payload['text'] : null;
+        $html = isset($payload['html']) ? (string) $payload['html'] : null;
 
-        $to  = $this->normalizeEmails($payload['to']  ?? []);
-        $cc  = $this->normalizeEmails($payload['cc']  ?? []);
+        $to = $this->normalizeEmails($payload['to'] ?? []);
+        $cc = $this->normalizeEmails($payload['cc'] ?? []);
         $bcc = $this->normalizeEmails($payload['bcc'] ?? []);
         if (empty($to) && empty($cc) && empty($bcc)) {
             error_log('[Mail] no recipients provided');
             throw new \RuntimeException('At least one recipient (to/cc/bcc) is required', 422);
         }
         $rcptCount = count($to) + count($cc) + count($bcc);
-        error_log(sprintf('[Mail] normalized recipients to=%d cc=%d bcc=%d total=%d',
-            count($to), count($cc), count($bcc), $rcptCount));
+        error_log(sprintf(
+            '[Mail] normalized recipients to=%d cc=%d bcc=%d total=%d',
+            count($to),
+            count($cc),
+            count($bcc),
+            $rcptCount
+        ));
 
-        $headers     = isset($payload['headers']) && is_array($payload['headers']) ? $this->sanitizeHeaders($payload['headers']) : null;
+        $headers = isset($payload['headers']) && is_array($payload['headers']) ? $this->sanitizeHeaders($payload['headers']) : null;
         $tracking = is_array($payload['tracking'] ?? null) ? $payload['tracking'] : [];
-        $opensEnabled  = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
-        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
+        $opensEnabled = array_key_exists('opens', $tracking) ? (bool) $tracking['opens'] : true;
+        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool) $tracking['clicks'] : true;
         $attachments = $this->normalizeAttachments($payload['attachments'] ?? []);
-        $dryRun = (bool)($payload['dryRun'] ?? false);
+        $dryRun = (bool) ($payload['dryRun'] ?? false);
 
         // ---------- ensure the monthly row ALWAYS exists for visibility ----------
         if (!$dryRun) {
@@ -118,11 +132,11 @@ final class OutboundMailService
             try {
                 $this->enforceQuotas($company, $nowUtc, $rcptCount);
             } catch (\RuntimeException $e) {
-                error_log('[Mail][ERROR] enforceQuotas: '.$e->getMessage());
+                error_log('[Mail][ERROR] enforceQuotas: ' . $e->getMessage());
                 if ($e->getCode() === 429 || str_contains(strtolower($e->getMessage()), 'limit')) {
                     throw $e;
                 }
-                throw new \RuntimeException('Quota check failed: '.$e->getMessage(), 429);
+                throw new \RuntimeException('Quota check failed: ' . $e->getMessage(), 429);
             }
         }
 
@@ -155,19 +169,27 @@ final class OutboundMailService
         error_log(sprintf('[Mail] recipients persisted message_id=%d', $msg->getId()));
 
         if ($dryRun) {
-            foreach ($to as $e)  { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'to']); }
-            foreach ($cc as $e)  { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'cc']); }
-            foreach ($bcc as $e) { $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'bcc']); }
+            foreach ($to as $e) {
+                $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'to']);
+            }
+            foreach ($cc as $e) {
+                $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'cc']);
+            }
+            foreach ($bcc as $e) {
+                $this->addMessageEvent($msg, 'preview', $e, ['rcptType' => 'bcc']);
+            }
             error_log('[Mail] dryRun=true returning preview');
             $response = [
-                'status'  => 'preview',
+                'status' => 'preview',
                 'message' => $this->shapeMessage($msg),
-                'envelope'=> [
+                'envelope' => [
                     'fromEmail' => $msg->getFrom_email(),
-                    'fromName'  => $msg->getFrom_name(),
-                    'replyTo'   => $msg->getReply_to(),
-                    'to'        => $to, 'cc' => $cc, 'bcc' => $bcc,
-                    'headers'   => $headers
+                    'fromName' => $msg->getFrom_name(),
+                    'replyTo' => $msg->getReply_to(),
+                    'to' => $to,
+                    'cc' => $cc,
+                    'bcc' => $bcc,
+                    'headers' => $headers
                 ],
             ];
 
@@ -194,22 +216,22 @@ final class OutboundMailService
         // Create and enqueue separate job for each recipient
         $queuedCount = 0;
         $failedCount = 0;
-        $entryIds    = [];
+        $entryIds = [];
 
         foreach ($allRecipients as $recipient) {
             $recipientJob = [
                 'message_id' => $msg->getId(),
                 'company_id' => $company->getId(),
-                'domain_id'  => $domain->getId(),
-                'envelope'   => [
+                'domain_id' => $domain->getId(),
+                'envelope' => [
                     // Only ONE recipient per job to enable tracking injection
-                    'to'        => $recipient['type'] === 'to'  ? [$recipient['email']]  : [],
-                    'cc'        => $recipient['type'] === 'cc'  ? [$recipient['email']]  : [],
-                    'bcc'       => $recipient['type'] === 'bcc' ? [$recipient['email']]  : [],
-                    'headers'   => $headers ?? [],
+                    'to' => $recipient['type'] === 'to' ? [$recipient['email']] : [],
+                    'cc' => $recipient['type'] === 'cc' ? [$recipient['email']] : [],
+                    'bcc' => $recipient['type'] === 'bcc' ? [$recipient['email']] : [],
+                    'headers' => $headers ?? [],
                     'fromEmail' => $msg->getFrom_email(),
-                    'fromName'  => $msg->getFrom_name(),
-                    'replyTo'   => $msg->getReply_to(),
+                    'fromName' => $msg->getFrom_name(),
+                    'replyTo' => $msg->getReply_to(),
                 ],
                 'created_at' => $nowUtc->format(DATE_ATOM),
             ];
@@ -228,8 +250,12 @@ final class OutboundMailService
                     ['rcptType' => $recipient['type'], 'queueEntryId' => $entryId]
                 );
 
-                error_log(sprintf('[Mail] Enqueued job for %s: %s (entryId=%s)',
-                    $recipient['type'], $recipient['email'], $entryId));
+                error_log(sprintf(
+                    '[Mail] Enqueued job for %s: %s (entryId=%s)',
+                    $recipient['type'],
+                    $recipient['email'],
+                    $entryId
+                ));
             } else {
                 $failedCount++;
 
@@ -241,8 +267,11 @@ final class OutboundMailService
                     ['rcptType' => $recipient['type']]
                 );
 
-                error_log(sprintf('[Mail] Failed to enqueue for %s: %s',
-                    $recipient['type'], $recipient['email']));
+                error_log(sprintf(
+                    '[Mail] Failed to enqueue for %s: %s',
+                    $recipient['type'],
+                    $recipient['email']
+                ));
             }
         }
 
@@ -261,8 +290,12 @@ final class OutboundMailService
         }
 
         // Log queue status
-        error_log(sprintf('[Mail] Queue results: %d queued, %d failed out of %d total recipients',
-            $queuedCount, $failedCount, $rcptCount));
+        error_log(sprintf(
+            '[Mail] Queue results: %d queued, %d failed out of %d total recipients',
+            $queuedCount,
+            $failedCount,
+            $rcptCount
+        ));
 
         // ✅ Increment monthly at enqueue time (per *queued* recipients)
         error_log(sprintf('[RateLimit][inc][enqueue] will inc monthly by rcpts=%d', $queuedCount));
@@ -275,19 +308,23 @@ final class OutboundMailService
             $this->upsertUsage($company, $nowUtc, ['sent' => $queuedCount]);
             error_log('[Usage][inc][enqueue] daily usage updated successfully');
         } catch (\Throwable $e) {
-            error_log(sprintf('[Usage][inc][enqueue][ERROR] Failed to update daily usage: %s at %s:%d',
-                $e->getMessage(), $e->getFile(), $e->getLine()));
+            error_log(sprintf(
+                '[Usage][inc][enqueue][ERROR] Failed to update daily usage: %s at %s:%d',
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine()
+            ));
             // Don't fail the entire request if usage tracking fails
             // The message was already saved and queued
         }
 
         // Cache the response for duplicate detection
         $response = [
-            'status'  => 'queued',
-            'queue'   => $this->queue->getStream(),
+            'status' => 'queued',
+            'queue' => $this->queue->getStream(),
             'entryIds' => $entryIds,  // Return all entry IDs
-            'queued'  => $queuedCount,
-            'failed'  => $failedCount,
+            'queued' => $queuedCount,
+            'failed' => $failedCount,
             'message' => $this->shapeMessage($msg),
         ];
 
@@ -343,7 +380,7 @@ final class OutboundMailService
 
     public function processJob(array $job): void
     {
-        $id = (int)($job['message_id'] ?? 0);
+        $id = (int) ($job['message_id'] ?? 0);
         if ($id <= 0) {
             return;
         }
@@ -371,14 +408,14 @@ final class OutboundMailService
             error_log('[Mail][processJob] Message loaded: id=' . $id);
 
             // Get envelope from job
-            $envelope = (array)($job['envelope'] ?? []);
+            $envelope = (array) ($job['envelope'] ?? []);
 
             // ATOMIC IDEMPOTENCY: Use UPDATE with WHERE to claim the job
             // Only ONE worker can successfully update status from 'queued' to 'sending'
             // This prevents the race condition where multiple workers check status simultaneously
             $targetRecipient = ($envelope['to'][0] ?? null)
-                            ?: ($envelope['cc'][0] ?? null)
-                            ?: ($envelope['bcc'][0] ?? null);
+                ?: ($envelope['cc'][0] ?? null)
+                ?: ($envelope['bcc'][0] ?? null);
 
             if ($targetRecipient) {
                 $claimStmt = $pdo->prepare('
@@ -388,19 +425,22 @@ final class OutboundMailService
                 ');
                 $claimStmt->execute([$id, $targetRecipient]);
                 $claimed = $claimStmt->rowCount();
-                
+
                 if ($claimed === 0) {
                     // Another worker already claimed this job, or it was already processed
-                    error_log(sprintf('[Mail][processJob] SKIP - already claimed by another worker: message_id=%d, recipient=%s',
-                        $id, $targetRecipient));
+                    error_log(sprintf(
+                        '[Mail][processJob] SKIP - already claimed by another worker: message_id=%d, recipient=%s',
+                        $id,
+                        $targetRecipient
+                    ));
                     return;
                 }
                 error_log(sprintf('[Mail][processJob] CLAIMED job: message_id=%d, recipient=%s', $id, $targetRecipient));
             }
 
             // Get tracking settings
-            $opensEnabled = (bool)($msgData['open_tracking'] ?? false);
-            $clicksEnabled = (bool)($msgData['click_tracking'] ?? false);
+            $opensEnabled = (bool) ($msgData['open_tracking'] ?? false);
+            $clicksEnabled = (bool) ($msgData['click_tracking'] ?? false);
 
             // Get ALL recipients with their tracking tokens
             $recipientStmt = $pdo->prepare('
@@ -426,7 +466,8 @@ final class OutboundMailService
 
             // Debug: Log raw attachments value
             $rawAttachments = $msgData['attachments'] ?? null;
-            error_log(sprintf('[Mail][processJob][ATTACHMENTS] Raw value type=%s, empty=%s, value=%s',
+            error_log(sprintf(
+                '[Mail][processJob][ATTACHMENTS] Raw value type=%s, empty=%s, value=%s',
                 gettype($rawAttachments),
                 empty($rawAttachments) ? 'YES' : 'NO',
                 is_string($rawAttachments) ? substr($rawAttachments, 0, 200) : json_encode($rawAttachments)
@@ -456,17 +497,21 @@ final class OutboundMailService
                             continue;
                         }
 
-                        $filename = trim((string)($att['filename'] ?? ''));
-                        $content = (string)($att['content'] ?? '');
-                        $contentType = trim((string)(
+                        $filename = trim((string) ($att['filename'] ?? ''));
+                        $content = (string) ($att['content'] ?? '');
+                        $contentType = trim((string) (
                             $att['contentType']
                             ?? $att['content_type']
                             ?? $att['type']
                             ?? 'application/octet-stream'
                         ));
 
-                        error_log(sprintf('[Mail][processJob][ATTACHMENTS] Index %d: filename=%s, contentType=%s, contentLength=%d',
-                            $idx, $filename, $contentType, strlen($content)
+                        error_log(sprintf(
+                            '[Mail][processJob][ATTACHMENTS] Index %d: filename=%s, contentType=%s, contentLength=%d',
+                            $idx,
+                            $filename,
+                            $contentType,
+                            strlen($content)
                         ));
 
                         if ($filename === '' || $content === '') {
@@ -487,8 +532,11 @@ final class OutboundMailService
                             'content' => $content,  // Keep as base64 string
                         ];
 
-                        error_log(sprintf('[Mail][processJob][ATTACHMENTS] Added attachment: %s (%s) - %d bytes encoded',
-                            $filename, $contentType, strlen($content)
+                        error_log(sprintf(
+                            '[Mail][processJob][ATTACHMENTS] Added attachment: %s (%s) - %d bytes encoded',
+                            $filename,
+                            $contentType,
+                            strlen($content)
                         ));
                     }
                 }
@@ -535,7 +583,7 @@ final class OutboundMailService
 
                         // place BEFORE </body>, fallback to append
                         $count = 0;
-                        $htmlBody = preg_replace('/<\/body\s*>/i', $pixel . '</body>', (string)$htmlBody, 1, $count);
+                        $htmlBody = preg_replace('/<\/body\s*>/i', $pixel . '</body>', (string) $htmlBody, 1, $count);
                         if ($count === 0) {
                             $htmlBody .= $pixel;
                         }
@@ -558,7 +606,7 @@ final class OutboundMailService
                 'bcc' => $envelope['bcc'] ?? [],
                 // DEBUG HEADERS: Add these to trace duplicate sources in logs/email headers
                 'headers' => array_merge($envelope['headers'] ?? [], [
-                    'X-MonkeysMail-Message-Id' => (string)$id,
+                    'X-MonkeysMail-Message-Id' => (string) $id,
                     'X-MonkeysMail-Recipient' => $targetRecipient ?? 'unknown',
                     'X-MonkeysMail-Timestamp' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
                 ]),
@@ -600,8 +648,11 @@ final class OutboundMailService
             $status = ($res['ok'] ?? false) ? 'sent' : 'failed';
             $messageId = $res['message_id'] ?? null;
 
-            error_log(sprintf('[Mail][processJob] Send result: status=%s, messageId=%s, ok=%s',
-                $status, $messageId ?? 'NULL', ($res['ok'] ?? false) ? 'YES' : 'NO'
+            error_log(sprintf(
+                '[Mail][processJob] Send result: status=%s, messageId=%s, ok=%s',
+                $status,
+                $messageId ?? 'NULL',
+                ($res['ok'] ?? false) ? 'YES' : 'NO'
             ));
 
             if ($messageId) {
@@ -620,11 +671,12 @@ final class OutboundMailService
             // Determine the single recipient this job targeted
             $recipientEmail =
                 ($envelope['to'][0] ?? null) ?:
-                    ($envelope['cc'][0] ?? null) ?:
-                        ($envelope['bcc'][0] ?? null);
+                ($envelope['cc'][0] ?? null) ?:
+                ($envelope['bcc'][0] ?? null);
 
             // Create a thin Message entity with id for the relation
             $msgEntity = new Message();
+            $msgEntity->setId($id);
 
             // Persist event with recipient
             $this->addMessageEvent(
@@ -655,8 +707,9 @@ final class OutboundMailService
         $out = [];
         foreach ($list as $v) {
             $e = is_array($v) ? ($v['email'] ?? '') : $v;
-            $e = trim((string)$e);
-            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL)) $out[] = strtolower($e);
+            $e = trim((string) $e);
+            if ($e !== '' && filter_var($e, FILTER_VALIDATE_EMAIL))
+                $out[] = strtolower($e);
         }
         return array_values(array_unique($out));
     }
@@ -665,9 +718,10 @@ final class OutboundMailService
     {
         $clean = [];
         foreach ($headers as $k => $v) {
-            $k = trim((string)$k);
-            $v = is_array($v) ? '' : trim((string)$v);
-            if ($k !== '' && $v !== '') $clean[$k] = $v;
+            $k = trim((string) $k);
+            $v = is_array($v) ? '' : trim((string) $v);
+            if ($k !== '' && $v !== '')
+                $clean[$k] = $v;
         }
         return $clean;
     }
@@ -676,11 +730,13 @@ final class OutboundMailService
     {
         $out = [];
         foreach ($atts as $a) {
-            if (!is_array($a)) continue;
-            $fn  = trim((string)($a['filename'] ?? ''));
-            $ct  = trim((string)($a['contentType'] ?? 'application/octet-stream'));
-            $b64 = (string)($a['content'] ?? '');
-            if ($fn !== '' && $b64 !== '') $out[] = ['filename'=>$fn,'contentType'=>$ct,'content'=>$b64];
+            if (!is_array($a))
+                continue;
+            $fn = trim((string) ($a['filename'] ?? ''));
+            $ct = trim((string) ($a['contentType'] ?? 'application/octet-stream'));
+            $b64 = (string) ($a['content'] ?? '');
+            if ($fn !== '' && $b64 !== '')
+                $out[] = ['filename' => $fn, 'contentType' => $ct, 'content' => $b64];
         }
         return $out;
     }
@@ -688,12 +744,12 @@ final class OutboundMailService
     private function shapeMessage(Message $m): array
     {
         return [
-            'id'        => $m->getId(),
-            'subject'   => $m->getSubject(),
-            'state'     => $m->getFinal_state(),
+            'id' => $m->getId(),
+            'subject' => $m->getSubject(),
+            'state' => $m->getFinal_state(),
             'createdAt' => $m->getCreated_at()?->format(DATE_ATOM),
-            'queuedAt'  => $m->getQueued_at()?->format(DATE_ATOM),
-            'sentAt'    => $m->getSent_at()?->format(DATE_ATOM),
+            'queuedAt' => $m->getQueued_at()?->format(DATE_ATOM),
+            'sentAt' => $m->getSent_at()?->format(DATE_ATOM),
             'messageId' => $m->getMessage_id(),
         ];
     }
@@ -703,7 +759,7 @@ final class OutboundMailService
         /** @var \App\Repository\MessageRecipientRepository $rRepo */
         $rRepo = $this->repos->getRepository(MessageRecipient::class);
 
-        $save = function(string $email, string $type) use ($msg, $status, $rRepo) {
+        $save = function (string $email, string $type) use ($msg, $status, $rRepo) {
             $trackToken = bin2hex(random_bytes(16));
 
             // Add verification log
@@ -722,13 +778,24 @@ final class OutboundMailService
             $rRepo->save($r);
 
             // Verify it was saved
-            error_log(sprintf('[Mail] Recipient saved: id=%d, email=%s, type=%s, token=%s',
-                $r->getId(), $email, $type, $trackToken));
+            error_log(sprintf(
+                '[Mail] Recipient saved: id=%d, email=%s, type=%s, token=%s',
+                $r->getId(),
+                $email,
+                $type,
+                $trackToken
+            ));
         };
 
-        foreach ($to as $e)  { $save($e, 'to'); }
-        foreach ($cc as $e)  { $save($e, 'cc'); }
-        foreach ($bcc as $e) { $save($e, 'bcc'); }
+        foreach ($to as $e) {
+            $save($e, 'to');
+        }
+        foreach ($cc as $e) {
+            $save($e, 'cc');
+        }
+        foreach ($bcc as $e) {
+            $save($e, 'bcc');
+        }
     }
 
     private function updateRecipientsStatus(Message $msg, string $status): void
@@ -775,8 +842,11 @@ final class OutboundMailService
 
             $dayStart = $when->setTime(0, 0, 0);
             $dateStr = $dayStart->format('Y-m-d H:i:s');
-            error_log(sprintf('[Usage] Looking for usage row: company_id=%d date=%s',
-                $company->getId(), $dateStr));
+            error_log(sprintf(
+                '[Usage] Looking for usage row: company_id=%d date=%s',
+                $company->getId(),
+                $dateStr
+            ));
 
             // Always use string format for date queries
             $row = $repo->findOneBy(['company_id' => $company->getId(), 'date' => $dateStr]);
@@ -793,16 +863,16 @@ final class OutboundMailService
             } else {
             }
 
-            $before = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
-            $map = ['sent'=>['getSent','setSent'], 'delivered'=>['getDelivered','setDelivered'], 'bounced'=>['getBounced','setBounced'], 'complained'=>['getComplained','setComplained'], 'opens'=>['getOpens','setOpens'], 'clicks'=>['getClicks','setClicks']];
+            $before = ['sent' => $row->getSent(), 'delivered' => $row->getDelivered(), 'bounced' => $row->getBounced(), 'complained' => $row->getComplained(), 'opens' => $row->getOpens(), 'clicks' => $row->getClicks()];
+            $map = ['sent' => ['getSent', 'setSent'], 'delivered' => ['getDelivered', 'setDelivered'], 'bounced' => ['getBounced', 'setBounced'], 'complained' => ['getComplained', 'setComplained'], 'opens' => ['getOpens', 'setOpens'], 'clicks' => ['getClicks', 'setClicks']];
 
             foreach ($deltas as $field => $inc) {
                 if (!isset($map[$field])) {
                     continue;
                 }
-                [$g,$s] = $map[$field];
-                $oldVal = (int)($row->{$g}() ?? 0);
-                $newVal = max(0, $oldVal + (int)$inc);
+                [$g, $s] = $map[$field];
+                $oldVal = (int) ($row->{$g}() ?? 0);
+                $newVal = max(0, $oldVal + (int) $inc);
                 $row->{$s}($newVal);
             }
 
@@ -813,11 +883,16 @@ final class OutboundMailService
 
             $repo->save($row);
 
-            $after = ['sent'=>$row->getSent(),'delivered'=>$row->getDelivered(),'bounced'=>$row->getBounced(),'complained'=>$row->getComplained(),'opens'=>$row->getOpens(),'clicks'=>$row->getClicks()];
+            $after = ['sent' => $row->getSent(), 'delivered' => $row->getDelivered(), 'bounced' => $row->getBounced(), 'complained' => $row->getComplained(), 'opens' => $row->getOpens(), 'clicks' => $row->getClicks()];
 
         } catch (\Throwable $e) {
-            error_log(sprintf('[Usage][EXCEPTION] %s at %s:%d\nTrace: %s',
-                $e->getMessage(), $e->getFile(), $e->getLine(), $e->getTraceAsString()));
+            error_log(sprintf(
+                '[Usage][EXCEPTION] %s at %s:%d\nTrace: %s',
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine(),
+                $e->getTraceAsString()
+            ));
         }
     }
 
@@ -832,22 +907,27 @@ final class OutboundMailService
             ? $repo->findBy(['company_id' => $companyId])
             : (method_exists($repo, 'findAll') ? $repo->findAll() : []);
 
-        $startDay = $startUtc->setTime(0,0,0);
-        $endDay = $endUtc->setTime(0,0,0);
+        $startDay = $startUtc->setTime(0, 0, 0);
+        $endDay = $endUtc->setTime(0, 0, 0);
 
-        foreach ((array)$rows as $ua) {
+        foreach ((array) $rows as $ua) {
             $d = $ua->getDate();
             if ($d instanceof \DateTimeInterface) {
                 $dayDate = $d instanceof \DateTimeImmutable ? $d : new \DateTimeImmutable($d->format('Y-m-d H:i:s'));
-                $dayDate = $dayDate->setTime(0,0,0);
+                $dayDate = $dayDate->setTime(0, 0, 0);
                 if ($dayDate >= $startDay && $dayDate < $endDay) {
                     // We're counting 'sent' which now includes messages at enqueue time
-                    $sum += (int)($ua->getSent() ?? 0);
+                    $sum += (int) ($ua->getSent() ?? 0);
                 }
             }
         }
-        error_log(sprintf('[Usage] sumSentBetween company=%d start=%s end=%s sum=%d',
-            $companyId, $startUtc->format('Y-m-d'), $endUtc->format('Y-m-d'), $sum));
+        error_log(sprintf(
+            '[Usage] sumSentBetween company=%d start=%s end=%s sum=%d',
+            $companyId,
+            $startUtc->format('Y-m-d'),
+            $endUtc->format('Y-m-d'),
+            $sum
+        ));
         return $sum;
     }
 
@@ -857,16 +937,24 @@ final class OutboundMailService
     private function enforceQuotas(Company $company, \DateTimeImmutable $nowUtc, int $thisMessageRcpts): void
     {
         [$dailyLimit, $monthlyLimit] = $this->resolveQuotas($company);
-        error_log(sprintf('[Quota] resolved limits company=%d daily=%d monthly=%d rcptsThisMessage=%d',
-            $company->getId(), $dailyLimit, $monthlyLimit, $thisMessageRcpts));
+        error_log(sprintf(
+            '[Quota] resolved limits company=%d daily=%d monthly=%d rcptsThisMessage=%d',
+            $company->getId(),
+            $dailyLimit,
+            $monthlyLimit,
+            $thisMessageRcpts
+        ));
 
-        if ($dailyLimit <= 0 && $monthlyLimit <= 0) { error_log('[Quota] no limits to enforce'); return; }
+        if ($dailyLimit <= 0 && $monthlyLimit <= 0) {
+            error_log('[Quota] no limits to enforce');
+            return;
+        }
 
-        $companyId = (int)$company->getId();
+        $companyId = (int) $company->getId();
 
         if ($dailyLimit > 0) {
-            $dayStart  = $nowUtc->setTime(0,0,0);
-            $dayEnd    = $dayStart->modify('+1 day');
+            $dayStart = $nowUtc->setTime(0, 0, 0);
+            $dayEnd = $dayStart->modify('+1 day');
             $sentToday = $this->sumSentBetween($companyId, $dayStart, $dayEnd);
             error_log(sprintf('[Quota] daily sentToday=%d dailyLimit=%d', $sentToday, $dailyLimit));
             if (($sentToday + $thisMessageRcpts) > $dailyLimit) {
@@ -889,23 +977,31 @@ final class OutboundMailService
     /** Resolve daily / monthly quotas for a company from its Plan (with optional company overrides). */
     private function resolveQuotas(Company $company): array
     {
-        $plan     = method_exists($company, 'getPlan') ? $company->getPlan() : null;
+        $plan = method_exists($company, 'getPlan') ? $company->getPlan() : null;
         $features = $plan && method_exists($plan, 'getFeatures') ? ($plan->getFeatures() ?? []) : [];
-        $emailsPerDayFeature   = (int)($features['quotas']['emailsPerDay']   ?? 0);
-        $emailsPerMonthFeature = (int)($features['quotas']['emailsPerMonth'] ?? 0);
+        $emailsPerDayFeature = (int) ($features['quotas']['emailsPerDay'] ?? 0);
+        $emailsPerMonthFeature = (int) ($features['quotas']['emailsPerMonth'] ?? 0);
         $includedMessages = $plan && method_exists($plan, 'getIncludedMessages')
-            ? (int)($plan->getIncludedMessages() ?? 0)
+            ? (int) ($plan->getIncludedMessages() ?? 0)
             : 0;
         $monthlyFromPlan = $emailsPerMonthFeature > 0 ? $emailsPerMonthFeature : $includedMessages;
 
-        $dailyOverride   = method_exists($company, 'getDaily_quota')   ? (int)($company->getDaily_quota()   ?? 0) : 0;
-        $monthlyOverride = method_exists($company, 'getMonthly_quota') ? (int)($company->getMonthly_quota() ?? 0) : 0;
+        $dailyOverride = method_exists($company, 'getDaily_quota') ? (int) ($company->getDaily_quota() ?? 0) : 0;
+        $monthlyOverride = method_exists($company, 'getMonthly_quota') ? (int) ($company->getMonthly_quota() ?? 0) : 0;
 
-        $dailyLimit   = $dailyOverride   > 0 ? $dailyOverride   : $emailsPerDayFeature;
+        $dailyLimit = $dailyOverride > 0 ? $dailyOverride : $emailsPerDayFeature;
         $monthlyLimit = $monthlyOverride > 0 ? $monthlyOverride : $monthlyFromPlan;
 
-        error_log(sprintf('[Quota] plan features: day=%d month=%d included=%d -> resolved daily=%d monthly=%d (overrides: d=%d m=%d)',
-            $emailsPerDayFeature, $emailsPerMonthFeature, $includedMessages, $dailyLimit, $monthlyLimit, $dailyOverride, $monthlyOverride));
+        error_log(sprintf(
+            '[Quota] plan features: day=%d month=%d included=%d -> resolved daily=%d monthly=%d (overrides: d=%d m=%d)',
+            $emailsPerDayFeature,
+            $emailsPerMonthFeature,
+            $includedMessages,
+            $dailyLimit,
+            $monthlyLimit,
+            $dailyOverride,
+            $monthlyOverride
+        ));
 
         return [$dailyLimit, $monthlyLimit];
     }
@@ -913,10 +1009,10 @@ final class OutboundMailService
     private function monthAnchor(\DateTimeImmutable $nowUtc): \DateTimeImmutable
     {
         $anchor = $nowUtc
-            ->setDate((int)$nowUtc->format('Y'), (int)$nowUtc->format('m'), 1)
+            ->setDate((int) $nowUtc->format('Y'), (int) $nowUtc->format('m'), 1)
             ->setTime(0, 0, 0, 0)
             ->setTimezone(new \DateTimeZone('UTC'));
-        error_log('[RateLimit] monthAnchor='.$anchor->format('Y-m-d H:i:s'));
+        error_log('[RateLimit] monthAnchor=' . $anchor->format('Y-m-d H:i:s'));
         return $anchor;
     }
 
@@ -924,7 +1020,7 @@ final class OutboundMailService
     private function monthlyKey(\DateTimeImmutable $anchor): string
     {
         // Example output: messages:month:2025-09-01
-        return self::RL_KEY_MONTH_PREFIX.$anchor->format('Y-m-01');
+        return self::RL_KEY_MONTH_PREFIX . $anchor->format('Y-m-01');
     }
 
     /** Read the monthly count from RateLimitCounter (0 if absent). */
@@ -949,13 +1045,16 @@ final class OutboundMailService
                 return 0;
             }
 
-            $count = (int)($row->getCount() ?? 0);
-            error_log(sprintf('[RateLimit][get] row FOUND id=%s count=%d',
-                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL', $count));
+            $count = (int) ($row->getCount() ?? 0);
+            error_log(sprintf(
+                '[RateLimit][get] row FOUND id=%s count=%d',
+                method_exists($row, 'getId') ? (string) $row->getId() : 'NULL',
+                $count
+            ));
             return $count;
 
         } catch (\Throwable $t) {
-            error_log('[RateLimit][get][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+            error_log('[RateLimit][get][EXCEPTION] ' . $t->getMessage() . ' @ ' . $t->getFile() . ':' . $t->getLine());
             return 0;
         }
     }
@@ -964,13 +1063,21 @@ final class OutboundMailService
     /** Upsert/increment the monthly counter by $delta. */
     private function incMonthlyCount(Company $company, \DateTimeImmutable $nowUtc, int $delta): void
     {
-        if ($delta === 0) { error_log('[RateLimit][inc] skip delta=0'); return; }
+        if ($delta === 0) {
+            error_log('[RateLimit][inc] skip delta=0');
+            return;
+        }
 
         $window = $this->monthAnchor($nowUtc);
         $windowStr = $window->format('Y-m-d H:i:s');
         $key = $this->monthlyKey($window);
-        error_log(sprintf('[RateLimit][inc] key=%s company=%d window=%s delta=%d',
-            $key, $company->getId(), $windowStr, $delta));
+        error_log(sprintf(
+            '[RateLimit][inc] key=%s company=%d window=%s delta=%d',
+            $key,
+            $company->getId(),
+            $windowStr,
+            $delta
+        ));
 
         try {
             /** @var \App\Repository\RateLimitCounterRepository $repo */
@@ -993,7 +1100,7 @@ final class OutboundMailService
                 $created = true;
             }
 
-            $before = (int)($row->getCount() ?? 0);
+            $before = (int) ($row->getCount() ?? 0);
             $row->setCount(max(0, $before + $delta))
                 ->setUpdated_at($nowUtc);
 
@@ -1003,15 +1110,17 @@ final class OutboundMailService
             }
 
             $repo->save($row);
-            $after = (int)$row->getCount();
-            error_log(sprintf('[RateLimit][inc] %s id=%s before=%d after=%d',
+            $after = (int) $row->getCount();
+            error_log(sprintf(
+                '[RateLimit][inc] %s id=%s before=%d after=%d',
                 $created ? 'CREATED' : 'UPDATED',
-                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL',
-                $before, $after
+                method_exists($row, 'getId') ? (string) $row->getId() : 'NULL',
+                $before,
+                $after
             ));
 
         } catch (\Throwable $t) {
-            error_log('[RateLimit][inc][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+            error_log('[RateLimit][inc][EXCEPTION] ' . $t->getMessage() . ' @ ' . $t->getFile() . ':' . $t->getLine());
         }
     }
 
@@ -1021,7 +1130,7 @@ final class OutboundMailService
     {
         /** @var \App\Repository\MessageRecipientRepository $rRepo */
         $rRepo = $this->repos->getRepository(MessageRecipient::class);
-        $rows  = $rRepo->findBy(['message_id' => $msg->getId()]) ?: $rRepo->findBy(['message' => $msg]);
+        $rows = $rRepo->findBy(['message_id' => $msg->getId()]) ?: $rRepo->findBy(['message' => $msg]);
         $count = is_array($rows) ? count($rows) : 0;
         error_log(sprintf('[Mail] countRecipients message_id=%d count=%d', $msg->getId(), $count));
         return $count;
@@ -1046,9 +1155,10 @@ final class OutboundMailService
                 : null;
 
             if ($row) {
-                error_log(sprintf('[RateLimit][ensure] row EXISTS id=%s count=%s',
-                    method_exists($row, 'getId') ? (string)$row->getId() : 'NULL',
-                    (string)($row->getCount() ?? 'NULL')
+                error_log(sprintf(
+                    '[RateLimit][ensure] row EXISTS id=%s count=%s',
+                    method_exists($row, 'getId') ? (string) $row->getId() : 'NULL',
+                    (string) ($row->getCount() ?? 'NULL')
                 ));
                 return;
             }
@@ -1067,11 +1177,14 @@ final class OutboundMailService
             }
 
             $repo->save($row);
-            error_log(sprintf('[RateLimit][ensure] row CREATED id=%s window=%s count=0',
-                method_exists($row, 'getId') ? (string)$row->getId() : 'NULL', $windowStr));
+            error_log(sprintf(
+                '[RateLimit][ensure] row CREATED id=%s window=%s count=0',
+                method_exists($row, 'getId') ? (string) $row->getId() : 'NULL',
+                $windowStr
+            ));
 
         } catch (\Throwable $t) {
-            error_log('[RateLimit][ensure][EXCEPTION] '.$t->getMessage().' @ '.$t->getFile().':'.$t->getLine());
+            error_log('[RateLimit][ensure][EXCEPTION] ' . $t->getMessage() . ' @ ' . $t->getFile() . ':' . $t->getLine());
         }
     }
 
@@ -1087,18 +1200,19 @@ final class OutboundMailService
         $msg = $this->createMessageEntityFromBody($body, $company, $domain);
         $this->persistMessage($msg);
 
-        $companyId = (int)$company->getId();
-        $messageId = (int)$msg->getId();
-        $key       = $this->mailStatusKey($companyId, $messageId);
+        $companyId = (int) $company->getId();
+        $messageId = (int) $msg->getId();
+        $key = $this->mailStatusKey($companyId, $messageId);
 
         $lastBeat = 0;
         $beat = function (int $progress, string $message) use ($key, &$lastBeat) {
             $now = time();
-            if ($now - $lastBeat < 5) return; // every ~5s
+            if ($now - $lastBeat < 5)
+                return; // every ~5s
             $this->setMailStatus($key, [
-                'status'      => 'sending',
-                'message'     => $message,
-                'progress'    => $progress,
+                'status' => 'sending',
+                'message' => $message,
+                'progress' => $progress,
                 'heartbeatAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
             ]);
             $lastBeat = $now;
@@ -1106,9 +1220,9 @@ final class OutboundMailService
 
         // initial status
         $this->setMailStatus($key, [
-            'status'   => 'starting',
+            'status' => 'starting',
             'progress' => 1,
-            'createdAt'=> (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+            'createdAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
         ]);
 
         // 2) Build envelope from body (headers/to/cc/bcc/replyTo/etc)
@@ -1120,41 +1234,41 @@ final class OutboundMailService
         $res = $this->sender->send($msg, $envelope);
 
         // 4) Finalize
-        $ok  = (bool)($res['ok'] ?? false);
+        $ok = (bool) ($res['ok'] ?? false);
         $mid = $res['message_id'] ?? null;
         $err = $res['error'] ?? null;
 
-        $dt = (int)round(microtime(true) - $t0);
+        $dt = (int) round(microtime(true) - $t0);
 
         if ($ok) {
             $this->markMessageSent($msg, $mid);
             $this->setMailStatus($key, [
-                'status'      => 'sent',
-                'progress'    => 100,
-                'messageId'   => $mid,
+                'status' => 'sent',
+                'progress' => 100,
+                'messageId' => $mid,
                 'durationSec' => $dt,
-                'sentAt'      => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
+                'sentAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
             ]);
 
             return new SendOutcome(201, [
-                'status'   => 'sent',
-                'entryId'  => $messageId,
-                'result'   => ['ok' => true, 'message_id' => $mid],
+                'status' => 'sent',
+                'entryId' => $messageId,
+                'result' => ['ok' => true, 'message_id' => $mid],
             ]);
         }
 
-        $this->markMessageFailed($msg, (string)$err);
+        $this->markMessageFailed($msg, (string) $err);
         $this->setMailStatus($key, [
-            'status'   => 'error',
+            'status' => 'error',
             'progress' => 100,
-            'message'  => (string)$err,
+            'message' => (string) $err,
             'failedAt' => (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM),
         ]);
 
         return new SendOutcome(502, [
-            'status'  => 'error',
+            'status' => 'error',
             'entryId' => $messageId,
-            'error'   => (string)$err,
+            'error' => (string) $err,
         ]);
     }
 
@@ -1167,7 +1281,7 @@ final class OutboundMailService
 
     private function setMailStatus(string $key, array $payload): void
     {
-        $now  = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM);
+        $now = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DATE_ATOM);
         $json = json_encode(array_merge(['updatedAt' => $now], $payload), JSON_UNESCAPED_SLASHES);
 
         if ($this->redis instanceof \Redis) {
@@ -1175,7 +1289,7 @@ final class OutboundMailService
             $this->redis->setex($key, $this->statusTtlSec, $json);
         } else {
             // Predis
-            $this->redis->executeRaw(['SETEX', $key, (string)$this->statusTtlSec, $json]);
+            $this->redis->executeRaw(['SETEX', $key, (string) $this->statusTtlSec, $json]);
         }
     }
 
@@ -1186,7 +1300,8 @@ final class OutboundMailService
             ? $this->redis->get($key)
             : $this->redis->executeRaw(['GET', $key]);
 
-        if (!is_string($raw) || $raw === '') return null;
+        if (!is_string($raw) || $raw === '')
+            return null;
         $dec = json_decode($raw, true);
         return is_array($dec) ? $dec : null;
     }
@@ -1194,28 +1309,30 @@ final class OutboundMailService
     private static function makeRedisFromEnv(): \Redis|Predis
     {
         $scheme = getenv('REDIS_SCHEME') ?: 'tcp';
-        $host   = getenv('REDIS_HOST')   ?: '127.0.0.1';
-        $port   = (int)(getenv('REDIS_PORT') ?: 6379);
-        $db     = (int)(getenv('REDIS_DB')   ?: 0);
-        $user   = getenv('REDIS_USERNAME') ?: '';
-        $pass   = getenv('REDIS_AUTH')     ?: (getenv('REDIS_PASSWORD') ?: '');
-        $tls    = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
+        $host = getenv('REDIS_HOST') ?: '127.0.0.1';
+        $port = (int) (getenv('REDIS_PORT') ?: 6379);
+        $db = (int) (getenv('REDIS_DB') ?: 0);
+        $user = getenv('REDIS_USERNAME') ?: '';
+        $pass = getenv('REDIS_AUTH') ?: (getenv('REDIS_PASSWORD') ?: '');
+        $tls = ($scheme === 'tls' || $scheme === 'rediss' || getenv('REDIS_TLS') === '1');
 
         // Prefer Predis if present
         if (class_exists(Predis::class)) {
             $params = [
-                'scheme'   => $tls ? 'tls' : 'tcp',
-                'host'     => $host,
-                'port'     => $port,
+                'scheme' => $tls ? 'tls' : 'tcp',
+                'host' => $host,
+                'port' => $port,
                 'database' => $db,
             ];
-            if ($user !== '') $params['username'] = $user;
-            if ($pass !== '') $params['password'] = $pass;
+            if ($user !== '')
+                $params['username'] = $user;
+            if ($pass !== '')
+                $params['password'] = $pass;
 
             $options = ['read_write_timeout' => 0];
             if ($tls) {
                 $options['ssl'] = [
-                    'verify_peer'      => false,
+                    'verify_peer' => false,
                     'verify_peer_name' => false,
                 ];
             }
@@ -1235,7 +1352,7 @@ final class OutboundMailService
         if ($tls) {
             $ctx = stream_context_create([
                 'ssl' => [
-                    'verify_peer'      => false,
+                    'verify_peer' => false,
                     'verify_peer_name' => false,
                 ],
             ]);
@@ -1243,11 +1360,13 @@ final class OutboundMailService
 
         $r = new \Redis();
         $ok = @$r->connect($host, $port, 2.5, null, 0, 0, $ctx);
-        if (!$ok) throw new \RuntimeException("Redis connect failed to {$host}:{$port}");
+        if (!$ok)
+            throw new \RuntimeException("Redis connect failed to {$host}:{$port}");
 
         if ($pass !== '') {
             $authOk = $user !== '' ? @$r->auth([$user, $pass]) : @$r->auth($pass);
-            if (!$authOk) throw new \RuntimeException('Redis AUTH failed');
+            if (!$authOk)
+                throw new \RuntimeException('Redis AUTH failed');
         }
         if ($db > 0 && !@$r->select($db)) {
             throw new \RuntimeException("Redis SELECT {$db} failed");
@@ -1265,23 +1384,23 @@ final class OutboundMailService
     {
         $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
 
-        $fromEmail = trim((string)($body['from']['email'] ?? ''));
+        $fromEmail = trim((string) ($body['from']['email'] ?? ''));
         if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
             throw new \RuntimeException('A valid from.email is required', 422);
         }
 
-        $fromName = isset($body['from']['name']) ? trim((string)$body['from']['name']) : null;
-        $replyTo  = isset($body['replyTo']) ? trim((string)$body['replyTo']) : null;
+        $fromName = isset($body['from']['name']) ? trim((string) $body['from']['name']) : null;
+        $replyTo = isset($body['replyTo']) ? trim((string) $body['replyTo']) : null;
         if ($replyTo && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
             throw new \RuntimeException('replyTo must be a valid email', 422);
         }
 
-        $subject = isset($body['subject']) ? trim((string)$body['subject']) : null;
-        $text    = isset($body['text'])    ? (string)$body['text'] : null;
-        $html    = isset($body['html'])    ? (string)$body['html'] : null;
+        $subject = isset($body['subject']) ? trim((string) $body['subject']) : null;
+        $text = isset($body['text']) ? (string) $body['text'] : null;
+        $html = isset($body['html']) ? (string) $body['html'] : null;
 
-        $to  = $this->normalizeEmails($body['to']  ?? []);
-        $cc  = $this->normalizeEmails($body['cc']  ?? []);
+        $to = $this->normalizeEmails($body['to'] ?? []);
+        $cc = $this->normalizeEmails($body['cc'] ?? []);
         $bcc = $this->normalizeEmails($body['bcc'] ?? []);
         if (empty($to) && empty($cc) && empty($bcc)) {
             throw new \RuntimeException('At least one recipient (to/cc/bcc) is required', 422);
@@ -1291,10 +1410,10 @@ final class OutboundMailService
             ? $this->sanitizeHeaders($body['headers'])
             : null;
 
-        $tracking       = is_array($body['tracking'] ?? null) ? $body['tracking'] : [];
-        $opensEnabled   = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
-        $clicksEnabled  = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
-        $attachments    = $this->normalizeAttachments($body['attachments'] ?? []);
+        $tracking = is_array($body['tracking'] ?? null) ? $body['tracking'] : [];
+        $opensEnabled = array_key_exists('opens', $tracking) ? (bool) $tracking['opens'] : true;
+        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool) $tracking['clicks'] : true;
+        $attachments = $this->normalizeAttachments($body['attachments'] ?? []);
 
         $msg = new Message()
             ->setCompany($company)
@@ -1338,13 +1457,13 @@ final class OutboundMailService
     private function buildEnvelopeFromBody(array $body): array
     {
         return [
-            'from'    => $body['from']['email'] ?? null,
-            'fromName'=> $body['from']['name']  ?? null,
-            'replyTo' => $body['replyTo']       ?? null,
-            'to'      => array_values((array)($body['to']  ?? [])),
-            'cc'      => array_values((array)($body['cc']  ?? [])),
-            'bcc'     => array_values((array)($body['bcc'] ?? [])),
-            'headers' => (array)($body['headers'] ?? []),
+            'from' => $body['from']['email'] ?? null,
+            'fromName' => $body['from']['name'] ?? null,
+            'replyTo' => $body['replyTo'] ?? null,
+            'to' => array_values((array) ($body['to'] ?? [])),
+            'cc' => array_values((array) ($body['cc'] ?? [])),
+            'bcc' => array_values((array) ($body['bcc'] ?? [])),
+            'headers' => (array) ($body['headers'] ?? []),
         ];
     }
 
