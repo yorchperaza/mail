@@ -108,6 +108,15 @@ final class DkimKeyService
             throw new \RuntimeException('OpenSSL failed to derive public key');
         }
 
+        // Detect actual key type from the loaded key (handles pre-existing RSA keys
+        // when the default algorithm has changed to ed25519)
+        $actualType = $details['type'] ?? -1;
+        if (defined('OPENSSL_KEYTYPE_ED25519') && $actualType === OPENSSL_KEYTYPE_ED25519) {
+            $algorithm = 'ed25519';
+        } else {
+            $algorithm = 'rsa';
+        }
+
         // Correct p= derivation via DER
         if ($algorithm === 'ed25519') {
             $pubB64 = self::ed25519PemToRawBase64($pubPem);
