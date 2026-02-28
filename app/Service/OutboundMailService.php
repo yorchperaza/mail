@@ -418,7 +418,7 @@ final class OutboundMailService
                 ?: ($envelope['bcc'][0] ?? null);
 
             if ($targetRecipient) {
-                // First check if already sent (truly completed by another worker)
+                // Check current status before claiming
                 $checkStmt = $pdo->prepare('
                     SELECT status FROM messagerecipient 
                     WHERE message_id = ? AND email = ? LIMIT 1
@@ -426,35 +426,27 @@ final class OutboundMailService
                 $checkStmt->execute([$id, $targetRecipient]);
                 $currentStatus = $checkStmt->fetchColumn();
 
+                error_log(sprintf(
+                    '[Mail][processJob] Recipient status check: message_id=%d, recipient=%s, status=%s',
+                    $id,
+                    $targetRecipient,
+                    $currentStatus ?: 'NOT_FOUND'
+                ));
+
+                // Only skip if truly already sent
                 if ($currentStatus === 'sent') {
-                    error_log(sprintf(
-                        '[Mail][processJob] SKIP - already sent: message_id=%d, recipient=%s',
-                        $id,
-                        $targetRecipient
-                    ));
+                    error_log(sprintf('[Mail][processJob] SKIP - already sent: message_id=%d, recipient=%s', $id, $targetRecipient));
                     return;
                 }
 
-                // Claim: accept 'queued' OR 'sending' (stale claim from crashed worker)
+                // Force-claim for ANY other status (queued, sending, failed, etc.)
                 $claimStmt = $pdo->prepare('
                     UPDATE messagerecipient 
                     SET status = "sending"
-                    WHERE message_id = ? AND email = ? AND status IN ("queued", "sending")
+                    WHERE message_id = ? AND email = ?
                 ');
                 $claimStmt->execute([$id, $targetRecipient]);
-                $claimed = $claimStmt->rowCount();
-
-                if ($claimed === 0) {
-                    // Truly claimed by another active worker or in unknown state
-                    error_log(sprintf(
-                        '[Mail][processJob] SKIP - cannot claim (status=%s): message_id=%d, recipient=%s',
-                        $currentStatus ?: 'unknown',
-                        $id,
-                        $targetRecipient
-                    ));
-                    return;
-                }
-                error_log(sprintf('[Mail][processJob] CLAIMED job: message_id=%d, recipient=%s', $id, $targetRecipient));
+                error_log(sprintf('[Mail][processJob] CLAIMED job: message_id=%d, recipient=%s (was: %s)', $id, $targetRecipient, $currentStatus ?: 'NOT_FOUND'));
             }
 
             // Get tracking settings
