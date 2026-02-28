@@ -11,16 +11,15 @@ use MonkeysLegion\Query\QueryBuilder;
 
 final class OpenDkimTableSync
 {
-    private const KEY_TABLE = '/etc/opendkim/keytable';
+    private const KEY_TABLE     = '/etc/opendkim/keytable';
     private const SIGNING_TABLE = '/etc/opendkim/signingtable';
     private const TRUSTED_HOSTS = '/etc/opendkim/trustedhosts';
-    private const ALT_DIR = '/var/lib/monkeysmail/opendkim';
+    private const ALT_DIR        = '/var/lib/monkeysmail/opendkim';
 
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder $qb,
-    ) {
-    }
+        private QueryBuilder      $qb,
+    ) {}
 
     /** Always get PDO from MonkeysLegion QueryBuilder (framework standard). */
     private function pdo(): \PDO
@@ -104,9 +103,9 @@ ORDER BY d.domain ASC, dk.selector ASC
         $seenSigningPairs = [];
 
         foreach ($rows as $r) {
-            $domain = strtolower(trim((string) ($r['domain_name'] ?? '')));
-            $selector = trim((string) ($r['selector'] ?? ''));
-            $keyPath = trim((string) ($r['private_key_ref'] ?? ''));
+            $domain   = strtolower(trim((string)($r['domain_name'] ?? '')));
+            $selector = trim((string)($r['selector'] ?? ''));
+            $keyPath  = trim((string)($r['private_key_ref'] ?? ''));
 
             if ($domain === '' || $selector === '' || $keyPath === '') {
                 $err = "Skipping invalid row: domain/selector/keyPath missing (domain='{$domain}', selector='{$selector}')";
@@ -132,7 +131,7 @@ ORDER BY d.domain ASC, dk.selector ASC
             $this->ensureKeyPermissions($keyPath);
 
             $keyName = "{$domain}.{$selector}";
-            $ktLine = "{$keyName} {$domain}:{$selector}:{$keyPath}";
+            $ktLine  = "{$keyName} {$domain}:{$selector}:{$keyPath}";
             $stLine1 = "*@{$domain} {$keyName}";
             $stLine2 = "*@*.{$domain} {$keyName}";
 
@@ -160,7 +159,7 @@ ORDER BY d.domain ASC, dk.selector ASC
         }
 
         try {
-            $keyTablePath = $this->resolveTargetPath(self::KEY_TABLE);
+            $keyTablePath     = $this->resolveTargetPath(self::KEY_TABLE);
             $signingTablePath = $this->resolveTargetPath(self::SIGNING_TABLE);
             $trustedHostsPath = $this->resolveTargetPath(self::TRUSTED_HOSTS);
 
@@ -171,7 +170,7 @@ ORDER BY d.domain ASC, dk.selector ASC
                 '127.0.0.1',
                 'localhost',
                 '::1',
-                '136.113.102.76',
+                '34.30.122.164',
                 'smtp.monkeysmail.com',
                 '*.monkeysmail.com',
             ]);
@@ -198,7 +197,7 @@ ORDER BY d.domain ASC, dk.selector ASC
         $result['success'] = true;
         $result['domains_synced'] = count($processedDomains);
 
-        $dt = (int) round((microtime(true) - $t0) * 1000);
+        $dt = (int)round((microtime(true) - $t0) * 1000);
         error_log("[OpenDkimTableSync] Successfully synced {$result['domains_synced']} domains in {$dt}ms");
 
         return $result;
@@ -241,16 +240,10 @@ ORDER BY d.domain ASC, dk.selector ASC
     private function reloadOpenDkim(): void
     {
         exec('systemctl reload opendkim 2>&1', $out, $rc);
-        if ($rc === 0) {
-            error_log("[OpenDkimTableSync] Reloaded via systemctl");
-            return;
-        }
+        if ($rc === 0) { error_log("[OpenDkimTableSync] Reloaded via systemctl"); return; }
 
         exec('service opendkim reload 2>&1', $out, $rc);
-        if ($rc === 0) {
-            error_log("[OpenDkimTableSync] Reloaded via service");
-            return;
-        }
+        if ($rc === 0) { error_log("[OpenDkimTableSync] Reloaded via service"); return; }
 
         exec('pkill -USR1 -x opendkim 2>&1');
         error_log("[OpenDkimTableSync] Sent SIGUSR1 to opendkim");
@@ -268,7 +261,7 @@ ORDER BY d.domain ASC, dk.selector ASC
             LIMIT 1
         ");
             $stmt->execute([':t' => $table, ':c' => $column]);
-            return (bool) $stmt->fetchColumn();
+            return (bool)$stmt->fetchColumn();
         } catch (\Throwable $e) {
             // If INFORMATION_SCHEMA is not accessible for some reason, be conservative.
             return false;

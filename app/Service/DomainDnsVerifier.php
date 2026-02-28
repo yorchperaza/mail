@@ -20,74 +20,63 @@ final class DomainDnsVerifier
     public function verifyAndPersist(Domain $domain): array
     {
         $nowIso = (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format(\DateTimeInterface::ATOM);
-        $name = strtolower(trim((string) $domain->getDomain()));
+        $name   = strtolower(trim((string)$domain->getDomain()));
 
         $expected = [
-            'txt_name' => (string) $domain->getTxt_name(),
-            'txt_value' => (string) $domain->getTxt_value(),
-            'spf' => (string) $domain->getSpf_expected(),
-            'dmarc' => (string) $domain->getDmarc_expected(),
-            'mx' => (array) $domain->getMx_expected(), // [['host'=>..., 'value'=>..., 'priority'=>10]]
+            'txt_name'  => (string)$domain->getTxt_name(),
+            'txt_value' => (string)$domain->getTxt_value(),
+            'spf'       => (string)$domain->getSpf_expected(),
+            'dmarc'     => (string)$domain->getDmarc_expected(),
+            'mx'        => (array)$domain->getMx_expected(), // [['host'=>..., 'value'=>..., 'priority'=>10]]
         ];
 
         /* ------------ DKIM (optional/recommended) ------------- */
-        $dkimName = null;
+        $dkimName  = null;
         $dkimValue = null; // "v=DKIM1; k=rsa; p=..."
         $activeDkim = null;
         foreach ($domain->getDkimKeys() ?? [] as $k) {
-            if ($k->getActive()) {
-                $activeDkim = $k;
-                break;
-            }
+            if ($k->getActive()) { $activeDkim = $k; break; }
         }
         if ($activeDkim) {
-            $selector = trim((string) $activeDkim->getSelector());
+            $selector = trim((string)$activeDkim->getSelector());
             if ($selector !== '') {
                 $dkimName = sprintf('%s._domainkey.%s', $selector, $name);
-
-                // Prefer stored txt_value (contains correct k= tag for rsa or ed25519)
-                if (method_exists($activeDkim, 'getTxt_value') && $activeDkim->getTxt_value()) {
-                    $dkimValue = trim((string) $activeDkim->getTxt_value());
-                } else {
-                    // Legacy fallback: derive from PEM (assumes RSA)
-                    $pem = (string) $activeDkim->getPublic_key_pem();
-                    $p = $this->pemToDkimP($pem);
-                    if ($p !== '')
-                        $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
-                }
+                $pem = (string)$activeDkim->getPublic_key_pem();
+                $p   = $this->pemToDkimP($pem);
+                if ($p !== '') $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
             }
         }
 
         /* ------------ TLS-RPT expected (from Domain fields) ------------- */
         $tlsrptExpected = method_exists($domain, 'getTlsrpt_expected')
-            ? (string) $domain->getTlsrpt_expected()
+            ? (string)$domain->getTlsrpt_expected()
             : null;
         $tlsrptHost = '_smtp._tls.' . $name;
 
         /* ------------ MTA-STS expected (from Domain fields) ------------- */
         /** @var array<string,mixed> $mtaStsExpected */
         $mtaStsExpected = method_exists($domain, 'getMta_sts_expected')
-            ? (array) $domain->getMta_sts_expected()
+            ? (array)$domain->getMta_sts_expected()
             : [];
 
-        $stsTxtName = '_mta-sts.' . $name;
-        $stsHost = 'mta-sts.' . $name;
+        $stsTxtName    = '_mta-sts.' . $name;
+        $stsHost       = 'mta-sts.' . $name;
 
         // ACME delegation CNAME
-        $acmeExpected = (string) ($mtaStsExpected['acme_delegate']['value'] ?? '');
+        $acmeExpected = (string)($mtaStsExpected['acme_delegate']['value'] ?? '');
         if ($acmeExpected === '') {
             $acmeExpected = '_acme-challenge.' . $name . '.auth.monkeysmail.com.';
         }
         $acmeExpected = rtrim(strtolower($acmeExpected), '.') . '.';
-        $acmeHost = '_acme-challenge.' . $stsHost; // _acme-challenge.mta-sts.<domain>
+        $acmeHost     = '_acme-challenge.' . $stsHost; // _acme-challenge.mta-sts.<domain>
 
         /* ---------------------------------- Run checks ---------------------------------- */
         $records = [
             'verification_txt' => $this->checkVerificationTxt($expected['txt_name'], $expected['txt_value']),
-            'spf' => $this->checkSpf($name, $expected['spf']),
-            'dmarc' => $this->checkDmarc($name, $expected['dmarc']),
-            'mx' => $this->checkMx($name, $expected['mx']),
-            'dkim' => ($dkimName && $dkimValue)
+            'spf'               => $this->checkSpf($name, $expected['spf']),
+            'dmarc'             => $this->checkDmarc($name, $expected['dmarc']),
+            'mx'                => $this->checkMx($name, $expected['mx']),
+            'dkim'              => ($dkimName && $dkimValue)
                 ? $this->checkDkim($dkimName, $dkimValue)
                 : ['status' => 'skipped', 'found' => [], 'errors' => ['no_active_dkim']],
         ];
@@ -98,14 +87,14 @@ final class DomainDnsVerifier
         $tlsFound = $this->txtValues($tlsrptHost);
         $tlsOk = false;
         if ($tlsrptExpected) {
-            $tlsOk = in_array($this->normalizeTxt($tlsrptExpected), array_map([$this, 'normalizeTxt'], $tlsFound), true);
+            $tlsOk = in_array($this->normalizeTxt($tlsrptExpected), array_map([$this,'normalizeTxt'], $tlsFound), true);
         }
         $records['tlsrpt'] = [
-            'status' => ($tlsrptExpected && $tlsOk) ? 'pass' : 'fail',
-            'host' => $tlsrptHost,
+            'status'   => ($tlsrptExpected && $tlsOk) ? 'pass' : 'fail',
+            'host'     => $tlsrptHost,
             'expected' => $tlsrptExpected,
-            'found' => $tlsFound,
-            'errors' => ($tlsrptExpected && $tlsOk) ? [] : ['tlsrpt_not_matching_or_missing'],
+            'found'    => $tlsFound,
+            'errors'   => ($tlsrptExpected && $tlsOk) ? [] : ['tlsrpt_not_matching_or_missing'],
         ];
 
         /* =========================
@@ -114,17 +103,14 @@ final class DomainDnsVerifier
         $stsTxts = $this->txtValues($stsTxtName);
         $policyIdOk = false;
         foreach ($stsTxts as $txt) {
-            if (preg_match('~^v=STSv1;\s*id=\S+~i', trim($txt))) {
-                $policyIdOk = true;
-                break;
-            }
+            if (preg_match('~^v=STSv1;\s*id=\S+~i', trim($txt))) { $policyIdOk = true; break; }
         }
         $records['mta_sts_dns'] = [
-            'status' => $policyIdOk ? 'pass' : 'fail',
-            'policy_txt_name' => $stsTxtName,
+            'status'           => $policyIdOk ? 'pass' : 'fail',
+            'policy_txt_name'  => $stsTxtName,
             'policy_txt_found' => $stsTxts,
-            'policy_txt_ok' => $policyIdOk,
-            'errors' => $policyIdOk ? [] : ['mta_sts_dns_invalid'],
+            'policy_txt_ok'    => $policyIdOk,
+            'errors'           => $policyIdOk ? [] : ['mta_sts_dns_invalid'],
         ];
 
         /* =========================
@@ -134,18 +120,15 @@ final class DomainDnsVerifier
         $acmeOk = false;
         foreach ($acmeCnames as $t) {
             $t = rtrim(strtolower($t), '.') . '.';
-            if ($t === $acmeExpected) {
-                $acmeOk = true;
-                break;
-            }
+            if ($t === $acmeExpected) { $acmeOk = true; break; }
         }
 
         $records['mta_sts_acme'] = [
-            'status' => $acmeOk ? 'pass' : 'fail',
-            'host_name' => $acmeHost,
-            'cname_found' => $acmeCnames,
+            'status'         => $acmeOk ? 'pass' : 'fail',
+            'host_name'      => $acmeHost,
+            'cname_found'    => $acmeCnames,
             'cname_expected' => $acmeExpected,
-            'errors' => $acmeOk ? [] : ['mta_sts_acme_cname_invalid_or_missing'],
+            'errors'         => $acmeOk ? [] : ['mta_sts_acme_cname_invalid_or_missing'],
         ];
 
         /* =========================
@@ -154,8 +137,8 @@ final class DomainDnsVerifier
         $policyUrl = 'https://mta-sts.monkeysmail.com/.well-known/mta-sts.txt'; // keep your managed URL
         $records['mta_sts_policy'] = [
             'status' => 'skipped',
-            'url' => $policyUrl,
-            'http' => null,
+            'url'    => $policyUrl,
+            'http'   => null,
             'parsed' => null,
             'errors' => [],
         ];
@@ -169,7 +152,7 @@ final class DomainDnsVerifier
             (($records['mta_sts_policy']['status'] ?? '') === 'pass')
         );
 
-        $policyVal = (string) ($mtaStsExpected['policy_txt']['value'] ?? '');
+        $policyVal = (string)($mtaStsExpected['policy_txt']['value'] ?? '');
         $policyVal = trim($policyVal);
         $expectedPolicyVal = str_starts_with(strtolower($policyVal), 'v=stsv1')
             ? $policyVal
@@ -182,30 +165,30 @@ final class DomainDnsVerifier
         );
 
         $records['mta_sts'] = [
-            'status' => $stsAllOk ? 'pass' : 'fail',
-            'host' => $stsHost,
+            'status'   => $stsAllOk ? 'pass' : 'fail',
+            'host'     => $stsHost,
             'expected' => [
                 'policy_txt' => [
-                    'type' => 'TXT',
-                    'name' => $stsTxtName,
+                    'type'  => 'TXT',
+                    'name'  => $stsTxtName,
                     'value' => $expectedPolicyVal,
-                    'ttl' => 3600,
+                    'ttl'   => 3600,
                 ],
                 'acme_delegate' => [
-                    'type' => 'CNAME',
-                    'name' => $acmeHost,
+                    'type'  => 'CNAME',
+                    'name'  => $acmeHost,
                     'value' => $acmeExpected,
-                    'ttl' => 3600,
+                    'ttl'   => 3600,
                 ],
             ],
-            'found' => [
+            'found'    => [
                 'policy_txt_found' => $records['mta_sts_dns']['policy_txt_found'] ?? [],
                 'acme_cname_found' => $records['mta_sts_acme']['cname_found'] ?? [],
-                'policy_url' => $policyUrl,
+                'policy_url'       => $policyUrl,
             ],
-            'errors' => array_values(array_merge(
-                (($records['mta_sts_dns']['status'] ?? '') === 'pass') ? [] : (array) ($records['mta_sts_dns']['errors'] ?? []),
-                (($records['mta_sts_acme']['status'] ?? '') === 'pass') ? [] : (array) ($records['mta_sts_acme']['errors'] ?? []),
+            'errors'   => array_values(array_merge(
+                (($records['mta_sts_dns']['status'] ?? '') === 'pass')  ? [] : (array)($records['mta_sts_dns']['errors']  ?? []),
+                (($records['mta_sts_acme']['status'] ?? '') === 'pass') ? [] : (array)($records['mta_sts_acme']['errors'] ?? []),
             )),
         ];
 
@@ -213,21 +196,20 @@ final class DomainDnsVerifier
         $requireDkim = true;  // adjust if DKIM should be advisory only
         $required = [
             'verification_txt' => true,
-            'spf' => true,
-            'dmarc' => true,
-            'mx' => false,
-            'dkim' => $requireDkim,
-            'tlsrpt' => true,
-            'mta_sts_dns' => true,   // TXT only
-            'mta_sts_acme' => true,   // keep ACME CNAME required (or set false if optional)
-            'mta_sts_policy' => false,  // not required
+            'spf'              => true,
+            'dmarc'            => true,
+            'mx'               => false,
+            'dkim'             => $requireDkim,
+            'tlsrpt'           => true,
+            'mta_sts_dns'      => true,   // TXT only
+            'mta_sts_acme'     => true,   // keep ACME CNAME required (or set false if optional)
+            'mta_sts_policy'   => false,  // not required
         ];
 
         $summary = [];
         $allRequiredPass = true;
         foreach ($records as $kind => $res) {
-            if (!is_array($res))
-                continue;
+            if (!is_array($res)) continue;
             $pass = ($res['status'] ?? '') === 'pass';
             $summary[$kind] = $pass ? 'pass' : ($res['status'] ?? 'fail');
             if (!empty($required[$kind]) && !$pass) {
@@ -238,30 +220,30 @@ final class DomainDnsVerifier
         /* --------------------------- Persist the report + status flip --------------------------- */
         $report = [
             'checked_at' => $nowIso,
-            'domain' => $name,
-            'records' => $records,
-            'summary' => $summary,
+            'domain'     => $name,
+            'records'    => $records,
+            'summary'    => $summary,
             // Optional: expectations for UI table
             'expectations' => [
                 [
-                    'type' => 'TXT',
-                    'name' => $stsTxtName,
-                    'value' => $expectedPolicyVal,
-                    'ttl' => 3600,
+                    'type'     => 'TXT',
+                    'name'     => $stsTxtName,
+                    'value'    => $expectedPolicyVal,
+                    'ttl'      => 3600,
                     'priority' => null,
                 ],
                 [
-                    'type' => 'TXT',
-                    'name' => $stsTxtName,
-                    'value' => $expectedPolicyVal,
-                    'ttl' => 3600,
+                    'type'     => 'TXT',
+                    'name'     => $stsTxtName,
+                    'value'    => $expectedPolicyVal,
+                    'ttl'      => 3600,
                     'priority' => null,
                 ],
                 [
-                    'type' => 'CNAME',
-                    'name' => $acmeHost,
-                    'value' => $acmeExpected,
-                    'ttl' => 3600,
+                    'type'     => 'CNAME',
+                    'name'     => $acmeHost,
+                    'value'    => $acmeExpected,
+                    'ttl'      => 3600,
                     'priority' => null,
                 ],
             ],
@@ -296,11 +278,11 @@ final class DomainDnsVerifier
         $found = $this->txtValues($name);
         $ok = in_array($this->normalizeTxt($expected), array_map([$this, 'normalizeTxt'], $found), true);
         return [
-            'status' => $ok ? 'pass' : 'fail',
-            'host' => $name,
+            'status'   => $ok ? 'pass' : 'fail',
+            'host'     => $name,
             'expected' => $expected,
-            'found' => $found,
-            'errors' => $ok ? [] : ['value_not_found'],
+            'found'    => $found,
+            'errors'   => $ok ? [] : ['value_not_found'],
         ];
     }
 
@@ -311,16 +293,16 @@ final class DomainDnsVerifier
         }
 
         $foundTxts = $this->txtValues($apex);
-        $errors = [];
+        $errors    = [];
 
         // Parse expected once
         $exp = $this->parseSpf($expected);
         if (!$exp['valid']) {
             return [
                 'status' => 'fail',
-                'host' => $apex,
+                'host'   => $apex,
                 'expected' => $expected,
-                'found' => $foundTxts,
+                'found'  => $foundTxts,
                 'errors' => ['expected_spf_invalid_syntax'],
             ];
         }
@@ -334,22 +316,22 @@ final class DomainDnsVerifier
             }
             if ($this->spfSupersetMatches($spf, $exp)) {
                 return [
-                    'status' => 'pass',
-                    'host' => $apex,
+                    'status'   => 'pass',
+                    'host'     => $apex,
                     'expected' => $expected,
-                    'found' => $foundTxts,
-                    'errors' => [],
+                    'found'    => $foundTxts,
+                    'errors'   => [],
                 ];
             }
         }
 
         // No found SPF satisfied expected
         return [
-            'status' => 'fail',
-            'host' => $apex,
+            'status'   => 'fail',
+            'host'     => $apex,
             'expected' => $expected,
-            'found' => $foundTxts,
-            'errors' => empty($foundTxts) ? ['spf_missing'] : array_values(array_unique($errors + ['spf_not_matching'])),
+            'found'    => $foundTxts,
+            'errors'   => empty($foundTxts) ? ['spf_missing'] : array_values(array_unique($errors + ['spf_not_matching'])),
         ];
     }
 
@@ -360,12 +342,12 @@ final class DomainDnsVerifier
     private function parseSpf(string $s): array
     {
         $out = [
-            'valid' => false,
-            'mechs' => [],           // e.g. ['a'=>true,'mx'=>true]
+            'valid'    => false,
+            'mechs'    => [],           // e.g. ['a'=>true,'mx'=>true]
             'includes' => [],           // e.g. ['monkeysmail.com'=>true]
-            'ip4' => [],           // e.g. ['136.113.102.76'=>true, '203.0.113.0/24'=>true]
-            'ip6' => [],
-            'all' => null,         // one of '-', '~', '?', '+' or null if no all
+            'ip4'      => [],           // e.g. ['34.30.122.164'=>true, '203.0.113.0/24'=>true]
+            'ip6'      => [],
+            'all'      => null,         // one of '-', '~', '?', '+' or null if no all
         ];
 
         $s = strtolower(trim($s, " \t\r\n\"'"));
@@ -378,8 +360,7 @@ final class DomainDnsVerifier
 
         foreach ($tokens as $tok) {
             $tok = trim($tok);
-            if ($tok === '')
-                continue;
+            if ($tok === '') continue;
 
             // qualifier (optional) then mechanism
             // examples: -all, ~all, include:example.com, ip4:1.2.3.4/24, a, mx
@@ -389,8 +370,7 @@ final class DomainDnsVerifier
             }
             if (preg_match('~^([+\-~?])?include:(.+)$~', $tok, $m)) {
                 $host = trim($m[2], '.');
-                if ($host !== '')
-                    $out['includes'][$host] = true;
+                if ($host !== '') $out['includes'][$host] = true;
                 $out['mechs']['include'] = true;
                 continue;
             }
@@ -425,23 +405,19 @@ final class DomainDnsVerifier
      */
     private function spfSupersetMatches(array $found, array $expected): bool
     {
-        if (!$found['valid'] || !$expected['valid'])
-            return false;
+        if (!$found['valid'] || !$expected['valid']) return false;
 
         // 1) ip4
         foreach (array_keys($expected['ip4']) as $ip4) {
-            if (!isset($found['ip4'][$ip4]))
-                return false;
+            if (!isset($found['ip4'][$ip4])) return false;
         }
         // 2) ip6
         foreach (array_keys($expected['ip6']) as $ip6) {
-            if (!isset($found['ip6'][$ip6]))
-                return false;
+            if (!isset($found['ip6'][$ip6])) return false;
         }
         // 3) includes
         foreach (array_keys($expected['includes']) as $host) {
-            if (!isset($found['includes'][$host]))
-                return false;
+            if (!isset($found['includes'][$host])) return false;
         }
 
         // 4) ALL qualifier tolerance
@@ -450,8 +426,7 @@ final class DomainDnsVerifier
 
         if ($expAll === '-') {
             // expected hardfail; accept found hardfail or softfail
-            if (!in_array($fndAll, ['-', '~'], true))
-                return false;
+            if (!in_array($fndAll, ['-', '~'], true)) return false;
         } elseif ($expAll === '~') {
             // expected softfail; accept any all (or none)
             // (no check)
@@ -471,11 +446,11 @@ final class DomainDnsVerifier
         $found = $this->txtValues($host);
         $ok = in_array($this->normalizeDmarc($expected), array_map([$this, 'normalizeDmarc'], $found), true);
         return [
-            'status' => $ok ? 'pass' : 'fail',
-            'host' => $host,
+            'status'   => $ok ? 'pass' : 'fail',
+            'host'     => $host,
             'expected' => $expected,
-            'found' => $found,
-            'errors' => $ok ? [] : ['dmarc_not_matching'],
+            'found'    => $found,
+            'errors'   => $ok ? [] : ['dmarc_not_matching'],
         ];
     }
 
@@ -484,37 +459,35 @@ final class DomainDnsVerifier
         // normalize expected
         $exp = array_map(function ($r) {
             return [
-                'host' => strtolower(trim((string) ($r['host'] ?? ''))),
-                'value' => rtrim(strtolower(trim((string) ($r['value'] ?? ''))), '.') . '.', // canonical fqdn
-                'priority' => (int) ($r['priority'] ?? 10),
+                'host'     => strtolower(trim((string)($r['host'] ?? ''))),
+                'value'    => rtrim(strtolower(trim((string)($r['value'] ?? ''))), '.') . '.', // canonical fqdn
+                'priority' => (int)($r['priority'] ?? 10),
             ];
         }, $expected);
 
         // fetch actual MX
-        $recs = dns_get_record($apex, DNS_MX) ?: [];
+        $recs  = dns_get_record($apex, DNS_MX) ?: [];
         $found = [];
         foreach ($recs as $r) {
-            $target = rtrim(strtolower((string) ($r['target'] ?? '')), '.') . '.';
+            $target = rtrim(strtolower((string)($r['target'] ?? '')), '.') . '.';
             $found[] = [
-                'host' => strtolower($apex),
-                'value' => $target,
-                'priority' => (int) ($r['pri'] ?? 10),
+                'host'     => strtolower($apex),
+                'value'    => $target,
+                'priority' => (int)($r['pri'] ?? 10),
             ];
         }
 
         // helper: follow CNAME chain up to 5 hops to canonical fqdn
         $resolveCanonical = function (string $fqdn): string {
             $seen = [];
-            $cur = $fqdn;
+            $cur  = $fqdn;
             for ($i = 0; $i < 5; $i++) {
                 $key = rtrim(strtolower($cur), '.') . '.';
-                if (isset($seen[$key]))
-                    break;
+                if (isset($seen[$key])) break;
                 $seen[$key] = true;
                 $cn = dns_get_record($key, DNS_CNAME) ?: [];
-                if (empty($cn))
-                    break;
-                $cur = rtrim(strtolower((string) ($cn[0]['target'] ?? $cur)), '.') . '.';
+                if (empty($cn)) break;
+                $cur = rtrim(strtolower((string)($cn[0]['target'] ?? $cur)), '.') . '.';
             }
             return rtrim(strtolower($cur), '.') . '.';
         };
@@ -522,14 +495,12 @@ final class DomainDnsVerifier
         // helper: resolve A/AAAA set (for last-resort equivalence)
         $resolveIps = function (string $fqdn): array {
             $fqdn = rtrim(strtolower($fqdn), '.') . '.';
-            $ips = [];
+            $ips  = [];
             foreach (dns_get_record($fqdn, DNS_A) ?: [] as $a) {
-                if (!empty($a['ip']))
-                    $ips[] = 'A:' . $a['ip'];
+                if (!empty($a['ip'])) $ips[] = 'A:' . $a['ip'];
             }
             foreach (dns_get_record($fqdn, DNS_AAAA) ?: [] as $aaaa) {
-                if (!empty($aaaa['ipv6']))
-                    $ips[] = 'AAAA:' . $aaaa['ipv6'];
+                if (!empty($aaaa['ipv6'])) $ips[] = 'AAAA:' . $aaaa['ipv6'];
             }
             sort($ips);
             return $ips;
@@ -540,55 +511,47 @@ final class DomainDnsVerifier
         foreach ($exp as $er) {
             $wantVal = rtrim(strtolower($er['value']), '.') . '.';
             $wantCanon = $resolveCanonical($wantVal);
-            $wantIps = $resolveIps($wantCanon);
+            $wantIps   = $resolveIps($wantCanon);
 
             $match = false;
             foreach ($found as $fr) {
-                if ((int) $fr['priority'] !== (int) $er['priority'])
-                    continue;
+                if ((int)$fr['priority'] !== (int)$er['priority']) continue;
 
-                $gotVal = rtrim(strtolower($fr['value']), '.') . '.';
+                $gotVal   = rtrim(strtolower($fr['value']), '.') . '.';
                 $gotCanon = $resolveCanonical($gotVal);
 
-                if ($gotVal === $wantVal || $gotCanon === $wantCanon) {
-                    $match = true;
-                    break;
-                }
+                if ($gotVal === $wantVal || $gotCanon === $wantCanon) { $match = true; break; }
 
                 // last-resort: same IP set
                 if (!empty($wantIps)) {
                     $gotIps = $resolveIps($gotCanon);
-                    if ($gotIps === $wantIps) {
-                        $match = true;
-                        break;
-                    }
+                    if ($gotIps === $wantIps) { $match = true; break; }
                 }
             }
-            if (!$match)
-                $missing[] = $er;
+            if (!$match) $missing[] = $er;
         }
 
         return [
-            'status' => empty($missing) ? 'pass' : 'fail',
-            'host' => $apex,
+            'status'   => empty($missing) ? 'pass' : 'fail',
+            'host'     => $apex,
             'expected' => $exp,
-            'found' => $found,
-            'errors' => empty($missing) ? [] : ['mx_missing_expected' => $missing],
+            'found'    => $found,
+            'errors'   => empty($missing) ? [] : ['mx_missing_expected' => $missing],
         ];
     }
 
     private function checkDkim(string $host, string $expectedValue): array
     {
-        $found = $this->txtValues($host);
+        $found   = $this->txtValues($host);
         $normExp = $this->normalizeDkim($expectedValue);
         $ok = in_array($normExp, array_map([$this, 'normalizeDkim'], $found), true);
 
         return [
-            'status' => $ok ? 'pass' : 'fail',
-            'host' => $host,
+            'status'   => $ok ? 'pass' : 'fail',
+            'host'     => $host,
             'expected' => $expectedValue,
-            'found' => $found,
-            'errors' => $ok ? [] : ['dkim_not_matching'],
+            'found'    => $found,
+            'errors'   => $ok ? [] : ['dkim_not_matching'],
         ];
     }
 
@@ -602,7 +565,7 @@ final class DomainDnsVerifier
         foreach ($recs as $r) {
             // PHP variants: 'txt' or 'entries' => fragments
             if (isset($r['txt']) && $r['txt'] !== '') {
-                $vals[] = (string) $r['txt'];
+                $vals[] = (string)$r['txt'];
             } elseif (!empty($r['entries']) && is_array($r['entries'])) {
                 $vals[] = implode('', $r['entries']);
             }
@@ -616,16 +579,15 @@ final class DomainDnsVerifier
         $recs = @dns_get_record($host, DNS_CNAME) ?: [];
         $out = [];
         foreach ($recs as $r) {
-            $t = (string) ($r['target'] ?? '');
-            if ($t !== '')
-                $out[] = $t;
+            $t = (string)($r['target'] ?? '');
+            if ($t !== '') $out[] = $t;
         }
         return $out;
     }
 
     private function normalizeTxt(string $s): string
     {
-        return trim(preg_replace('~\s+~', ' ', (string) $s), " \t\r\n\"'");
+        return trim(preg_replace('~\s+~', ' ', (string)$s), " \t\r\n\"'");
     }
 
     private function normalizeDmarc(string $s): string
@@ -648,10 +610,8 @@ final class DomainDnsVerifier
     private function pemToDkimP(string $pem): string
     {
         $pem = trim($pem);
-        if ($pem === '')
-            return '';
-        if (preg_match('~\bp=([a-z0-9+/=]+)~i', $pem, $m))
-            return $m[1];
+        if ($pem === '') return '';
+        if (preg_match('~\bp=([a-z0-9+/=]+)~i', $pem, $m)) return $m[1];
         return preg_replace('~-----.*?-----|\s+~', '', $pem) ?: '';
     }
 
@@ -671,10 +631,10 @@ final class DomainDnsVerifier
             CURLOPT_USERAGENT => 'Monkeysmail-MTA-STS-Checker/1.0',
         ]);
         $body = curl_exec($ch);
-        $err = curl_error($ch) ?: null;
-        $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $err  = curl_error($ch) ?: null;
+        $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
         curl_close($ch);
-        return ['status' => $code, 'body' => (string) $body, 'error' => $err];
+        return ['status' => $code, 'body' => (string)$body, 'error' => $err];
     }
 
     /**
@@ -687,11 +647,9 @@ final class DomainDnsVerifier
         $kv = [];
         foreach ($lines as $ln) {
             $ln = trim($ln);
-            if ($ln === '' || str_starts_with($ln, '#'))
-                continue;
+            if ($ln === '' || str_starts_with($ln, '#')) continue;
             $parts = array_map('trim', explode(':', $ln, 2));
-            if (count($parts) === 2)
-                $kv[strtolower($parts[0])] = $parts[1];
+            if (count($parts) === 2) $kv[strtolower($parts[0])] = $parts[1];
         }
         if (($kv['version'] ?? '') !== 'STSv1') {
             return ['error' => 'version invalid or missing'];
@@ -700,15 +658,14 @@ final class DomainDnsVerifier
         if (!empty($kv['mx'])) {
             foreach (preg_split('~\s*,\s*~', $kv['mx']) as $m) {
                 $m = trim($m);
-                if ($m !== '')
-                    $mx[] = $m;
+                if ($m !== '') $mx[] = $m;
             }
         }
-        $maxAge = isset($kv['max_age']) ? (int) $kv['max_age'] : null;
+        $maxAge = isset($kv['max_age']) ? (int)$kv['max_age'] : null;
         return [
             'version' => 'STSv1',
-            'mode' => $kv['mode'] ?? null,
-            'mx' => $mx,
+            'mode'    => $kv['mode'] ?? null,
+            'mx'      => $mx,
             'max_age' => $maxAge,
         ];
     }
