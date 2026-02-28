@@ -18,14 +18,13 @@ final class PhpMailerMailSender implements MailSender
     ];
 
     public function __construct(
-        private string  $host = 'smtp.monkeysmail.com',
-        private int     $port = 587,
-        private string  $secure = 'tls',
+        private string $host = 'smtp.monkeysmail.com',
+        private int $port = 587,
+        private string $secure = 'tls',
         private ?string $username = null,
         private ?string $password = null,
-        private int     $timeout = 15,
-    )
-    {
+        private int $timeout = 15,
+    ) {
     }
 
     public function sendRaw(array $data): array
@@ -33,19 +32,12 @@ final class PhpMailerMailSender implements MailSender
         $mail = new PHPMailer(true);
 
         try {
-            // SMTP settings - using the class properties
-            $mail->isSMTP();
-            $mail->Host = $this->host;
-            $mail->Port = $this->port;
-            $mail->SMTPAuth = !empty($this->username);
-            $mail->Username = $this->username;
-            $mail->Password = $this->password;
-            $mail->SMTPSecure = $this->secure === 'tls' ? PHPMailer::ENCRYPTION_STARTTLS : PHPMailer::ENCRYPTION_SMTPS;
-            $mail->Timeout = $this->timeout;
+            // Use sendmail instead of SMTP
+            $mail->isSendmail();
             $mail->CharSet = 'UTF-8';
 
             // From
-            $fromEmail = (string)($data['from_email'] ?? '');
+            $fromEmail = (string) ($data['from_email'] ?? '');
             $mail->setFrom($fromEmail, $data['from_name'] ?? '');
 
             // Reply-to
@@ -73,29 +65,53 @@ final class PhpMailerMailSender implements MailSender
 
             // Content
             $mail->Subject = $data['subject'] ?? '';
-            $mail->Body    = $data['html_body'] ?? '';
+            $mail->Body = $data['html_body'] ?? '';
             $mail->AltBody = $data['text_body'] ?? '';
             $mail->isHTML(!empty($data['html_body']));
 
             // Attachments (base64 encoded)
-            foreach ((array)($data['attachments'] ?? []) as $a) {
-                if (!isset($a['filename'], $a['content'])) continue;
-                $bin = base64_decode((string)$a['content'], true);
-                if ($bin === false) continue;
+            foreach ((array) ($data['attachments'] ?? []) as $a) {
+                if (!isset($a['filename'], $a['content']))
+                    continue;
+                $bin = base64_decode((string) $a['content'], true);
+                if ($bin === false)
+                    continue;
                 $mail->addStringAttachment(
                     $bin,
-                    (string)$a['filename'],
+                    (string) $a['filename'],
                     PHPMailer::ENCODING_BASE64,
-                    isset($a['contentType']) ? (string)$a['contentType'] : 'application/octet-stream'
+                    isset($a['contentType']) ? (string) $a['contentType'] : 'application/octet-stream'
                 );
             }
 
             // --- DKIM: provision/register for From: domain (milter-first; local fallback opt-in)
             $this->prepareDkimForFrom($fromEmail, $mail);
 
-            $mail->send();
+            $mail->preSend();
+            $raw = $mail->getSentMIMEMessage();
 
-            return ['ok' => true, 'message_id' => $mail->getLastMessageID()];
+            $cmd = sprintf('/usr/sbin/sendmail -t -f %s', escapeshellarg($fromEmail));
+
+            $proc = proc_open($cmd, [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+            if (!is_resource($proc)) {
+                throw new \RuntimeException('Failed to open sendmail process');
+            }
+
+            fwrite($pipes[0], $raw);
+            fclose($pipes[0]);
+
+            $stdout = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[2]);
+
+            $code = proc_close($proc);
+            if ($code !== 0) {
+                throw new \RuntimeException("Sendmail failed with exit code {$code}: {$stderr}");
+            }
+
+            return ['ok' => true, 'message_id' => $mail->getLastMessageID() ?: null];
 
         } catch (\Throwable $e) {
             return ['ok' => false, 'error' => $e->getMessage()];
@@ -106,39 +122,37 @@ final class PhpMailerMailSender implements MailSender
     {
         $mail = new PHPMailer(true);
         try {
-            $mail->isSMTP();
-            $mail->Host = $this->host;
-            $mail->Port = $this->port;
-            $mail->SMTPAuth = $this->username !== null;
-            if ($mail->SMTPAuth) {
-                $mail->Username = (string)$this->username;
-                $mail->Password = (string)$this->password;
-            }
-            $mail->Timeout = $this->timeout;
-            $mail->SMTPSecure = $this->secure; // 'tls' | 'ssl'
+            $mail->isSendmail();
             $mail->CharSet = 'UTF-8';
 
             // From + Reply-To
-            $fromEmail = (string)$msg->getFrom_email();
+            $fromEmail = (string) $msg->getFrom_email();
             $mail->setFrom($fromEmail, $msg->getFrom_name() ?? '');
             if ($msg->getReply_to()) {
                 $mail->addReplyTo($msg->getReply_to());
             }
 
             // Recipients
-            foreach (($envelope['to'] ?? []) as $rcpt)  { $mail->addAddress($rcpt); }
-            foreach (($envelope['cc'] ?? []) as $rcpt)  { $mail->addCC($rcpt); }
-            foreach (($envelope['bcc'] ?? []) as $rcpt) { $mail->addBCC($rcpt); }
+            foreach (($envelope['to'] ?? []) as $rcpt) {
+                $mail->addAddress($rcpt);
+            }
+            foreach (($envelope['cc'] ?? []) as $rcpt) {
+                $mail->addCC($rcpt);
+            }
+            foreach (($envelope['bcc'] ?? []) as $rcpt) {
+                $mail->addBCC($rcpt);
+            }
 
             // Headers
             foreach (($envelope['headers'] ?? []) as $k => $v) {
-                if (is_string($k) && is_string($v)) $mail->addCustomHeader($k, $v);
+                if (is_string($k) && is_string($v))
+                    $mail->addCustomHeader($k, $v);
             }
 
             // Subject + body
-            $mail->Subject = (string)($msg->getSubject() ?? '');
-            $html = (string)($msg->getHtml_body() ?? '');
-            $text = (string)($msg->getText_body() ?? '');
+            $mail->Subject = (string) ($msg->getSubject() ?? '');
+            $html = (string) ($msg->getHtml_body() ?? '');
+            $text = (string) ($msg->getText_body() ?? '');
             if ($html !== '') {
                 $mail->isHTML(true);
                 $mail->Body = $html;
@@ -148,25 +162,48 @@ final class PhpMailerMailSender implements MailSender
             }
 
             // Attachments (base64 in DB)
-            foreach ((array)($msg->getAttachments() ?? []) as $a) {
-                if (!isset($a['filename'], $a['content'])) continue;
-                $bin = base64_decode((string)$a['content'], true);
-                if ($bin === false) continue;
+            foreach ((array) ($msg->getAttachments() ?? []) as $a) {
+                if (!isset($a['filename'], $a['content']))
+                    continue;
+                $bin = base64_decode((string) $a['content'], true);
+                if ($bin === false)
+                    continue;
                 $mail->addStringAttachment(
                     $bin,
-                    (string)$a['filename'],
+                    (string) $a['filename'],
                     PHPMailer::ENCODING_BASE64,
-                    isset($a['contentType']) ? (string)$a['contentType'] : 'application/octet-stream'
+                    isset($a['contentType']) ? (string) $a['contentType'] : 'application/octet-stream'
                 );
             }
 
             // --- DKIM: provision/register for From: domain (milter-first; local fallback opt-in)
             $this->prepareDkimForFrom($fromEmail, $mail);
 
-            $ok  = $mail->send();
-            $mid = $mail->getLastMessageID() ?: null;
+            $mail->preSend();
+            $raw = $mail->getSentMIMEMessage();
 
-            return ['ok' => (bool)$ok, 'message_id' => $mid, 'error' => null];
+            $cmd = sprintf('/usr/sbin/sendmail -t -f %s', escapeshellarg($fromEmail));
+
+            $proc = proc_open($cmd, [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+            if (!is_resource($proc)) {
+                throw new \RuntimeException('Failed to open sendmail process');
+            }
+
+            fwrite($pipes[0], $raw);
+            fclose($pipes[0]);
+
+            $stdout = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[2]);
+
+            $code = proc_close($proc);
+            if ($code !== 0) {
+                throw new \RuntimeException("Sendmail failed with exit code {$code}: {$stderr}");
+            }
+
+            return ['ok' => true, 'message_id' => $mail->getLastMessageID() ?: null, 'error' => null];
         } catch (\Throwable $e) {
             return ['ok' => false, 'message_id' => null, 'error' => $e->getMessage()];
         }
@@ -189,21 +226,22 @@ final class PhpMailerMailSender implements MailSender
                 return;
             }
             $fromDomain = strtolower(substr($fromEmail, strrpos($fromEmail, '@') + 1));
-            if ($fromDomain === '') return;
+            if ($fromDomain === '')
+                return;
 
             // ---- INTERNAL PATH: use the known DKIM key (no OpenDKIM table writes here) ----
             if ($this->isInternalDomain($fromDomain)) {
                 // Allow overrides via env, but default to your known-good values
-                $dkimDomain   = getenv('NOTIFY_DKIM_DOMAIN')   ?: 'notify.monkeysmail.com';
+                $dkimDomain = getenv('NOTIFY_DKIM_DOMAIN') ?: 'notify.monkeysmail.com';
                 $dkimSelector = getenv('NOTIFY_DKIM_SELECTOR') ?: 's1';
-                $dkimPrivate  = getenv('NOTIFY_DKIM_PRIVATE')  ?: '/etc/opendkim/keys/notify.monkeysmail.com/s1.private';
+                $dkimPrivate = getenv('NOTIFY_DKIM_PRIVATE') ?: '/etc/opendkim/keys/notify.monkeysmail.com/s1.private';
 
                 // If the private key file is readable, enable PHPMailer local signing.
                 // (If not, OpenDKIM milter will still sign using its tables.)
                 if (is_readable($dkimPrivate)) {
-                    $mail->DKIM_domain   = $dkimDomain;
+                    $mail->DKIM_domain = $dkimDomain;
                     $mail->DKIM_selector = $dkimSelector;
-                    $mail->DKIM_private  = $dkimPrivate;
+                    $mail->DKIM_private = $dkimPrivate;
                     $mail->DKIM_identity = $fromEmail;
                 }
                 // Done: do NOT attempt to generate keys for internal domains.
@@ -213,13 +251,13 @@ final class PhpMailerMailSender implements MailSender
             // ---- CLIENT PATH: existing behavior (ensure/generate + register with OpenDKIM) ----
 
             // Try discover an existing key: /var/lib/monkeysmail/dkim/<domain>.<selector>.key
-            $dkimDir  = getenv('DKIM_DIR') ?: '/var/lib/monkeysmail/dkim';
-            $existing = glob(rtrim($dkimDir, '/')."/{$fromDomain}.*.key") ?: [];
+            $dkimDir = getenv('DKIM_DIR') ?: '/var/lib/monkeysmail/dkim';
+            $existing = glob(rtrim($dkimDir, '/') . "/{$fromDomain}.*.key") ?: [];
             $selector = null;
             $privPath = null;
 
             foreach ($existing as $path) {
-                if (preg_match('~^'.preg_quote($fromDomain, '~').'\.([A-Za-z0-9._-]+)\.key$~', basename($path), $m)) {
+                if (preg_match('~^' . preg_quote($fromDomain, '~') . '\.([A-Za-z0-9._-]+)\.key$~', basename($path), $m)) {
                     $selector = strtolower($m[1]);
                     $privPath = $path;
                     break;
@@ -228,32 +266,32 @@ final class PhpMailerMailSender implements MailSender
 
             if ($selector === null || $privPath === null) {
                 // No existing key => generate using your DkimKeyService
-                $selector = (string)(getenv('DKIM_SELECTOR') ?: 'monkey');
-                $dk       = new DkimKeyService();
-                $info     = $dk->ensureKeyForDomain($fromDomain, $selector);
-                $privPath = (string)$info['private_path'];
+                $selector = (string) (getenv('DKIM_SELECTOR') ?: 'monkey');
+                $dk = new DkimKeyService();
+                $info = $dk->ensureKeyForDomain($fromDomain, $selector);
+                $privPath = (string) $info['private_path'];
             }
 
             // Register with OpenDKIM tables (idempotent) and HUP
             $reg = new OpenDkimRegistrar(
-                keyTable:     '/var/lib/monkeysmail/opendkim/keytable',
+                keyTable: '/var/lib/monkeysmail/opendkim/keytable',
                 signingTable: '/var/lib/monkeysmail/opendkim/signingtable',
-                pidFile:      '/run/opendkim/opendkim.pid',
-                sudoKillCmd:  'sudo /bin/kill -HUP',
+                pidFile: '/run/opendkim/opendkim.pid',
+                sudoKillCmd: 'sudo /bin/kill -HUP',
             );
             $reg->register($fromDomain, $selector, $privPath);
 
             // Local-signing fallback only if explicitly enabled
-            $fallback = strtolower((string)(getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
-            if (in_array($fallback, ['1','true','yes','on'], true) && is_readable($privPath)) {
-                $mail->DKIM_domain   = $fromDomain;
+            $fallback = strtolower((string) (getenv('DKIM_FALLBACK_LOCAL') ?: '0'));
+            if (in_array($fallback, ['1', 'true', 'yes', 'on'], true) && is_readable($privPath)) {
+                $mail->DKIM_domain = $fromDomain;
                 $mail->DKIM_selector = $selector;
-                $mail->DKIM_private  = $privPath;
+                $mail->DKIM_private = $privPath;
                 $mail->DKIM_identity = $fromEmail;
             }
         } catch (\Throwable $e) {
             // Non-fatal: sending can continue and OpenDKIM milter may still sign
-            error_log('[DKIM] prepare failed: '.$e->getMessage());
+            error_log('[DKIM] prepare failed: ' . $e->getMessage());
         }
     }
 
