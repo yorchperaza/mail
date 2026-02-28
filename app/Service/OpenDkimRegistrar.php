@@ -243,12 +243,14 @@ final class OpenDkimRegistrar
         $dir = \dirname($file);
         if (!is_dir($dir)) {
             if (!@mkdir($dir, 0775, true) && !is_dir($dir)) {
-                throw new \RuntimeException("Unable to create dir: {$dir}");
+                error_log("[DKIM] Unable to create dir: {$dir}. Skipping OpenDKIM registration.");
+                return;
             }
         }
         $fh = @fopen($file, 'c+');
         if (!$fh) {
-            throw new \RuntimeException("Cannot open {$file} for updates");
+            error_log("[DKIM] Cannot open {$file} for updates. Skipping.");
+            return;
         }
         try {
             if (!flock($fh, LOCK_EX)) {
