@@ -49,14 +49,14 @@ final class MessageController
 
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb,
+        private QueryBuilder $qb,
         private OutboundMailService $mailService,
         string $redisDsn = 'redis://:S3cureRedisPa55!@10.0.0.164:6379/0',
     ) {
-        $this->messageRepo          = $this->repos->getRepository(Message::class);
+        $this->messageRepo = $this->repos->getRepository(Message::class);
         $this->messageRecipientRepo = $this->repos->getRepository(MessageRecipient::class);
-        $this->messageEventRepo     = $this->repos->getRepository(MessageEvent::class);
-        $this->redisDsn             = $redisDsn;
+        $this->messageEventRepo = $this->repos->getRepository(MessageEvent::class);
+        $this->redisDsn = $redisDsn;
     }
 
     /* =========================================================================
@@ -70,39 +70,43 @@ final class MessageController
     public function sendForCompany(ServerRequestInterface $request): JsonResponse
     {
         $userId = (int) $request->getAttribute('user_id', 0);
-        if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
+        if ($userId <= 0)
+            throw new RuntimeException('Unauthorized', 401);
 
         $hash = $request->getAttribute('hash');
-        if (!is_string($hash) || strlen($hash) !== 64) throw new RuntimeException('Invalid company identifier', 400);
+        if (!is_string($hash) || strlen($hash) !== 64)
+            throw new RuntimeException('Invalid company identifier', 400);
 
         /** @var \App\Repository\CompanyRepository $companyRepo */
         $companyRepo = $this->repos->getRepository(Company::class);
         /** @var Company|null $company */
         $company = $companyRepo->findOneBy(['hash' => $hash]);
-        if (!$company) throw new RuntimeException('Company not found', 404);
+        if (!$company)
+            throw new RuntimeException('Company not found', 404);
 
-        $domainId  = (int) $request->getAttribute('domain', 0);
+        $domainId = (int) $request->getAttribute('domain', 0);
         $domainRepo = $this->repos->getRepository(Domain::class);
         /** @var Domain|null $domain */
         $domain = $domainRepo->findOneBy(['id' => $domainId]);
 
         $belongs = array_filter($company->getUsers() ?? [], fn(User $u) => $u->getId() === $userId);
-        if (empty($belongs)) throw new RuntimeException('Forbidden', 403);
+        if (empty($belongs))
+            throw new RuntimeException('Forbidden', 403);
 
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
         // Count per *message*. For per-recipient counting, parse the body and compute units.
         $this->enforceAndConsumeMessageQuota($company, $now, 1);
 
-        $body = json_decode((string)$request->getBody(), true) ?: [];
+        $body = json_decode((string) $request->getBody(), true) ?: [];
 
         $result = $this->mailService->createAndEnqueue($body, $company, $domain);
-        $status = (string)($result['status'] ?? '');
+        $status = (string) ($result['status'] ?? '');
 
-        $http   = match ($status) {
-            'queued'       => 202,
-            'preview'      => 200,
+        $http = match ($status) {
+            'queued' => 202,
+            'preview' => 200,
             'queue_failed' => 503,
-            default        => 200,
+            default => 200,
         };
 
         return new JsonResponse($result, $http);
@@ -119,52 +123,53 @@ final class MessageController
     private function handleSend(ServerRequestInterface $request, Company $company, Domain $domain): JsonResponse
     {
         $nowUtc = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        $body   = json_decode((string)$request->getBody(), true, JSON_THROW_ON_ERROR);
+        $body = json_decode((string) $request->getBody(), true, JSON_THROW_ON_ERROR);
 
         // ---- Validate basic fields
-        $fromEmail = trim((string)($body['from']['email'] ?? ''));
+        $fromEmail = trim((string) ($body['from']['email'] ?? ''));
         if ($fromEmail === '' || !filter_var($fromEmail, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException('A valid from.email is required', 422);
         }
-        $fromName  = isset($body['from']['name']) ? trim((string)$body['from']['name']) : null;
-        $replyTo   = isset($body['replyTo']) ? trim((string)$body['replyTo']) : null;
+        $fromName = isset($body['from']['name']) ? trim((string) $body['from']['name']) : null;
+        $replyTo = isset($body['replyTo']) ? trim((string) $body['replyTo']) : null;
         if ($replyTo && !filter_var($replyTo, FILTER_VALIDATE_EMAIL)) {
             throw new RuntimeException('replyTo must be a valid email', 422);
         }
 
-        $subject = isset($body['subject']) ? trim((string)$body['subject']) : null;
-        $text    = isset($body['text']) ? (string)$body['text'] : null;
-        $html    = isset($body['html']) ? (string)$body['html'] : null;
+        $subject = isset($body['subject']) ? trim((string) $body['subject']) : null;
+        $text = isset($body['text']) ? (string) $body['text'] : null;
+        $html = isset($body['html']) ? (string) $body['html'] : null;
 
-        $to  = $this->normalizeEmails($body['to']  ?? []);
-        $cc  = $this->normalizeEmails($body['cc']  ?? []);
+        $to = $this->normalizeEmails($body['to'] ?? []);
+        $cc = $this->normalizeEmails($body['cc'] ?? []);
         $bcc = $this->normalizeEmails($body['bcc'] ?? []);
         if (empty($to) && empty($cc) && empty($bcc)) {
             throw new RuntimeException('At least one recipient (to/cc/bcc) is required', 422);
         }
 
-        $headers  = isset($body['headers']) && is_array($body['headers']) ? $this->sanitizeHeaders($body['headers']) : null;
+        $headers = isset($body['headers']) && is_array($body['headers']) ? $this->sanitizeHeaders($body['headers']) : null;
         $tracking = isset($body['tracking']) && is_array($body['tracking']) ? $body['tracking'] : [];
 
         // ✅ DEFAULT tracking ON unless explicitly disabled
-        $opensEnabled  = array_key_exists('opens',  $tracking) ? (bool)$tracking['opens']  : true;
-        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool)$tracking['clicks'] : true;
+        $opensEnabled = array_key_exists('opens', $tracking) ? (bool) $tracking['opens'] : true;
+        $clicksEnabled = array_key_exists('clicks', $tracking) ? (bool) $tracking['clicks'] : true;
 
         $attachments = [];
         if (!empty($body['attachments']) && is_array($body['attachments'])) {
             foreach ($body['attachments'] as $att) {
-                if (!is_array($att)) continue;
-                $fn  = trim((string)($att['filename'] ?? ''));
-                $ct  = trim((string)($att['contentType'] ?? 'application/octet-stream'));
-                $b64 = (string)($att['content'] ?? '');
+                if (!is_array($att))
+                    continue;
+                $fn = trim((string) ($att['filename'] ?? ''));
+                $ct = trim((string) ($att['contentType'] ?? 'application/octet-stream'));
+                $b64 = (string) ($att['content'] ?? '');
                 if ($fn !== '' && $b64 !== '') {
                     $attachments[] = ['filename' => $fn, 'contentType' => $ct, 'content' => $b64];
                 }
             }
         }
 
-        $dryRun = (bool)($body['dryRun'] ?? false);
-        $queue  = (bool)($body['queue']  ?? false);
+        $dryRun = (bool) ($body['dryRun'] ?? false);
+        $queue = (bool) ($body['queue'] ?? false);
 
         // ---- Persist Message scaffold
         /** @var \App\Repository\MessageRepository $messageRepo */
@@ -198,16 +203,17 @@ final class MessageController
             return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
         };
         $trackingPixelTag = static function (string $rid, string $base): string {
-            return '<img src="'.$base.'/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
+            return '<img src="' . $base . '/t/o/' . $rid . '.gif" width="1" height="1" style="display:none" alt=""/>';
         };
         $rewriteLinksWithRid = static function (string $htmlIn, string $rid, string $base) use ($b64url): string {
-            if ($htmlIn === '') return $htmlIn;
+            if ($htmlIn === '')
+                return $htmlIn;
             return preg_replace_callback(
                 '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
-                function($m) use ($base, $rid, $b64url) {
-                    $orig  = $m[2];
-                    $redir = $base.'/t/c/'.$rid.'?u='.$b64url($orig);
-                    return $m[1].$redir.$m[3];
+                function ($m) use ($base, $rid, $b64url) {
+                    $orig = $m[2];
+                    $redir = $base . '/t/c/' . $rid . '?u=' . $b64url($orig);
+                    return $m[1] . $redir . $m[3];
                 },
                 $htmlIn
             ) ?? $htmlIn;
@@ -216,23 +222,23 @@ final class MessageController
         // ---- Preview
         if ($dryRun) {
             return new JsonResponse([
-                'status'  => 'preview',
+                'status' => 'preview',
                 'message' => $this->shapeMessage($msg),
-                'smtp'    => ['host' => 'smtp.monkeysmail.com', 'port' => 587, 'secure' => 'STARTTLS'],
+                'smtp' => ['host' => 'smtp.monkeysmail.com', 'port' => 587, 'secure' => 'STARTTLS'],
                 'envelope' => [
                     'from' => $fromName ? sprintf('%s <%s>', $fromName, $fromEmail) : $fromEmail,
-                    'to'   => $to,
-                    'cc'   => $cc,
-                    'bcc'  => $bcc,
+                    'to' => $to,
+                    'cc' => $cc,
+                    'bcc' => $bcc,
                 ],
                 'headers' => $headers,
                 'subject' => $subject,
-                'text'    => $text,
-                'html'    => $html,
+                'text' => $text,
+                'html' => $html,
                 'attachments' => array_map(fn($a) => [
-                    'filename'    => $a['filename'],
+                    'filename' => $a['filename'],
                     'contentType' => $a['contentType'],
-                    'length'      => strlen($a['content']),
+                    'length' => strlen($a['content']),
                 ], $attachments),
             ]);
         }
@@ -240,17 +246,17 @@ final class MessageController
         // ---- Queue path unchanged (uses the same base/rewrites)
         if ($queue) {
             $jobs = [];
-            foreach (['to','cc','bcc'] as $type) {
+            foreach (['to', 'cc', 'bcc'] as $type) {
                 foreach ($recipients[$type] as $email) {
                     $row = $this->qb->duplicate()
                         ->select(['track_token'])
                         ->from('messagerecipient')
-                        ->where('message_id', '=', (int)$msg->getId())
+                        ->where('message_id', '=', (int) $msg->getId())
                         ->andWhere('email', '=', $email)
                         ->andWhere('type', '=', $type)
                         ->fetchOne();
 
-                    $rid = (string)($row['track_token'] ?? '');
+                    $rid = (string) ($row['track_token'] ?? '');
 
                     $htmlForThisRcpt = $html;
                     if ($clicksEnabled && $htmlForThisRcpt !== '') {
@@ -261,27 +267,27 @@ final class MessageController
                     }
 
                     $jobHeaders = ($headers ?? []);
-                    $jobHeaders['X-MM-RID']    = $rid;
-                    $jobHeaders['X-MM-Opens']  = $opensEnabled ? '1' : '0';
+                    $jobHeaders['X-MM-RID'] = $rid;
+                    $jobHeaders['X-MM-Opens'] = $opensEnabled ? '1' : '0';
                     $jobHeaders['X-MM-Clicks'] = $clicksEnabled ? '1' : '0';
 
                     $jobs[] = [
                         'message_id' => $msg->getId(),
                         'company_id' => $company->getId(),
                         'created_at' => $nowUtc->format(DATE_ATOM),
-                        'envelope'   => [
-                            'to'      => [$email],
-                            'cc'      => [],
-                            'bcc'     => [],
+                        'envelope' => [
+                            'to' => [$email],
+                            'cc' => [],
+                            'bcc' => [],
                             'headers' => $jobHeaders,
                         ],
-                        'payload'    => [
-                            'fromEmail'   => $fromEmail,
-                            'fromName'    => $fromName,
-                            'replyTo'     => $replyTo,
-                            'subject'     => $subject,
-                            'text'        => $text,
-                            'html'        => $htmlForThisRcpt,
+                        'payload' => [
+                            'fromEmail' => $fromEmail,
+                            'fromName' => $fromName,
+                            'replyTo' => $replyTo,
+                            'subject' => $subject,
+                            'text' => $text,
+                            'html' => $htmlForThisRcpt,
                             'attachments' => $attachments,
                         ],
                     ];
@@ -297,35 +303,35 @@ final class MessageController
                 $msg->setFinal_state('queue_failed');
                 $messageRepo->save($msg);
                 return new JsonResponse([
-                    'status'  => 'queue_failed',
-                    'reason'  => 'Could not push to Redis',
+                    'status' => 'queue_failed',
+                    'reason' => 'Could not push to Redis',
                     'message' => $this->shapeMessage($msg),
                 ], 503);
             }
 
             return new JsonResponse([
-                'status'  => 'queued',
-                'queued'  => count($jobs),
+                'status' => 'queued',
+                'queued' => count($jobs),
                 'message' => $this->shapeMessage($msg),
             ], 202);
         }
 
         // ---- Immediate SMTP per-recipient (with tracking + debug headers)
-        $errors   = [];
-        $sent     = 0;
-        $lastMid  = null;
+        $errors = [];
+        $sent = 0;
+        $lastMid = null;
 
-        foreach (['to','cc','bcc'] as $type) {
+        foreach (['to', 'cc', 'bcc'] as $type) {
             foreach ($recipients[$type] as $email) {
                 $row = $this->qb->duplicate()
                     ->select(['track_token'])
                     ->from('messagerecipient')
-                    ->where('message_id', '=', (int)$msg->getId())
+                    ->where('message_id', '=', (int) $msg->getId())
                     ->andWhere('email', '=', $email)
                     ->andWhere('type', '=', $type)
                     ->fetchOne();
 
-                $rid = (string)($row['track_token'] ?? '');
+                $rid = (string) ($row['track_token'] ?? '');
 
                 $htmlForRcpt = $html;
                 if ($clicksEnabled && $htmlForRcpt !== '') {
@@ -336,21 +342,21 @@ final class MessageController
                 }
 
                 $perHeaders = ($headers ?? []);
-                $perHeaders['X-MM-RID']    = $rid;
-                $perHeaders['X-MM-Opens']  = $opensEnabled ? '1' : '0';
+                $perHeaders['X-MM-RID'] = $rid;
+                $perHeaders['X-MM-Opens'] = $opensEnabled ? '1' : '0';
                 $perHeaders['X-MM-Clicks'] = $clicksEnabled ? '1' : '0';
 
                 $env = [
-                    'fromEmail'   => $fromEmail,
-                    'fromName'    => $fromName,
-                    'replyTo'     => $replyTo,
-                    'to'          => [$email],
-                    'cc'          => [],
-                    'bcc'         => [],
-                    'subject'     => $subject,
-                    'text'        => $text,
-                    'html'        => $htmlForRcpt,
-                    'headers'     => $perHeaders,
+                    'fromEmail' => $fromEmail,
+                    'fromName' => $fromName,
+                    'replyTo' => $replyTo,
+                    'to' => [$email],
+                    'cc' => [],
+                    'bcc' => [],
+                    'subject' => $subject,
+                    'text' => $text,
+                    'html' => $htmlForRcpt,
+                    'headers' => $perHeaders,
                     'attachments' => $attachments,
                 ];
 
@@ -373,23 +379,23 @@ final class MessageController
             $msg->setMessage_id($lastMid);
         }
         $msg->setFinal_state(
-            $sent === 0         ? 'failed'  :
-                (count($errors) > 0 ? 'partial' : 'sent')
+            $sent === 0 ? 'failed' :
+            (count($errors) > 0 ? 'partial' : 'sent')
         );
         $messageRepo->save($msg);
 
         if ($sent === 0) {
             return new JsonResponse([
-                'status'  => 'error',
-                'errors'  => $errors,
+                'status' => 'error',
+                'errors' => $errors,
                 'message' => $this->shapeMessage($msg),
             ], 502);
         }
 
         return new JsonResponse([
-            'status'  => (count($errors) > 0 ? 'partial' : 'sent'),
-            'sent'    => $sent,
-            'errors'  => $errors,
+            'status' => (count($errors) > 0 ? 'partial' : 'sent'),
+            'sent' => $sent,
+            'errors' => $errors,
             'message' => $this->shapeMessage($msg),
         ], 201);
     }
@@ -402,11 +408,12 @@ final class MessageController
     {
         $headers = $r->getHeaders();
         $proto = $r->getHeaderLine('X-Forwarded-Proto') ?: $r->getHeaderLine('X-Proto') ?: ($r->getUri()->getScheme() ?: 'https');
-        $host  = $r->getHeaderLine('X-Forwarded-Host')  ?: $r->getHeaderLine('Host')      ?: $r->getUri()->getHost();
-        if ($host === '') return null;
+        $host = $r->getHeaderLine('X-Forwarded-Host') ?: $r->getHeaderLine('Host') ?: $r->getUri()->getHost();
+        if ($host === '')
+            return null;
         // Optional forwarded port
-        $port  = $r->getHeaderLine('X-Forwarded-Port') ?: $r->getUri()->getPort();
-        $portS = $port && !in_array((int)$port, [80,443], true) ? ':' . (int)$port : '';
+        $port = $r->getHeaderLine('X-Forwarded-Port') ?: $r->getUri()->getPort();
+        $portS = $port && !in_array((int) $port, [80, 443], true) ? ':' . (int) $port : '';
         return sprintf('%s://%s%s', $proto, $host, $portS);
     }
 
@@ -423,27 +430,26 @@ final class MessageController
     {
         $mail = new PHPMailer(true);
         try {
-            // SMTP config (use your server)
-            $mail->isSMTP();
-            $mail->Host       = 'smtp.monkeysmail.com';
-            $mail->Port       = 587;
-            $mail->SMTPAuth   = true;
-            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            $mail->Username   = $_ENV['SMTP_USER']     ?? 'smtpuser';
-            $mail->Password   = $_ENV['SMTP_PASSWORD'] ?? 'S3cureP@ssw0rd';
-            $mail->Timeout    = 15;
+            // Configure PHPMailer to build the message but not send via network
+            $mail->isSendmail();
+            // Important: do not use $mail->Sendmail = '/usr/sbin/sendmail' here because
+            // we want to manually call proc_open to capture stdout/stderr instead.
 
             // Envelope
             $mail->setFrom($data['fromEmail'], $data['fromName'] ?: '');
-            foreach ($data['to'] as $rcpt)  $mail->addAddress($rcpt);
-            foreach ($data['cc'] as $rcpt)  $mail->addCC($rcpt);
-            foreach ($data['bcc'] as $rcpt) $mail->addBCC($rcpt);
-            if (!empty($data['replyTo'])) $mail->addReplyTo($data['replyTo']);
+            foreach ($data['to'] as $rcpt)
+                $mail->addAddress($rcpt);
+            foreach ($data['cc'] as $rcpt)
+                $mail->addCC($rcpt);
+            foreach ($data['bcc'] as $rcpt)
+                $mail->addBCC($rcpt);
+            if (!empty($data['replyTo']))
+                $mail->addReplyTo($data['replyTo']);
 
             // Headers
             $mail->XMailer = 'MonkeysMail/1.0';
             foreach ($data['headers'] as $k => $v) {
-                $mail->addCustomHeader($k, (string)$v);
+                $mail->addCustomHeader($k, (string) $v);
             }
 
             // Message-ID (we generate one so we can store it)
@@ -451,24 +457,50 @@ final class MessageController
             $mail->MessageID = $generatedId;
 
             // Body
-            $mail->Subject = (string)($data['subject'] ?? '');
+            $mail->Subject = (string) ($data['subject'] ?? '');
             if (!empty($data['html'])) {
                 $mail->isHTML(true);
-                $mail->Body    = (string)$data['html'];
-                $mail->AltBody = (string)($data['text'] ?? strip_tags((string)$data['html']));
+                $mail->Body = (string) $data['html'];
+                $mail->AltBody = (string) ($data['text'] ?? strip_tags((string) $data['html']));
             } else {
                 $mail->isHTML(false);
-                $mail->Body    = (string)($data['text'] ?? '');
+                $mail->Body = (string) ($data['text'] ?? '');
             }
 
             // Attachments
             foreach ($data['attachments'] as $att) {
                 $bin = base64_decode($att['content'], true);
-                if ($bin === false) continue;
+                if ($bin === false)
+                    continue;
                 $mail->addStringAttachment($bin, $att['filename'], PHPMailer::ENCODING_BASE64, $att['contentType']);
             }
 
-            $mail->send();
+            // Extract the raw MIME message string
+            $mail->preSend();
+            $raw = $mail->getSentMIMEMessage();
+
+            // Invoke sendmail with the from address to set the envelope sender
+            $cmd = sprintf('/usr/sbin/sendmail -t -f %s', escapeshellarg($data['fromEmail']));
+
+            $proc = proc_open($cmd, [['pipe', 'r'], ['pipe', 'w'], ['pipe', 'w']], $pipes);
+            if (!is_resource($proc)) {
+                throw new \RuntimeException('Failed to open sendmail process');
+            }
+
+            // Write the raw MIME payload
+            fwrite($pipes[0], $raw);
+            fclose($pipes[0]);
+
+            $stdout = stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+
+            $stderr = stream_get_contents($pipes[2]);
+            fclose($pipes[2]);
+
+            $code = proc_close($proc);
+            if ($code !== 0) {
+                throw new \RuntimeException("Sendmail failed with exit code {$code}: {$stderr}");
+            }
 
             return ['ok' => true, 'message_id' => $generatedId];
         } catch (PHPMailerException $e) {
@@ -488,8 +520,9 @@ final class MessageController
         $arr = is_array($value) ? $value : (is_string($value) ? [$value] : []);
         $out = [];
         foreach ($arr as $v) {
-            $v = trim((string)$v);
-            if ($v !== '' && filter_var($v, FILTER_VALIDATE_EMAIL)) $out[] = strtolower($v);
+            $v = trim((string) $v);
+            if ($v !== '' && filter_var($v, FILTER_VALIDATE_EMAIL))
+                $out[] = strtolower($v);
         }
         // de-duplicate
         return array_values(array_unique($out));
@@ -500,15 +533,21 @@ final class MessageController
     {
         $allowed = [
             // Common safe headers
-            'X-Campaign', 'X-Tag', 'List-Unsubscribe', 'List-ID',
-            'In-Reply-To', 'References',
+            'X-Campaign',
+            'X-Tag',
+            'List-Unsubscribe',
+            'List-ID',
+            'In-Reply-To',
+            'References',
         ];
         $out = [];
         foreach ($headers as $k => $v) {
-            $k = trim((string)$k);
-            if ($k === '' || preg_match('/[\r\n]/', $k)) continue; // no header injection
-            if (!in_array($k, $allowed, true)) continue;
-            $out[$k] = (string)$v;
+            $k = trim((string) $k);
+            if ($k === '' || preg_match('/[\r\n]/', $k))
+                continue; // no header injection
+            if (!in_array($k, $allowed, true))
+                continue;
+            $out[$k] = (string) $v;
         }
         return $out;
     }
@@ -517,17 +556,17 @@ final class MessageController
     private function shapeMessage(Message $m): array
     {
         return [
-            'id'          => $m->getId(),
-            'company_id'  => $m->getCompany()?->getId(),
-            'domain_id'   => $m->getDomain()?->getId(),
-            'from'        => ['email' => $m->getFrom_email(), 'name' => $m->getFrom_name()],
-            'replyTo'     => $m->getReply_to(),
-            'subject'     => $m->getSubject(),
-            'createdAt'   => $m->getCreated_at()?->format(\DateTimeInterface::ATOM),
-            'queuedAt'    => $m->getQueued_at()?->format(\DateTimeInterface::ATOM),
-            'sentAt'      => $m->getSent_at()?->format(\DateTimeInterface::ATOM),
-            'state'       => $m->getFinal_state(),
-            'messageId'   => $m->getMessage_id(),
+            'id' => $m->getId(),
+            'company_id' => $m->getCompany()?->getId(),
+            'domain_id' => $m->getDomain()?->getId(),
+            'from' => ['email' => $m->getFrom_email(), 'name' => $m->getFrom_name()],
+            'replyTo' => $m->getReply_to(),
+            'subject' => $m->getSubject(),
+            'createdAt' => $m->getCreated_at()?->format(\DateTimeInterface::ATOM),
+            'queuedAt' => $m->getQueued_at()?->format(\DateTimeInterface::ATOM),
+            'sentAt' => $m->getSent_at()?->format(\DateTimeInterface::ATOM),
+            'state' => $m->getFinal_state(),
+            'messageId' => $m->getMessage_id(),
         ];
     }
 
@@ -581,7 +620,8 @@ final class MessageController
             // Try JSON array first
             $decoded = json_decode($raw, true);
             if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                $scopes = $decoded; $src = 'json-string';
+                $scopes = $decoded;
+                $src = 'json-string';
             } else {
                 // Fallback: CSV / whitespace separated
                 $scopes = preg_split('/[\s,]+/', trim($raw), -1, PREG_SPLIT_NO_EMPTY) ?: [];
@@ -594,7 +634,8 @@ final class MessageController
             if (count($arr) === 1 && preg_match('/^\s*\[.*\]\s*$/', $arr[0])) {
                 $decoded = json_decode($arr[0], true);
                 if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $scopes = $decoded; $src = 'json-in-array';
+                    $scopes = $decoded;
+                    $src = 'json-in-array';
                 }
             }
 
@@ -603,7 +644,8 @@ final class MessageController
                 $joined = implode('', $arr);
                 $decoded = json_decode($joined, true);
                 if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    $scopes = $decoded; $src = 'json-split';
+                    $scopes = $decoded;
+                    $src = 'json-split';
                 }
             }
 
@@ -617,27 +659,42 @@ final class MessageController
                     $parts = array_map('trim', explode(',', $piece));
                     foreach ($parts as $p) {
                         $p = trim($p, " \t\n\r\0\x0B\"'");
-                        if ($p !== '') $flat[] = $p;
+                        if ($p !== '')
+                            $flat[] = $p;
                     }
                 }
-                $scopes = $flat; $src = 'array-flattened';
+                $scopes = $flat;
+                $src = 'array-flattened';
             }
         }
 
         // Clean: lower/trim, unique
         $scopes = array_values(array_unique(array_map(
-            fn($s) => strtolower(trim((string)$s)),
+            fn($s) => strtolower(trim((string) $s)),
             $scopes
         )));
 
         // ---- Fast passes
-        if (in_array('*', $scopes, true))               { error_log("scope pass: *"); return; }
-        if (in_array('mail', $scopes, true) ||
-            in_array('messages', $scopes, true))        { error_log("scope pass: bucket"); return; }
-        if (in_array('mail:*', $scopes, true) ||
+        if (in_array('*', $scopes, true)) {
+            error_log("scope pass: *");
+            return;
+        }
+        if (
+            in_array('mail', $scopes, true) ||
+            in_array('messages', $scopes, true)
+        ) {
+            error_log("scope pass: bucket");
+            return;
+        }
+        if (
+            in_array('mail:*', $scopes, true) ||
             in_array('mail.*', $scopes, true) ||
             in_array('messages:*', $scopes, true) ||
-            in_array('messages.*', $scopes, true))      { error_log("scope pass: wildcard"); return; }
+            in_array('messages.*', $scopes, true)
+        ) {
+            error_log("scope pass: wildcard");
+            return;
+        }
 
         // ---- Exact + alias variants (mail ⇔ messages, dot ⇔ colon)
         $alts = [
@@ -647,8 +704,10 @@ final class MessageController
         ];
         $swap = [];
         foreach ($alts as $v) {
-            if (str_starts_with($v, 'mail'))      $swap[] = preg_replace('/^mail/', 'messages', $v, 1);
-            if (str_starts_with($v, 'messages'))  $swap[] = preg_replace('/^messages/', 'mail', $v, 1);
+            if (str_starts_with($v, 'mail'))
+                $swap[] = preg_replace('/^mail/', 'messages', $v, 1);
+            if (str_starts_with($v, 'messages'))
+                $swap[] = preg_replace('/^messages/', 'mail', $v, 1);
         }
         $alts = array_values(array_unique(array_merge($alts, $swap)));
 
@@ -667,27 +726,32 @@ final class MessageController
     private function enqueueToRedis(string $list, array $job): bool
     {
         $dsn = $_ENV['REDIS_URL'] ?? getenv('REDIS_URL') ?: '';
-        if ($dsn === '') return false;
+        if ($dsn === '')
+            return false;
 
         // Expecting format: redis://:password@host:port/db
         $parts = parse_url($dsn);
-        if (!$parts || !isset($parts['host'])) return false;
+        if (!$parts || !isset($parts['host']))
+            return false;
 
         $host = $parts['host'];
-        $port = isset($parts['port']) ? (int)$parts['port'] : 6379;
+        $port = isset($parts['port']) ? (int) $parts['port'] : 6379;
         $pass = isset($parts['pass']) ? $parts['pass'] : null;
-        $db   = 0;
+        $db = 0;
         if (isset($parts['path'])) {
             $dbStr = ltrim($parts['path'], '/');
-            if ($dbStr !== '' && ctype_digit($dbStr)) $db = (int)$dbStr;
+            if ($dbStr !== '' && ctype_digit($dbStr))
+                $db = (int) $dbStr;
         }
 
         try {
             if (class_exists(\Redis::class)) {
                 $r = new \Redis();
                 $r->connect($host, $port, 2.0);
-                if ($pass) $r->auth($pass);
-                if ($db)   $r->select($db);
+                if ($pass)
+                    $r->auth($pass);
+                if ($db)
+                    $r->select($db);
                 $r->lPush($list, json_encode($job, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
                 return true;
             }
@@ -722,7 +786,7 @@ final class MessageController
      */
     private function authenticateUser(ServerRequestInterface $request): int
     {
-        $userId = (int)$request->getAttribute('user_id', 0);
+        $userId = (int) $request->getAttribute('user_id', 0);
         if ($userId <= 0) {
             throw new RuntimeException('Unauthorized', 401);
         }
@@ -773,8 +837,8 @@ final class MessageController
             'domain_ids' => $this->parseIntegerList($q['domain_id'] ?? ''),
 
             // Pagination
-            'page' => max(1, (int)($q['page'] ?? 1)),
-            'per_page' => min(200, max(1, (int)($q['perPage'] ?? 25))),
+            'page' => max(1, (int) ($q['page'] ?? 1)),
+            'per_page' => min(200, max(1, (int) ($q['perPage'] ?? 25))),
 
             // Sorting
             'sort' => $this->validateSort($q['sort'] ?? 'created_at'),
@@ -782,7 +846,7 @@ final class MessageController
 
             // Date/time filters
             'date_from' => $this->parseDateOrDateTime($q['date_from'] ?? null, false),
-            'date_to'   => $this->parseDateOrDateTime($q['date_to']   ?? null, true),
+            'date_to' => $this->parseDateOrDateTime($q['date_to'] ?? null, true),
             'hour_from' => $this->parseHourNullable($q['hour_from'] ?? null),
             'hour_to' => $this->parseHourNullable($q['hour_to'] ?? null),
 
@@ -853,7 +917,7 @@ final class MessageController
         // Special handling for 'to' search (searches multiple fields)
         if ($filters['to_like']) {
             $pattern = '%' . $filters['to_like'] . '%';
-            $qb->whereGroup(function($q) use ($pattern) {
+            $qb->whereGroup(function ($q) use ($pattern) {
                 $q->whereLike('m.headers', $pattern)
                     ->orWhereLike('m.html_body', $pattern)
                     ->orWhereLike('m.text_body', $pattern);
@@ -865,7 +929,7 @@ final class MessageController
             if ($filters['has_opens']) {
                 $qb->andWhere('m.open_tracking', '=', 1);
             } else {
-                $qb->whereGroup(function($q) {
+                $qb->whereGroup(function ($q) {
                     $q->where('m.open_tracking', '=', 0)
                         ->orWhereNull('m.open_tracking');
                 });
@@ -876,7 +940,7 @@ final class MessageController
             if ($filters['has_clicks']) {
                 $qb->andWhere('m.click_tracking', '=', 1);
             } else {
-                $qb->whereGroup(function($q) {
+                $qb->whereGroup(function ($q) {
                     $q->where('m.click_tracking', '=', 0)
                         ->orWhereNull('m.click_tracking');
                 });
@@ -893,23 +957,23 @@ final class MessageController
         $items = $qb->fetchAll();
 
         // Attach recipients in one extra query
-        $messageIds = array_values(array_filter(array_map(fn($r) => (int)($r['id'] ?? 0), $items)));
+        $messageIds = array_values(array_filter(array_map(fn($r) => (int) ($r['id'] ?? 0), $items)));
         $recMap = $this->loadRecipientsForMessageIds($messageIds);
 
         // Shape payloads and merge recipients
-        $items = array_map(function(array $row) use ($recMap) {
+        $items = array_map(function (array $row) use ($recMap) {
             $item = $this->formatMessageItem($row);
-            $mid  = $item['id'] ?? 0;
-            $item['recipients'] = $recMap[$mid] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]];
+            $mid = $item['id'] ?? 0;
+            $item['recipients'] = $recMap[$mid] ?? ['to' => [], 'cc' => [], 'bcc' => []];
             return $item;
         }, $items);
 
         return [
-            'items'       => $items,
-            'total'       => $total,
-            'page'        => $filters['page'],
-            'per_page'    => $filters['per_page'],
-            'total_pages' => (int)max(1, ceil($total / $filters['per_page'])),
+            'items' => $items,
+            'total' => $total,
+            'page' => $filters['page'],
+            'per_page' => $filters['per_page'],
+            'total_pages' => (int) max(1, ceil($total / $filters['per_page'])),
         ];
     }
 
@@ -933,7 +997,7 @@ final class MessageController
             );
         } else {
             // Cross-midnight range (e.g., 22-3)
-            $qb->whereGroup(function($q) use ($hf, $ht) {
+            $qb->whereGroup(function ($q) use ($hf, $ht) {
                 $q->whereRaw('HOUR(m.created_at) >= ?', [$hf])
                     ->orWhere('HOUR(m.created_at)', '<=', $ht);
             });
@@ -952,24 +1016,24 @@ final class MessageController
 
         return [
             'meta' => [
-                'page'       => $result['page'],
-                'perPage'    => $result['per_page'],
-                'total'      => $result['total'],
+                'page' => $result['page'],
+                'perPage' => $result['per_page'],
+                'total' => $result['total'],
                 'totalPages' => $result['total_pages'],
-                'sort'       => $filters['sort'],
-                'order'      => $filters['order'],
-                'filters'    => [
-                    'domain_id'  => $filters['domain_ids'],
-                    'date_from'  => $filters['date_from']?->format(DATE_ATOM),
-                    'date_to'    => $filters['date_to']?->format(DATE_ATOM),
-                    'hour_from'  => $filters['hour_from'],
-                    'hour_to'    => $filters['hour_to'],
-                    'state'      => $filters['states'],
-                    'from'       => $filters['from_like'],
-                    'to'         => $filters['to_like'],
-                    'subject'    => $filters['subject_like'],
+                'sort' => $filters['sort'],
+                'order' => $filters['order'],
+                'filters' => [
+                    'domain_id' => $filters['domain_ids'],
+                    'date_from' => $filters['date_from']?->format(DATE_ATOM),
+                    'date_to' => $filters['date_to']?->format(DATE_ATOM),
+                    'hour_from' => $filters['hour_from'],
+                    'hour_to' => $filters['hour_to'],
+                    'state' => $filters['states'],
+                    'from' => $filters['from_like'],
+                    'to' => $filters['to_like'],
+                    'subject' => $filters['subject_like'],
                     'message_id' => $filters['message_id'],
-                    'has_opens'  => $filters['has_opens'],
+                    'has_opens' => $filters['has_opens'],
                     'has_clicks' => $filters['has_clicks'],
                 ],
             ],
@@ -979,42 +1043,44 @@ final class MessageController
 
     private function col(array $row, string $snake, ?string $camel = null): mixed
     {
-        if (array_key_exists($snake, $row)) return $row[$snake];
-        if ($camel && array_key_exists($camel, $row)) return $row[$camel];
+        if (array_key_exists($snake, $row))
+            return $row[$snake];
+        if ($camel && array_key_exists($camel, $row))
+            return $row[$camel];
         return null;
     }
 
     private function formatMessageItem(array $row): array
     {
         // Prefer snake_case columns (raw DB), fall back to camelCase if already shaped
-        $fromEmail = (string)($this->col($row, 'from_email', 'fromEmail') ?? '');
-        $fromName  = $this->col($row, 'from_name', 'fromName');
-        $replyTo   = $this->col($row, 'reply_to', 'replyTo');
-        $subject   = $this->col($row, 'subject', 'subject');
-        $created   = $this->col($row, 'created_at', 'createdAt');
-        $queued    = $this->col($row, 'queued_at',  'queuedAt');
-        $sent      = $this->col($row, 'sent_at',    'sentAt');
-        $state     = $this->col($row, 'final_state','state');
-        $msgId     = $this->col($row, 'message_id', 'messageId');
-        $domainNm  = $this->col($row, 'domain_name','domainName');
+        $fromEmail = (string) ($this->col($row, 'from_email', 'fromEmail') ?? '');
+        $fromName = $this->col($row, 'from_name', 'fromName');
+        $replyTo = $this->col($row, 'reply_to', 'replyTo');
+        $subject = $this->col($row, 'subject', 'subject');
+        $created = $this->col($row, 'created_at', 'createdAt');
+        $queued = $this->col($row, 'queued_at', 'queuedAt');
+        $sent = $this->col($row, 'sent_at', 'sentAt');
+        $state = $this->col($row, 'final_state', 'state');
+        $msgId = $this->col($row, 'message_id', 'messageId');
+        $domainNm = $this->col($row, 'domain_name', 'domainName');
 
         return [
-            'id'         => isset($row['id']) ? (int)$row['id'] : (int)($row['id'] ?? 0),
-            'company_id' => isset($row['company_id']) ? (int)$row['company_id'] : (int)($row['companyId'] ?? 0),
-            'domain_id'  => isset($row['domain_id'])  ? (int)$row['domain_id']  : (int)($row['domainId'] ?? 0),
-            'from'       => [
+            'id' => isset($row['id']) ? (int) $row['id'] : (int) ($row['id'] ?? 0),
+            'company_id' => isset($row['company_id']) ? (int) $row['company_id'] : (int) ($row['companyId'] ?? 0),
+            'domain_id' => isset($row['domain_id']) ? (int) $row['domain_id'] : (int) ($row['domainId'] ?? 0),
+            'from' => [
                 'email' => $fromEmail,
-                'name'  => $fromName !== null ? (string)$fromName : null,
+                'name' => $fromName !== null ? (string) $fromName : null,
             ],
-            'replyTo'    => $replyTo !== null ? (string)$replyTo : null,
-            'subject'    => $subject !== null ? (string)$subject : null,
-            'createdAt'  => is_string($created) ? $this->toIso8601($created) : (is_string($row['createdAt'] ?? null) ? $row['createdAt'] : null),
-            'queuedAt'   => is_string($queued)  ? $this->toIso8601($queued)  : (is_string($row['queuedAt'] ?? null)  ? $row['queuedAt']  : null),
-            'sentAt'     => is_string($sent)    ? $this->toIso8601($sent)    : (is_string($row['sentAt'] ?? null)    ? $row['sentAt']    : null),
-            'state'      => $state !== null ? (string)$state : null,
-            'messageId'  => $msgId !== null ? (string)$msgId : null,
-            'domainName' => $domainNm !== null ? (string)$domainNm : null,
-            'recipients' => $row['recipients'] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]],
+            'replyTo' => $replyTo !== null ? (string) $replyTo : null,
+            'subject' => $subject !== null ? (string) $subject : null,
+            'createdAt' => is_string($created) ? $this->toIso8601($created) : (is_string($row['createdAt'] ?? null) ? $row['createdAt'] : null),
+            'queuedAt' => is_string($queued) ? $this->toIso8601($queued) : (is_string($row['queuedAt'] ?? null) ? $row['queuedAt'] : null),
+            'sentAt' => is_string($sent) ? $this->toIso8601($sent) : (is_string($row['sentAt'] ?? null) ? $row['sentAt'] : null),
+            'state' => $state !== null ? (string) $state : null,
+            'messageId' => $msgId !== null ? (string) $msgId : null,
+            'domainName' => $domainNm !== null ? (string) $domainNm : null,
+            'recipients' => $row['recipients'] ?? ['to' => [], 'cc' => [], 'bcc' => []],
         ];
     }
 
@@ -1032,7 +1098,7 @@ final class MessageController
 
         return array_values(array_filter(
             array_map(
-                fn($v) => (int)trim($v),
+                fn($v) => (int) trim($v),
                 explode(',', $value)
             ),
             fn($v) => $v > 0
@@ -1095,9 +1161,10 @@ final class MessageController
      */
     private function parseDateOrDateTime(?string $v, bool $isEnd = false): ?DateTimeImmutable
     {
-        if ($v === null || $v === '') return null;
+        if ($v === null || $v === '')
+            return null;
 
-        $s = trim((string)$v);
+        $s = trim((string) $v);
 
         try {
             // If only a date is provided (YYYY-MM-DD)
@@ -1125,7 +1192,7 @@ final class MessageController
         }
 
         if (is_numeric($v)) {
-            $i = (int)$v;
+            $i = (int) $v;
             if ($i >= 0 && $i <= 23) {
                 return $i;
             }
@@ -1147,7 +1214,7 @@ final class MessageController
             return $v;
         }
 
-        $s = strtolower((string)$v);
+        $s = strtolower((string) $v);
 
         if (in_array($s, ['1', 'true', 'yes', 'y'], true)) {
             return true;
@@ -1183,10 +1250,10 @@ final class MessageController
     #[Route(methods: 'GET', path: '/companies/{hash}/messages/message-id/{messageId}')]
     public function getMessageByMessageId(ServerRequestInterface $request): JsonResponse
     {
-        $userId  = $this->authenticateUser($request);
-        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+        $userId = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string) $request->getAttribute('hash'), $userId);
 
-        $raw = (string)$request->getAttribute('messageId', '');
+        $raw = (string) $request->getAttribute('messageId', '');
         if ($raw === '') {
             throw new \RuntimeException('Invalid Message-ID', 400);
         }
@@ -1195,7 +1262,9 @@ final class MessageController
 
         error_log(sprintf(
             "Message lookup (company=%d) raw='%s' normalized='%s'",
-            $company->getId(), $raw, $normalized
+            $company->getId(),
+            $raw,
+            $normalized
         ));
 
         /** @var \App\Repository\MessageRepository $msgRepo */
@@ -1220,13 +1289,13 @@ final class MessageController
             throw new \RuntimeException('Message not found', 404);
         }
 
-        $include = strtolower((string)($request->getQueryParams()['include'] ?? ''));
+        $include = strtolower((string) ($request->getQueryParams()['include'] ?? ''));
         $resp = $this->shapeMessageDetailFromEntity($msg);
 
-        if (in_array($include, ['events','all'], true)) {
+        if (in_array($include, ['events', 'all'], true)) {
             $filters = $this->parseEventFilters($request->getQueryParams());
-            $events  = $this->queryMessageEvents((int)$msg->getId(), $filters);
-            $resp['events']     = $this->formatEventsResponse($events, $filters)['items'];
+            $events = $this->queryMessageEvents((int) $msg->getId(), $filters);
+            $resp['events'] = $this->formatEventsResponse($events, $filters)['items'];
             $resp['aggregates'] = $events['aggregates'];
         }
 
@@ -1239,7 +1308,8 @@ final class MessageController
         $s = trim($raw);
 
         // Decode up to 3 times to handle proxies that double-encode
-        $prev = null; $i = 0;
+        $prev = null;
+        $i = 0;
         while ($s !== $prev && $i < 3) {
             $prev = $s;
             $s = rawurldecode($s);
@@ -1252,11 +1322,16 @@ final class MessageController
         // Remove whitespace
         $s = preg_replace('/\s+/', '', $s ?? '');
 
-        if ($s === '') return $s;
+        if ($s === '')
+            return $s;
 
         // Ensure it’s wrapped in angle brackets (DB stores with <>)
-        if ($s[0] !== '<')  { $s = '<' . $s; }
-        if ($s[strlen($s) - 1] !== '>') { $s .= '>'; }
+        if ($s[0] !== '<') {
+            $s = '<' . $s;
+        }
+        if ($s[strlen($s) - 1] !== '>') {
+            $s .= '>';
+        }
 
         return $s;
     }
@@ -1268,67 +1343,69 @@ final class MessageController
     private function shapeMessageDetailFromEntity(Message $m): array
     {
         // If these are stored as arrays on the entity, great; if strings (JSON), decode.
-        $headers     = $m->getHeaders();
+        $headers = $m->getHeaders();
         if (is_string($headers)) {
             $dec = json_decode($headers, true);
-            if (json_last_error() === JSON_ERROR_NONE) $headers = $dec;
+            if (json_last_error() === JSON_ERROR_NONE)
+                $headers = $dec;
         }
         $attachments = $m->getAttachments();
         if (is_string($attachments)) {
             $dec = json_decode($attachments, true);
-            if (json_last_error() === JSON_ERROR_NONE) $attachments = $dec;
+            if (json_last_error() === JSON_ERROR_NONE)
+                $attachments = $dec;
         }
 
         $attachmentsOut = is_array($attachments) ? array_map(static function ($a) {
             return [
-                'filename'    => (string)($a['filename'] ?? ''),
-                'contentType' => (string)($a['contentType'] ?? 'application/octet-stream'),
-                'length'      => isset($a['content']) && is_string($a['content']) ? strlen($a['content']) : null,
+                'filename' => (string) ($a['filename'] ?? ''),
+                'contentType' => (string) ($a['contentType'] ?? 'application/octet-stream'),
+                'length' => isset($a['content']) && is_string($a['content']) ? strlen($a['content']) : null,
             ];
         }, $attachments) : null;
 
-        $recipients = $this->shapeRecipientsForMessageId((int)$m->getId());
+        $recipients = $this->shapeRecipientsForMessageId((int) $m->getId());
 
         return [
-            'id'         => $m->getId(),
+            'id' => $m->getId(),
             'company_id' => $m->getCompany()?->getId(),
-            'domain'     => [
-                'id'   => $m->getDomain()?->getId(),
+            'domain' => [
+                'id' => $m->getDomain()?->getId(),
                 'name' => $m->getDomain()?->getDomain(),
             ],
-            'envelope'   => [
-                'from'    => ['email' => $m->getFrom_email(), 'name' => $m->getFrom_name()],
+            'envelope' => [
+                'from' => ['email' => $m->getFrom_email(), 'name' => $m->getFrom_name()],
                 'replyTo' => $m->getReply_to(),
-                'to'      => $recipients['to']  ?? [],
-                'cc'      => $recipients['cc']  ?? [],
-                'bcc'     => $recipients['bcc'] ?? [],
+                'to' => $recipients['to'] ?? [],
+                'cc' => $recipients['cc'] ?? [],
+                'bcc' => $recipients['bcc'] ?? [],
             ],
-            'subject'    => $m->getSubject(),
-            'text'       => $m->getText_body(),
-            'html'       => $m->getHtml_body(),
-            'headers'    => is_array($headers) ? $headers : null,
-            'attachments'=> $attachmentsOut,
-            'tracking'   => [
-                'opens'  => $m->getOpen_tracking(),
+            'subject' => $m->getSubject(),
+            'text' => $m->getText_body(),
+            'html' => $m->getHtml_body(),
+            'headers' => is_array($headers) ? $headers : null,
+            'attachments' => $attachmentsOut,
+            'tracking' => [
+                'opens' => $m->getOpen_tracking(),
                 'clicks' => $m->getClick_tracking(),
             ],
-            'state'      => $m->getFinal_state(),
-            'messageId'  => $m->getMessage_id(),
+            'state' => $m->getFinal_state(),
+            'messageId' => $m->getMessage_id(),
             'timestamps' => [
                 'createdAt' => $m->getCreated_at()?->format(\DateTimeInterface::ATOM),
-                'queuedAt'  => $m->getQueued_at()?->format(\DateTimeInterface::ATOM),
-                'sentAt'    => $m->getSent_at()?->format(\DateTimeInterface::ATOM),
+                'queuedAt' => $m->getQueued_at()?->format(\DateTimeInterface::ATOM),
+                'sentAt' => $m->getSent_at()?->format(\DateTimeInterface::ATOM),
             ],
         ];
     }
     private function planPolicy(Company $c): array
     {
-        $plan   = $c->getPlan();
-        $name   = strtolower(trim((string)($plan?->getName() ?? 'starter')));
+        $plan = $c->getPlan();
+        $name = strtolower(trim((string) ($plan?->getName() ?? 'starter')));
         $window = ($name === 'starter') ? 'day' : 'month';
-        $limit  = ($name === 'starter')
+        $limit = ($name === 'starter')
             ? 150
-            : (int)($plan?->getIncludedMessages() ?? 0); // 0/null => unlimited
+            : (int) ($plan?->getIncludedMessages() ?? 0); // 0/null => unlimited
 
         return ['window' => $window, 'limit' => ($limit > 0 ? $limit : null)];
     }
@@ -1337,7 +1414,7 @@ final class MessageController
     {
         return $window === 'day'
             ? $now->setTime(0, 0, 0)
-            : $now->setDate((int)$now->format('Y'), (int)$now->format('m'), 1)->setTime(0, 0, 0);
+            : $now->setDate((int) $now->format('Y'), (int) $now->format('m'), 1)->setTime(0, 0, 0);
     }
 
     private function windowResetAt(\DateTimeImmutable $start, string $window): \DateTimeImmutable
@@ -1352,23 +1429,23 @@ final class MessageController
     private function enforceAndConsumeMessageQuota(Company $company, \DateTimeImmutable $now, int $units = 1): array
     {
         $policy = $this->planPolicy($company);
-        $limit  = $policy['limit'];
+        $limit = $policy['limit'];
         $window = $policy['window'];
 
         if ($limit === null) {
-            return ['window'=>$window,'limit'=>null,'remaining'=>null,'resetAt'=>null];
+            return ['window' => $window, 'limit' => null, 'remaining' => null, 'resetAt' => null];
         }
-        $start   = $this->windowStart($now, $window);
-        $key     = sprintf('messages:%s:%s', $window, $window === 'day' ? $now->format('Y-m-d') : $now->format('Y-m'));
+        $start = $this->windowStart($now, $window);
+        $key = sprintf('messages:%s:%s', $window, $window === 'day' ? $now->format('Y-m-d') : $now->format('Y-m'));
         $resetAt = $this->windowResetAt($start, $window);
 
         /** @var \App\Repository\RateLimitCounterRepository $repo */
-        $repo    = $this->repos->getRepository(RateLimitCounter::class);
+        $repo = $this->repos->getRepository(RateLimitCounter::class);
 
         // use the FK and not the relation object
         $counter = $repo->findOneBy([
             'company_id' => $company->getId(),
-            'key'        => $key,
+            'key' => $key,
         ]);
         error_log('here4');
         if (!$counter) {
@@ -1384,16 +1461,16 @@ final class MessageController
             }
         }
 
-        $current = (int)($counter->getCount() ?? 0);
+        $current = (int) ($counter->getCount() ?? 0);
         if ($current + $units > $limit) {
             $remaining = max(0, $limit - $current);
             throw new RuntimeException(json_encode([
-                'error'     => 'rate_limited',
-                'reason'    => 'Message quota exceeded for your plan',
-                'window'    => $window,
-                'limit'     => $limit,
+                'error' => 'rate_limited',
+                'reason' => 'Message quota exceeded for your plan',
+                'window' => $window,
+                'limit' => $limit,
                 'remaining' => $remaining,
-                'resetAt'   => $resetAt->format(\DateTimeInterface::ATOM),
+                'resetAt' => $resetAt->format(\DateTimeInterface::ATOM),
             ], JSON_UNESCAPED_SLASHES), 429);
         }
 
@@ -1401,10 +1478,10 @@ final class MessageController
         $repo->save($counter);
 
         return [
-            'window'    => $window,
-            'limit'     => $limit,
+            'window' => $window,
+            'limit' => $limit,
             'remaining' => $limit - ($current + $units),
-            'resetAt'   => $resetAt->format(\DateTimeInterface::ATOM),
+            'resetAt' => $resetAt->format(\DateTimeInterface::ATOM),
         ];
     }
 
@@ -1414,10 +1491,11 @@ final class MessageController
      */
     private function loadRecipientsForMessageIds(array $messageIds): array
     {
-        if (empty($messageIds)) return [];
+        if (empty($messageIds))
+            return [];
         error_log('01 recipents');
         $qb = $this->qb->duplicate()
-            ->select(['mr.message_id','mr.type','mr.email'])
+            ->select(['mr.message_id', 'mr.type', 'mr.email'])
             ->from('messagerecipient', 'mr')
             ->whereIn('mr.message_id', $messageIds);
 
@@ -1425,12 +1503,15 @@ final class MessageController
         error_log('02 recipents');
         $out = [];
         foreach ($rows as $r) {
-            $mid  = (int)($r['message_id'] ?? 0);
-            $type = strtolower((string)($r['type'] ?? ''));
-            $email= trim((string)($r['email'] ?? ''));
-            if ($mid <= 0 || $email === '') continue;
-            if (!isset($out[$mid])) $out[$mid] = ['to'=>[], 'cc'=>[], 'bcc'=>[]];
-            if (!in_array($type, ['to','cc','bcc'], true)) $type = 'to';
+            $mid = (int) ($r['message_id'] ?? 0);
+            $type = strtolower((string) ($r['type'] ?? ''));
+            $email = trim((string) ($r['email'] ?? ''));
+            if ($mid <= 0 || $email === '')
+                continue;
+            if (!isset($out[$mid]))
+                $out[$mid] = ['to' => [], 'cc' => [], 'bcc' => []];
+            if (!in_array($type, ['to', 'cc', 'bcc'], true))
+                $type = 'to';
             $out[$mid][$type][] = $email;
         }
         // de-dup per bucket
@@ -1445,7 +1526,7 @@ final class MessageController
     private function shapeRecipientsForMessageId(int $messageId): array
     {
         $map = $this->loadRecipientsForMessageIds([$messageId]);
-        return $map[$messageId] ?? ['to'=>[], 'cc'=>[], 'bcc'=>[]];
+        return $map[$messageId] ?? ['to' => [], 'cc' => [], 'bcc' => []];
     }
 
     private function mkStream(): Stream
@@ -1457,10 +1538,12 @@ final class MessageController
     /** base64url decoder used by /t/c */
     private function b64urlDecode(string $s): ?string
     {
-        if ($s === '') return null;
+        if ($s === '')
+            return null;
         $s = strtr($s, '-_', '+/');
         $pad = strlen($s) % 4;
-        if ($pad) $s .= str_repeat('=', 4 - $pad);
+        if ($pad)
+            $s .= str_repeat('=', 4 - $pad);
         $out = base64_decode($s, true);
         return $out === false ? null : $out;
     }
@@ -1573,7 +1656,7 @@ final class MessageController
             // Try to set with NX (only if not exists)
             $result = $redis->set($key, '1', ['nx', 'ex' => $ttl]);
 
-            return (bool)$result;
+            return (bool) $result;
 
         } catch (\Throwable $e) {
             error_log("Dedup error (allowing event): " . $e->getMessage());
@@ -1586,11 +1669,12 @@ final class MessageController
     {
         try {
             $r = $this->getRedis();
-            if (!$r) return true; // no redis → don't block event logging
+            if (!$r)
+                return true; // no redis → don't block event logging
 
             // SET key 1 NX EX <ttl>
             $ok = $r->set($key, '1', ['nx', 'ex' => $ttl]);
-            return (bool)$ok;
+            return (bool) $ok;
         } catch (\Throwable) {
             return true; // if Redis errors, allow write once
         }
@@ -1663,7 +1747,7 @@ final class MessageController
     {
         try {
             // Update message-level counters
-            $column = match($type) {
+            $column = match ($type) {
                 'opened' => 'open_count',
                 'clicked' => 'click_count',
                 'unsubscribed' => 'unsubscribe_count',
@@ -1721,8 +1805,8 @@ final class MessageController
                 return [0, 0];
             }
 
-            $messageId = (int)($row['message_id'] ?? 0);
-            $recipientId = (int)($row['id'] ?? 0);
+            $messageId = (int) ($row['message_id'] ?? 0);
+            $recipientId = (int) ($row['id'] ?? 0);
 
             error_log("resolveByRid: Found message={$messageId}, recipient={$recipientId} for token={$rid}");
 
@@ -1750,7 +1834,8 @@ final class MessageController
         } elseif (method_exists($ev, 'setMessage')) {
             /** @var \App\Entity\Message|null $msg */
             $msg = $this->messageRepo->find($messageId);
-            if ($msg) $ev->setMessage($msg);
+            if ($msg)
+                $ev->setMessage($msg);
         }
 
         if (method_exists($ev, 'setRecipientId')) {
@@ -1758,7 +1843,8 @@ final class MessageController
         } elseif (method_exists($ev, 'setRecipient')) {
             /** @var \App\Entity\MessageRecipient|null $mr */
             $mr = $this->messageRecipientRepo->find($recipientId);
-            if ($mr) $ev->setRecipient($mr);
+            if ($mr)
+                $ev->setRecipient($mr);
         }
 
         // Set type
@@ -1777,8 +1863,10 @@ final class MessageController
 
         // Timestamp
         $now = new \DateTimeImmutable('now', new \DateTimeZone('UTC'));
-        if (method_exists($ev, 'setCreatedAt'))       $ev->setCreatedAt($now);
-        elseif (method_exists($ev, 'setCreated_at'))  $ev->setCreated_at($now);
+        if (method_exists($ev, 'setCreatedAt'))
+            $ev->setCreatedAt($now);
+        elseif (method_exists($ev, 'setCreated_at'))
+            $ev->setCreated_at($now);
 
         // Persist
         $this->messageEventRepo->save($ev);
@@ -1787,14 +1875,15 @@ final class MessageController
         try {
             if ($r = $this->getRedis()) {
                 $r->publish('ml:events', json_encode([
-                    'type'       => $type,
+                    'type' => $type,
                     'message_id' => $messageId,
-                    'recipient'  => $recipientId,
-                    'meta'       => $meta,
-                    'ts'         => time(),
+                    'recipient' => $recipientId,
+                    'meta' => $meta,
+                    'ts' => time(),
                 ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
             }
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
     }
 
 
@@ -1832,7 +1921,7 @@ final class MessageController
             $redis = new \Redis();
 
             $host = $parts['host'];
-            $port = (int)($parts['port'] ?? 6379);
+            $port = (int) ($parts['port'] ?? 6379);
             $timeout = 2.0;
 
             $connected = $redis->connect($host, $port, $timeout);
@@ -1851,7 +1940,7 @@ final class MessageController
             if (isset($parts['path'])) {
                 $db = ltrim($parts['path'], '/');
                 if ($db !== '' && ctype_digit($db)) {
-                    $redis->select((int)$db);
+                    $redis->select((int) $db);
                 }
             }
 
@@ -1866,7 +1955,8 @@ final class MessageController
     }
 
     /** base64url */
-    private function b64url(string $s): string {
+    private function b64url(string $s): string
+    {
         return rtrim(strtr(base64_encode($s), '+/', '-_'), '=');
     }
 
@@ -1903,7 +1993,7 @@ final class MessageController
     {
         // Use your public base URL (no auth, GET)
         $base = 'https://smtp.monkeysmail.com';
-        return '<img src="'.$base.'/t/o/'.$rid.'.gif" width="1" height="1" style="display:none" alt=""/>';
+        return '<img src="' . $base . '/t/o/' . $rid . '.gif" width="1" height="1" style="display:none" alt=""/>';
     }
 
     /** Rewrite links inside HTML for click tracking */
@@ -1912,10 +2002,10 @@ final class MessageController
         $base = 'https://smtp.monkeysmail.com';
         return preg_replace_callback(
             '#(<a\b[^>]*\bhref=["\'])(https?://[^"\']+)(["\'][^>]*>)#i',
-            function($m) use ($base, $rid) {
+            function ($m) use ($base, $rid) {
                 $orig = $m[2];
-                $redir = $base.'/t/c/'.$rid.'?u='.$this->b64url($orig);
-                return $m[1].$redir.$m[3];
+                $redir = $base . '/t/c/' . $rid . '?u=' . $this->b64url($orig);
+                return $m[1] . $redir . $m[3];
             },
             $html
         );
@@ -1924,20 +2014,20 @@ final class MessageController
     /** Inject pixel + link-rewrite per-recipient; returns map rid => renderedHtml */
     private function renderPerRecipientHtml(Message $msg, array $recipientsByType): array
     {
-        $html = (string)($msg->getHtml_body() ?? '');
-        $withClicks = (bool)$msg->getClick_tracking();
-        $withOpens  = (bool)$msg->getOpen_tracking();
+        $html = (string) ($msg->getHtml_body() ?? '');
+        $withClicks = (bool) $msg->getClick_tracking();
+        $withOpens = (bool) $msg->getOpen_tracking();
 
         // Load all MessageRecipient rows we just created for this message
         $rows = $this->qb->duplicate()
-            ->select(['id','email','type','track_token'])
+            ->select(['id', 'email', 'type', 'track_token'])
             ->from('messagerecipient')
-            ->where('message_id', '=', (int)$msg->getId())
+            ->where('message_id', '=', (int) $msg->getId())
             ->fetchAll();
 
         $out = []; // rid => html
         foreach ($rows as $r) {
-            $rid  = (string)$r['track_token'];
+            $rid = (string) $r['track_token'];
             $h = $html;
             if ($withClicks && $h !== '') {
                 $h = $this->rewriteLinksWithRid($h, $rid);
@@ -1953,20 +2043,22 @@ final class MessageController
     #[Route(methods: 'GET', path: '/companies/{hash}/messages/{id}/events')]
     public function getEventsByMessageId(ServerRequestInterface $request): JsonResponse
     {
-        $userId  = $this->authenticateUser($request);
-        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+        $userId = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string) $request->getAttribute('hash'), $userId);
 
-        $messageId = (int)$request->getAttribute('id', 0);
-        if ($messageId <= 0) throw new RuntimeException('Invalid message id', 400);
+        $messageId = (int) $request->getAttribute('id', 0);
+        if ($messageId <= 0)
+            throw new RuntimeException('Invalid message id', 400);
 
         // Ensure the message belongs to the company
         /** @var \App\Repository\MessageRepository $msgRepo */
         $msgRepo = $this->repos->getRepository(Message::class);
         $msg = $msgRepo->findOneBy(['id' => $messageId, 'company_id' => $company]);
-        if (!$msg) throw new RuntimeException('Message not found', 404);
+        if (!$msg)
+            throw new RuntimeException('Message not found', 404);
 
         $filters = $this->parseEventFilters($request->getQueryParams());
-        $data    = $this->queryMessageEvents($messageId, $filters);
+        $data = $this->queryMessageEvents($messageId, $filters);
 
         return new JsonResponse($this->formatEventsResponse($data, $filters));
     }
@@ -1974,11 +2066,12 @@ final class MessageController
     #[Route(methods: 'GET', path: '/companies/{hash}/messages/message-id/{messageId}/events')]
     public function getEventsByMessageIdHeader(ServerRequestInterface $request): JsonResponse
     {
-        $userId  = $this->authenticateUser($request);
-        $company = $this->resolveCompany((string)$request->getAttribute('hash'), $userId);
+        $userId = $this->authenticateUser($request);
+        $company = $this->resolveCompany((string) $request->getAttribute('hash'), $userId);
 
-        $raw = (string)$request->getAttribute('messageId', '');
-        if ($raw === '') throw new RuntimeException('Invalid Message-ID', 400);
+        $raw = (string) $request->getAttribute('messageId', '');
+        if ($raw === '')
+            throw new RuntimeException('Invalid Message-ID', 400);
 
         $normalized = $this->normalizeMessageIdFromPath($raw);
 
@@ -1987,13 +2080,14 @@ final class MessageController
 
         $msg = $msgRepo->findOneBy(['message_id' => $normalized, 'company_id' => $company])
             ?: (str_starts_with($normalized, '<') && str_ends_with($normalized, '>')
-                ? $msgRepo->findOneBy(['message_id' => substr($normalized,1,-1), 'company_id' => $company])
+                ? $msgRepo->findOneBy(['message_id' => substr($normalized, 1, -1), 'company_id' => $company])
                 : null);
 
-        if (!$msg) throw new RuntimeException('Message not found', 404);
+        if (!$msg)
+            throw new RuntimeException('Message not found', 404);
 
         $filters = $this->parseEventFilters($request->getQueryParams());
-        $data    = $this->queryMessageEvents((int)$msg->getId(), $filters);
+        $data = $this->queryMessageEvents((int) $msg->getId(), $filters);
 
         return new JsonResponse($this->formatEventsResponse($data, $filters));
     }
@@ -2001,15 +2095,15 @@ final class MessageController
     private function parseEventFilters(array $q): array
     {
         return [
-            'type'      => $this->trimOrNull($q['type'] ?? null),          // e.g. opened|clicked|delivered|bounced|unsubscribed
+            'type' => $this->trimOrNull($q['type'] ?? null),          // e.g. opened|clicked|delivered|bounced|unsubscribed
             'recipient' => $this->trimOrNull($q['recipient'] ?? null),     // email substring
-            'since'     => $this->parseDateOrDateTime($q['since'] ?? null),
-            'until'     => $this->parseDateOrDateTime($q['until'] ?? null, true),
-            'order'     => in_array(strtolower($q['order'] ?? 'desc'), ['asc','desc'], true) ? strtolower($q['order']) : 'desc',
-            'page'      => max(1, (int)($q['page'] ?? 1)),
-            'per_page'  => min(200, max(1, (int)($q['perPage'] ?? 50))),
+            'since' => $this->parseDateOrDateTime($q['since'] ?? null),
+            'until' => $this->parseDateOrDateTime($q['until'] ?? null, true),
+            'order' => in_array(strtolower($q['order'] ?? 'desc'), ['asc', 'desc'], true) ? strtolower($q['order']) : 'desc',
+            'page' => max(1, (int) ($q['page'] ?? 1)),
+            'per_page' => min(200, max(1, (int) ($q['perPage'] ?? 50))),
             // optional: include aggregates only (no items)
-            'only_agg'  => in_array(strtolower($q['onlyAgg'] ?? ''), ['1','true','yes'], true),
+            'only_agg' => in_array(strtolower($q['onlyAgg'] ?? ''), ['1', 'true', 'yes'], true),
         ];
     }
 
@@ -2028,13 +2122,16 @@ final class MessageController
             ->from('messageevent', 'me')
             ->where('me.message_id', '=', $messageId);
 
-        if ($f['type'])  $qb->andWhere('me.event', '=', $f['type']);
-        if ($f['since']) $qb->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
-        if ($f['until']) $qb->andWhere('me.occurred_at', '<',  $f['until']->format('Y-m-d H:i:s'));
+        if ($f['type'])
+            $qb->andWhere('me.event', '=', $f['type']);
+        if ($f['since'])
+            $qb->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
+        if ($f['until'])
+            $qb->andWhere('me.occurred_at', '<', $f['until']->format('Y-m-d H:i:s'));
 
         // recipient filter only if the column exists; otherwise skip
         if (!empty($f['recipient'])) {
-            $qb->whereLike('me.recipient_email', '%'.$f['recipient'].'%');
+            $qb->whereLike('me.recipient_email', '%' . $f['recipient'] . '%');
         }
 
         $total = $qb->count();
@@ -2050,22 +2147,26 @@ final class MessageController
             ->from('messageevent', 'me')
             ->where('me.message_id', '=', $messageId);
 
-        if ($f['since']) $aggQ->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
-        if ($f['until']) $aggQ->andWhere('me.occurred_at', '<',  $f['until']->format('Y-m-d H:i:s'));
-        if (!empty($f['recipient'])) $aggQ->andWhere('me.recipient_email', 'LIKE', '%'.$f['recipient'].'%');
+        if ($f['since'])
+            $aggQ->andWhere('me.occurred_at', '>=', $f['since']->format('Y-m-d H:i:s'));
+        if ($f['until'])
+            $aggQ->andWhere('me.occurred_at', '<', $f['until']->format('Y-m-d H:i:s'));
+        if (!empty($f['recipient']))
+            $aggQ->andWhere('me.recipient_email', 'LIKE', '%' . $f['recipient'] . '%');
 
         $aggQ->groupBy('me.event');
         $aggRows = $aggQ->fetchAll();
 
         $agg = [];
-        foreach ($aggRows as $r) $agg[(string)$r['event_type']] = (int)$r['cnt'];
+        foreach ($aggRows as $r)
+            $agg[(string) $r['event_type']] = (int) $r['cnt'];
 
         return [
-            'total'      => $total,
-            'page'       => $f['page'],
-            'per_page'   => $f['per_page'],
-            'order'      => $f['order'],
-            'items'      => $rows,
+            'total' => $total,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'order' => $f['order'],
+            'items' => $rows,
             'aggregates' => $agg,
         ];
     }
@@ -2073,40 +2174,41 @@ final class MessageController
 
     private function formatEventsResponse(array $data, array $filters): array
     {
-        $items = array_map(function(array $r) {
+        $items = array_map(function (array $r) {
             $meta = null;
             if (isset($r['meta_json']) && is_string($r['meta_json'])) {
                 $dec = json_decode($r['meta_json'], true);
-                if (json_last_error() === JSON_ERROR_NONE) $meta = $dec;
+                if (json_last_error() === JSON_ERROR_NONE)
+                    $meta = $dec;
             }
             return [
-                'id'        => (int)$r['id'],
-                'type'      => (string)$r['event_type'],
-                'at'        => $this->toIso8601((string)$r['created_at']),
+                'id' => (int) $r['id'],
+                'type' => (string) $r['event_type'],
+                'at' => $this->toIso8601((string) $r['created_at']),
                 'recipient' => [
-                    'id'    => isset($r['recipient_id']) ? (int)$r['recipient_id'] : null,
-                    'email' => isset($r['recipient_email']) ? (string)$r['recipient_email'] : null,
+                    'id' => isset($r['recipient_id']) ? (int) $r['recipient_id'] : null,
+                    'email' => isset($r['recipient_email']) ? (string) $r['recipient_email'] : null,
                 ],
-                'meta'      => $meta,
+                'meta' => $meta,
             ];
         }, $data['items']);
 
         return [
             'meta' => [
-                'page'      => $data['page'],
-                'perPage'   => $data['per_page'],
-                'total'     => $data['total'],
-                'order'     => $data['order'],
-                'filters'   => [
-                    'type'      => $filters['type'],
+                'page' => $data['page'],
+                'perPage' => $data['per_page'],
+                'total' => $data['total'],
+                'order' => $data['order'],
+                'filters' => [
+                    'type' => $filters['type'],
                     'recipient' => $filters['recipient'],
-                    'since'     => $filters['since']?->format(DATE_ATOM),
-                    'until'     => $filters['until']?->format(DATE_ATOM),
-                    'onlyAgg'   => $filters['only_agg'] ?? false,
+                    'since' => $filters['since']?->format(DATE_ATOM),
+                    'until' => $filters['until']?->format(DATE_ATOM),
+                    'onlyAgg' => $filters['only_agg'] ?? false,
                 ],
             ],
             'aggregates' => $data['aggregates'],   // e.g. {"opened": 10, "clicked": 3, ...}
-            'items'      => $items,
+            'items' => $items,
         ];
     }
 
