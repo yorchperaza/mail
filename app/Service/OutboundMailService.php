@@ -418,18 +418,37 @@ final class OutboundMailService
                 ?: ($envelope['bcc'][0] ?? null);
 
             if ($targetRecipient) {
+                // First check if already sent (truly completed by another worker)
+                $checkStmt = $pdo->prepare('
+                    SELECT status FROM messagerecipient 
+                    WHERE message_id = ? AND email = ? LIMIT 1
+                ');
+                $checkStmt->execute([$id, $targetRecipient]);
+                $currentStatus = $checkStmt->fetchColumn();
+
+                if ($currentStatus === 'sent') {
+                    error_log(sprintf(
+                        '[Mail][processJob] SKIP - already sent: message_id=%d, recipient=%s',
+                        $id,
+                        $targetRecipient
+                    ));
+                    return;
+                }
+
+                // Claim: accept 'queued' OR 'sending' (stale claim from crashed worker)
                 $claimStmt = $pdo->prepare('
                     UPDATE messagerecipient 
                     SET status = "sending"
-                    WHERE message_id = ? AND email = ? AND status = "queued"
+                    WHERE message_id = ? AND email = ? AND status IN ("queued", "sending")
                 ');
                 $claimStmt->execute([$id, $targetRecipient]);
                 $claimed = $claimStmt->rowCount();
 
                 if ($claimed === 0) {
-                    // Another worker already claimed this job, or it was already processed
+                    // Truly claimed by another active worker or in unknown state
                     error_log(sprintf(
-                        '[Mail][processJob] SKIP - already claimed by another worker: message_id=%d, recipient=%s',
+                        '[Mail][processJob] SKIP - cannot claim (status=%s): message_id=%d, recipient=%s',
+                        $currentStatus ?: 'unknown',
                         $id,
                         $targetRecipient
                     ));
