@@ -34,13 +34,14 @@ final class DomainController
 {
     public function __construct(
         private RepositoryFactory $repos,
-        private QueryBuilder      $qb,
-        private CompanyResolver   $companyResolver,
-        private DomainConfig      $domainConfig,
+        private QueryBuilder $qb,
+        private CompanyResolver $companyResolver,
+        private DomainConfig $domainConfig,
         private SmtpCredentialProvisioner $smtpProvisioner,
         private DomainDnsVerifier $domainDnsVerifier,
         private DomainProvisioner $provisioner,
-    ) {}
+    ) {
+    }
 
     /**
      * GET /companies/{hash}/domains
@@ -53,14 +54,14 @@ final class DomainController
     #[Route(methods: 'GET', path: '/companies/{hash}/domains')]
     public function listByCompany(ServerRequestInterface $request): JsonResponse
     {
-        $userId = (int)$request->getAttribute('user_id', 0);
+        $userId = (int) $request->getAttribute('user_id', 0);
         if ($userId <= 0) {
             throw new RuntimeException('Unauthorized', 401);
         }
 
-        $hash    = (string)$request->getAttribute('hash');
+        $hash = (string) $request->getAttribute('hash');
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (! $company) {
+        if (!$company) {
             throw new RuntimeException('Company not found or access denied', 404);
         }
 
@@ -70,9 +71,9 @@ final class DomainController
         $domains = $domainRepo->findBy(['company_id' => $company->getId()]);
 
         $out = array_map(fn(Domain $d) => [
-            'id'     => $d->getId(),
+            'id' => $d->getId(),
             'domain' => $d->getDomain(),
-            'statusDomain'=> $d->getStatus(),
+            'statusDomain' => $d->getStatus(),
         ], $domains);
 
         return new JsonResponse($out);
@@ -89,14 +90,14 @@ final class DomainController
     #[Route(methods: 'GET', path: '/domains')]
     public function listByUser(ServerRequestInterface $request): JsonResponse
     {
-        $userId = (int)$request->getAttribute('user_id', 0);
+        $userId = (int) $request->getAttribute('user_id', 0);
         if ($userId <= 0) {
             throw new RuntimeException('Unauthorized', 401);
         }
 
         // fetch all companies the user belongs to
         $companyRepo = $this->repos->getRepository(Company::class);
-        $companies   = $companyRepo->findByRelation('users', $userId);
+        $companies = $companyRepo->findByRelation('users', $userId);
 
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
@@ -106,9 +107,9 @@ final class DomainController
             $domains = $domainRepo->findBy(['company_id' => $company->getId()]);
             foreach ($domains as $d) {
                 $out[] = [
-                    'id'          => $d->getId(),
-                    'domain'      => $d->getDomain(),
-                    'statusDomain'=> $d->getStatus(),
+                    'id' => $d->getId(),
+                    'domain' => $d->getDomain(),
+                    'statusDomain' => $d->getStatus(),
                     'companyHash' => $company->getHash(),
                 ];
             }
@@ -120,34 +121,41 @@ final class DomainController
     #[Route(methods: 'POST', path: '/companies/{hash}/domains')]
     public function createDomain(ServerRequestInterface $request): JsonResponse
     {
-        $t0  = microtime(true);
+        $t0 = microtime(true);
         $rid = bin2hex(random_bytes(6));
 
         $mask = static function (?string $s, int $show = 2): string {
-            if ($s === null || $s === '') return '';
+            if ($s === null || $s === '')
+                return '';
             $len = strlen($s);
-            if ($len <= $show) return str_repeat('*', $len);
+            if ($len <= $show)
+                return str_repeat('*', $len);
             return substr($s, 0, $show) . str_repeat('*', max(0, $len - $show));
         };
 
         try {
             // 1) Auth
-            $userId = (int)$request->getAttribute('user_id', 0);
+            $userId = (int) $request->getAttribute('user_id', 0);
             error_log("[createDomain][$rid] START user_id={$userId}");
-            if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
+            if ($userId <= 0)
+                throw new RuntimeException('Unauthorized', 401);
 
             // 2) Resolve + authorize company
-            $hash = (string)$request->getAttribute('hash');
+            $hash = (string) $request->getAttribute('hash');
             $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-            if (!$company) throw new RuntimeException('Company not found or access denied', 404);
-            $companyId = (int)$company->getId();
+            if (!$company)
+                throw new RuntimeException('Company not found or access denied', 404);
+            $companyId = (int) $company->getId();
 
             /** @var \App\Repository\DomainRepository $domainRepo */
             $domainRepo = $this->repos->getRepository(Domain::class);
 
             // ---- Plan limit (same as your original) ----
             $planName = null;
-            try { $planName = $company->getPlan()?->getName(); } catch (\Throwable) {}
+            try {
+                $planName = $company->getPlan()?->getName();
+            } catch (\Throwable) {
+            }
             if ($planName === null || $planName === '') {
                 /** @var \App\Repository\CompanyRepository $companyRepo */
                 $companyRepo = $this->repos->getRepository(Company::class);
@@ -159,7 +167,7 @@ final class DomainController
                     ->fetch();
                 $planName = $row?->name ?? null;
             }
-            $planKey = strtoupper((string)$planName);
+            $planKey = strtoupper((string) $planName);
             if ($planKey === '' || in_array($planKey, ['STARTER', 'GROW'], true)) {
                 $existing = $domainRepo->count(['company_id' => $companyId]);
                 if ($existing >= 1) {
@@ -168,8 +176,8 @@ final class DomainController
             }
 
             // 3) Parse & validate payload
-            $body = json_decode((string)$request->getBody(), true, 512, JSON_THROW_ON_ERROR);
-            $name = strtolower(trim((string)($body['domain'] ?? '')));
+            $body = json_decode((string) $request->getBody(), true, 512, JSON_THROW_ON_ERROR);
+            $name = strtolower(trim((string) ($body['domain'] ?? '')));
             if ($name === '' || !preg_match('~^[a-z0-9.-]+\.[a-z]{2,}$~i', $name)) {
                 throw new RuntimeException('Invalid domain format', 400);
             }
@@ -193,34 +201,34 @@ final class DomainController
             $opendkimError = $bootstrap['opendkim_error'] ?? null;
 
             // 7) (Optional) TLS-RPT + MTA-STS you already add afterwards
-            $clientDomain  = $domain->getDomain();
+            $clientDomain = $domain->getDomain();
             $stsEdgeTarget = 'mta-sts.monkeysmail.com.';
             $tlsRptMailbox = 'tlsrpt@monkeysmail.com';
-            $tlsrptValue   = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
+            $tlsrptValue = sprintf('v=TLSRPTv1; rua=mailto:%s', $tlsRptMailbox);
             $domain
                 ->setTlsrpt_rua('mailto:' . $tlsRptMailbox)
                 ->setTlsrpt_expected($tlsrptValue);
 
-            $mtaStsId   = 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
+            $mtaStsId = 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
             $mtaStsHost = 'mta-sts.' . $clientDomain;
-            $mtaStsDns  = [
+            $mtaStsDns = [
                 'policy_txt' => [
-                    'name'  => '_mta-sts.' . $clientDomain,
-                    'type'  => 'TXT',
+                    'name' => '_mta-sts.' . $clientDomain,
+                    'type' => 'TXT',
                     'value' => 'v=STSv1; id=' . $mtaStsId,
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
                 'host' => [
-                    'name'  => $mtaStsHost,
-                    'type'  => 'CNAME',
+                    'name' => $mtaStsHost,
+                    'type' => 'CNAME',
                     'value' => $stsEdgeTarget,
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
                 'acme_delegate' => [
-                    'name'  => '_acme-challenge.' . $mtaStsHost,
-                    'type'  => 'CNAME',
+                    'name' => '_acme-challenge.' . $mtaStsHost,
+                    'type' => 'CNAME',
                     'value' => '_acme-challenge.' . $clientDomain . '.auth.monkeysmail.com.',
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
             ];
             $domain
@@ -230,38 +238,38 @@ final class DomainController
 
             // 8) Response (preserves your existing shape)
             $resp = new JsonResponse([
-                'id'         => $domain->getId(),
-                'domain'     => $domain->getDomain(),
-                'status'     => $domain->getStatus(),
+                'id' => $domain->getId(),
+                'domain' => $domain->getDomain(),
+                'status' => $domain->getStatus(),
                 'created_at' => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
-                'txt'        => $bootstrap['dns']['txt'] ?? null,
-                'records'    => [
-                    'spf_expected'   => $bootstrap['dns']['spf']   ?? null,
+                'txt' => $bootstrap['dns']['txt'] ?? null,
+                'records' => [
+                    'spf_expected' => $bootstrap['dns']['spf'] ?? null,
                     'dmarc_expected' => $bootstrap['dns']['dmarc'] ?? null,
-                    'mx_expected'    => $bootstrap['dns']['mx']    ?? null,
-                    'dkim'           => $bootstrap['dns']['dkim']  ?? null,
-                    'tlsrpt'         => [
-                        'name'  => '_smtp._tls.' . $domain->getDomain(),
-                        'type'  => 'TXT',
+                    'mx_expected' => $bootstrap['dns']['mx'] ?? null,
+                    'dkim' => $bootstrap['dns']['dkim'] ?? null,
+                    'tlsrpt' => [
+                        'name' => '_smtp._tls.' . $domain->getDomain(),
+                        'type' => 'TXT',
                         'value' => $domain->getTlsrpt_expected(),
-                        'rua'   => $domain->getTlsrpt_rua(),
+                        'rua' => $domain->getTlsrpt_rua(),
                     ],
-                    'mta_sts'        => $domain->getMta_sts_expected(),
+                    'mta_sts' => $domain->getMta_sts_expected(),
                 ],
-                'smtp'       => [
-                    'host'     => 'smtp.monkeysmail.com',
-                    'ip'       => '34.30.122.164',
-                    'ports'    => [587, 465],
-                    'tls'      => ['starttls' => true, 'implicit' => true],
+                'smtp' => [
+                    'host' => 'smtp.monkeysmail.com',
+                    'ip' => '136.113.102.76',
+                    'ports' => [587, 465],
+                    'tls' => ['starttls' => true, 'implicit' => true],
                     'username' => $creds['username'] ?? null,
                     'password' => $creds['password'] ?? null,  // shown to client; not logged
-                    'ip_pool'  => $creds['ip_pool']  ?? null,
+                    'ip_pool' => $creds['ip_pool'] ?? null,
                 ],
                 'opendkim_error' => $opendkimError,
             ], 201);
 
             $dt = number_format((microtime(true) - $t0) * 1000, 1);
-            error_log("[createDomain][$rid] OK 201 company_id={$companyId} domain={$name} planKey=" . strtoupper((string)$planName) . " dt_ms={$dt}");
+            error_log("[createDomain][$rid] OK 201 company_id={$companyId} domain={$name} planKey=" . strtoupper((string) $planName) . " dt_ms={$dt}");
             return $resp;
 
         } catch (\Throwable $e) {
@@ -285,29 +293,32 @@ final class DomainController
     public function getOne(ServerRequestInterface $request): JsonResponse
     {
         // 1) Auth
-        $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
+        $userId = (int) $request->getAttribute('user_id', 0);
+        if ($userId <= 0)
+            throw new RuntimeException('Unauthorized', 401);
 
         // 2) Company
-        $hash    = (string)$request->getAttribute('hash');
+        $hash = (string) $request->getAttribute('hash');
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (! $company) throw new RuntimeException('Company not found or access denied', 404);
+        if (!$company)
+            throw new RuntimeException('Company not found or access denied', 404);
 
         // 3) Domain id
-        $id = (int)$request->getAttribute('id', 0);
-        if ($id <= 0) throw new RuntimeException('Invalid domain id', 400);
+        $id = (int) $request->getAttribute('id', 0);
+        if ($id <= 0)
+            throw new RuntimeException('Invalid domain id', 400);
 
         // 4) Load domain
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
-        $domain     = $domainRepo->find($id);
-        if (! $domain || $domain->getCompany()?->getId() !== $company->getId()) {
+        $domain = $domainRepo->find($id);
+        if (!$domain || $domain->getCompany()?->getId() !== $company->getId()) {
             throw new RuntimeException('Domain not found', 404);
         }
 
         // ---- Build DKIM expected (from active DkimKey) ----
         $dkimExpected = null;
-        $domainName   = (string)$domain->getDomain();
+        $domainName = (string) $domain->getDomain();
 
         $pemToDkimTxt = static function (string $pem): string {
             // If it's already a DKIM string containing p=..., keep as-is
@@ -326,17 +337,17 @@ final class DomainController
 
         foreach ($domain->getDkimKeys() ?? [] as $k) {
             if ($k->getActive()) {
-                $host  = sprintf('%s._domainkey.%s', $k->getSelector(), $domainName);
+                $host = sprintf('%s._domainkey.%s', $k->getSelector(), $domainName);
                 $value = null;
 
                 if (method_exists($k, 'getTxt_value') && $k->getTxt_value()) {
-                    $value = trim((string)$k->getTxt_value());
+                    $value = trim((string) $k->getTxt_value());
                     // normalize to include v=DKIM1/k=rsa if missing
                     if (stripos($value, 'p=') !== false && stripos($value, 'v=dkim1') === false) {
                         $value = 'v=DKIM1; k=rsa; ' . ltrim($value, '; ');
                     }
                 } else {
-                    $value = $pemToDkimTxt((string)$k->getPublic_key_pem());
+                    $value = $pemToDkimTxt((string) $k->getPublic_key_pem());
                 }
 
                 $dkimExpected = ['name' => $host, 'value' => $value];
@@ -354,18 +365,18 @@ final class DomainController
 
         // TLS-RPT
         $tlsRptValue = method_exists($domain, 'getTlsrpt_expected') ? $domain->getTlsrpt_expected() : null;
-        $tlsRptRua   = method_exists($domain, 'getTlsrpt_rua') ? $domain->getTlsrpt_rua() : null;
+        $tlsRptRua = method_exists($domain, 'getTlsrpt_rua') ? $domain->getTlsrpt_rua() : null;
         if (!$tlsRptValue) {
             // default to your managed mailbox if not persisted
-            $tlsRptRua   = $tlsRptRua ?: 'mailto:tlsrpt@monkeysmail.com';
+            $tlsRptRua = $tlsRptRua ?: 'mailto:tlsrpt@monkeysmail.com';
             $tlsRptValue = sprintf('v=TLSRPTv1; rua=%s', $tlsRptRua);
         }
         $tlsrptRecord = [
-            'name'  => '_smtp._tls.' . $clientDomain,
-            'type'  => 'TXT',
+            'name' => '_smtp._tls.' . $clientDomain,
+            'type' => 'TXT',
             'value' => $tlsRptValue,
-            'rua'   => $tlsRptRua,
-            'ttl'   => 3600,
+            'rua' => $tlsRptRua,
+            'ttl' => 3600,
         ];
 
         // MTA-STS
@@ -375,22 +386,22 @@ final class DomainController
             $mtaStsId = $mtaStsId ?: 'sts-' . (new \DateTimeImmutable('now', new \DateTimeZone('UTC')))->format('Ymd');
             $mtaSts = [
                 'policy_txt' => [
-                    'name'  => '_mta-sts.' . $clientDomain,
-                    'type'  => 'TXT',
+                    'name' => '_mta-sts.' . $clientDomain,
+                    'type' => 'TXT',
                     'value' => 'v=STSv1; id=' . $mtaStsId,
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
                 'host' => [
-                    'name'  => 'mta-sts.' . $clientDomain,
-                    'type'  => 'CNAME',
+                    'name' => 'mta-sts.' . $clientDomain,
+                    'type' => 'CNAME',
                     'value' => 'mta-sts.monkeysmail.com.',
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
                 'acme_delegate' => [
-                    'name'  => '_acme-challenge.' . 'mta-sts.' . $clientDomain,
-                    'type'  => 'CNAME',
+                    'name' => '_acme-challenge.' . 'mta-sts.' . $clientDomain,
+                    'type' => 'CNAME',
                     'value' => '_acme-challenge.' . $clientDomain . '.auth.monkeysmail.com.',
-                    'ttl'   => 3600,
+                    'ttl' => 3600,
                 ],
             ];
         }
@@ -399,51 +410,51 @@ final class DomainController
 
         // 5) Response
         $out = [
-            'id'              => $domain->getId(),
-            'domain'          => $domain->getDomain(),
-            'status'          => $domain->getStatus(),
-            'created_at'      => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
-            'verified_at'     => $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
+            'id' => $domain->getId(),
+            'domain' => $domain->getDomain(),
+            'status' => $domain->getStatus(),
+            'created_at' => $domain->getCreated_at()?->format(\DateTimeInterface::ATOM),
+            'verified_at' => $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
 
             // expose verification metadata for UI
-            'last_checked_at'     => $domain->getLast_checked_at()?->format(\DateTimeInterface::ATOM),
+            'last_checked_at' => $domain->getLast_checked_at()?->format(\DateTimeInterface::ATOM),
             'verification_report' => $domain->getVerification_report(),
 
             // toggles
-            'require_tls'     => $domain->getRequire_tls(),
-            'arc_sign'        => $domain->getArc_sign(),
-            'bimi_enabled'    => $domain->getBimi_enabled(),
+            'require_tls' => $domain->getRequire_tls(),
+            'arc_sign' => $domain->getArc_sign(),
+            'bimi_enabled' => $domain->getBimi_enabled(),
 
             // expectations for setup cards
             'txt' => [
-                'name'  => $domain->getTxt_name(),
+                'name' => $domain->getTxt_name(),
                 'value' => $domain->getTxt_value(),
             ],
             'records' => [
-                'spf_expected'   => $domain->getSpf_expected(),
+                'spf_expected' => $domain->getSpf_expected(),
                 'dmarc_expected' => $domain->getDmarc_expected(),
-                'mx_expected'    => $domain->getMx_expected(),
-                'dkim_expected'  => $dkimExpected,   // unchanged
+                'mx_expected' => $domain->getMx_expected(),
+                'dkim_expected' => $dkimExpected,   // unchanged
 
                 // NEW
-                'tlsrpt'         => $tlsrptRecord,
-                'mta_sts'        => $mtaSts,
+                'tlsrpt' => $tlsrptRecord,
+                'mta_sts' => $mtaSts,
                 'mta_sts_policy_url' => $mtaStsPolicyUrl,
-                'mta_sts_id'     => $mtaStsId,
+                'mta_sts_id' => $mtaStsId,
             ],
 
             // counts
             'counts' => [
-                'dkimKeys'        => count($domain->getDkimKeys() ?? []),
-                'messages'        => count($domain->getMessages() ?? []),
-                'tlsRptReports'   => count($domain->getTlsRptReports() ?? []),
-                'mtaStsPolicies'  => count($domain->getMtaStsPolicies() ?? []),
+                'dkimKeys' => count($domain->getDkimKeys() ?? []),
+                'messages' => count($domain->getMessages() ?? []),
+                'tlsRptReports' => count($domain->getTlsRptReports() ?? []),
+                'mtaStsPolicies' => count($domain->getMtaStsPolicies() ?? []),
                 'dmarcAggregates' => count($domain->getDmarcAggregates() ?? []),
-                'bimiRecords'     => count($domain->getBimiRecords() ?? []),
-                'reputation'      => count($domain->getReputationSamples() ?? []),
-                'inboundRoutes'   => count($domain->getInboundRoutes() ?? []),
+                'bimiRecords' => count($domain->getBimiRecords() ?? []),
+                'reputation' => count($domain->getReputationSamples() ?? []),
+                'inboundRoutes' => count($domain->getInboundRoutes() ?? []),
                 'inboundMessages' => count($domain->getInboundMessages() ?? []),
-                'campaigns'       => count($domain->getCampaigns() ?? []),
+                'campaigns' => count($domain->getCampaigns() ?? []),
             ],
 
             'company' => [
@@ -466,22 +477,25 @@ final class DomainController
     public function deleteWithDependencies(ServerRequestInterface $request): JsonResponse
     {
         // 1) Auth
-        $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) throw new RuntimeException('Unauthorized', 401);
+        $userId = (int) $request->getAttribute('user_id', 0);
+        if ($userId <= 0)
+            throw new RuntimeException('Unauthorized', 401);
 
         // 2) Company scope
-        $hash    = (string)$request->getAttribute('hash');
+        $hash = (string) $request->getAttribute('hash');
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (! $company) throw new RuntimeException('Company not found or access denied', 404);
+        if (!$company)
+            throw new RuntimeException('Company not found or access denied', 404);
 
         // 3) Domain id
-        $id = (int)$request->getAttribute('id', 0);
-        if ($id <= 0) throw new RuntimeException('Invalid domain id', 400);
+        $id = (int) $request->getAttribute('id', 0);
+        if ($id <= 0)
+            throw new RuntimeException('Invalid domain id', 400);
 
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
-        $domain     = $domainRepo->find($id);
-        if (! $domain || $domain->getCompany()?->getId() !== $company->getId()) {
+        $domain = $domainRepo->find($id);
+        if (!$domain || $domain->getCompany()?->getId() !== $company->getId()) {
             throw new RuntimeException('Domain not found', 404);
         }
 
@@ -519,16 +533,16 @@ final class DomainController
     {
         // 1) Repos first (unchanged)
         $repoMap = [
-            DkimKey::class          => 'dkimRepo',
-            Message::class          => 'msgRepo',
-            TlsRptReport::class     => 'tlsRepo',
-            MtaStsPolicy::class     => 'mtaRepo',
-            DmarcAggregate::class   => 'dmarcRepo',
-            BimiRecord::class       => 'bimiRepo',
+            DkimKey::class => 'dkimRepo',
+            Message::class => 'msgRepo',
+            TlsRptReport::class => 'tlsRepo',
+            MtaStsPolicy::class => 'mtaRepo',
+            DmarcAggregate::class => 'dmarcRepo',
+            BimiRecord::class => 'bimiRepo',
             ReputationSample::class => 'repRepo',
-            InboundRoute::class     => 'routeRepo',
-            InboundMessage::class   => 'inMsgRepo',
-            Campaign::class         => 'campRepo',
+            InboundRoute::class => 'routeRepo',
+            InboundMessage::class => 'inMsgRepo',
+            Campaign::class => 'campRepo',
         ];
 
         foreach ($repoMap as $entity => $var) {
@@ -568,32 +582,35 @@ final class DomainController
     #[Route(methods: 'POST', path: '/companies/{hash}/domains/{id}/verify')]
     public function verifyDomain(ServerRequestInterface $request): JsonResponse
     {
-        $userId = (int)$request->getAttribute('user_id', 0);
-        if ($userId <= 0) throw new \RuntimeException('Unauthorized', 401);
+        $userId = (int) $request->getAttribute('user_id', 0);
+        if ($userId <= 0)
+            throw new \RuntimeException('Unauthorized', 401);
 
-        $hash    = (string)$request->getAttribute('hash');
+        $hash = (string) $request->getAttribute('hash');
         $company = $this->companyResolver->resolveCompanyForUser($hash, $userId);
-        if (!$company) throw new \RuntimeException('Company not found or access denied', 404);
+        if (!$company)
+            throw new \RuntimeException('Company not found or access denied', 404);
 
-        $id = (int)$request->getAttribute('id', 0);
-        if ($id <= 0) throw new \RuntimeException('Invalid domain id', 400);
+        $id = (int) $request->getAttribute('id', 0);
+        if ($id <= 0)
+            throw new \RuntimeException('Invalid domain id', 400);
 
         /** @var \App\Repository\DomainRepository $domainRepo */
         $domainRepo = $this->repos->getRepository(Domain::class);
-        $domain     = $domainRepo->find($id);
-        if (! $domain || $domain->getCompany()?->getId() !== $company->getId()) {
+        $domain = $domainRepo->find($id);
+        if (!$domain || $domain->getCompany()?->getId() !== $company->getId()) {
             throw new \RuntimeException('Domain not found', 404);
         }
 
         $report = $this->domainDnsVerifier->verifyAndPersist($domain);
 
         return new JsonResponse([
-            'id'      => $domain->getId(),
-            'status'  => $domain->getStatus(),
+            'id' => $domain->getId(),
+            'status' => $domain->getStatus(),
             'summary' => $report['summary'] ?? [],
             'records' => $report['records'] ?? [],
             'checked_at' => $report['checked_at'] ?? null,
-            'verified_at'=> $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
+            'verified_at' => $domain->getVerified_at()?->format(\DateTimeInterface::ATOM),
         ]);
     }
 

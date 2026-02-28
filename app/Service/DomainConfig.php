@@ -10,8 +10,8 @@ use Random\RandomException;
 
 final class DomainConfig
 {
-    private const string SMTP_HOST     = 'smtp.monkeysmail.com';
-    private const string SMTP_IP       = '34.30.122.164';
+    private const string SMTP_HOST = 'smtp.monkeysmail.com';
+    private const string SMTP_IP = '136.113.102.76';
     private const string DKIM_SELECTOR = 'monkey';
 
     public function __construct(
@@ -32,27 +32,29 @@ final class DomainConfig
      */
     public function initializeAndSave(Domain $domain): array
     {
-        $name = strtolower(trim((string)$domain->getDomain()));
+        $name = strtolower(trim((string) $domain->getDomain()));
 
         // 1) TXT / SPF / DMARC / MX expectations
-        $txtName  = "_monkeys-verify.$name";
+        $txtName = "_monkeys-verify.$name";
         $txtValue = 'monkeys-site-verification=' . bin2hex(random_bytes(16));
 
-        $spfExpected   = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
+        $spfExpected = sprintf('v=spf1 ip4:%s include:monkeysmail.com -all', self::SMTP_IP);
         $managedDmarcMailbox = 'dmarc@monkeysmail.com';
         $dmarcExpected = sprintf(
             'v=DMARC1; p=none; rua=mailto:%1$s; ruf=mailto:%1$s; fo=1; adkim=s; aspf=s',
             $managedDmarcMailbox
         );
-        $mxExpected = [[
-            'host'     => $name,
-            'priority' => 10,
-            'value'    => self::SMTP_HOST . '.',
-        ]];
+        $mxExpected = [
+            [
+                'host' => $name,
+                'priority' => 10,
+                'value' => self::SMTP_HOST . '.',
+            ]
+        ];
 
         // 2) DKIM: generate/ensure key
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
-        $dkimTxtName  = $dk['txt_name'];
+        $dkimTxtName = $dk['txt_name'];
         $dkimTxtValue = $dk['txt_value'];
 
         // 2.1) Try to register in OpenDKIM (legacy - can be removed if not needed)
@@ -68,7 +70,7 @@ final class DomainConfig
 
         // Find or create DKIM key record
         $existing = $dkRepo->findOneBy([
-            'domain'   => $domain,
+            'domain' => $domain,
             'selector' => self::DKIM_SELECTOR,
         ]);
 
@@ -119,22 +121,22 @@ final class DomainConfig
         // 5) Return bootstrap payload
         $payload = [
             'dns' => [
-                'txt'   => ['name' => $txtName,  'value' => $txtValue],
-                'spf'   => $spfExpected,
+                'txt' => ['name' => $txtName, 'value' => $txtValue],
+                'spf' => $spfExpected,
                 'dmarc' => $dmarcExpected,
-                'mx'    => $mxExpected,
-                'dkim'  => [
+                'mx' => $mxExpected,
+                'dkim' => [
                     self::DKIM_SELECTOR => [
                         'selector' => self::DKIM_SELECTOR,
-                        'value'    => $dkimTxtValue,
+                        'value' => $dkimTxtValue,
                     ],
                 ],
             ],
             'smtp' => [
-                'host'  => self::SMTP_HOST,
-                'ip'    => self::SMTP_IP,
+                'host' => self::SMTP_HOST,
+                'ip' => self::SMTP_IP,
                 'ports' => [587, 465],
-                'tls'   => ['starttls' => true, 'implicit' => true],
+                'tls' => ['starttls' => true, 'implicit' => true],
             ],
         ];
 

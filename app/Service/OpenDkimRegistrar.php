@@ -8,11 +8,12 @@ final class OpenDkimRegistrar
     private string $trustedHosts = '/var/lib/monkeysmail/opendkim/trustedhosts';
 
     public function __construct(
-        private string $keyTable     = '/var/lib/monkeysmail/opendkim/keytable',
+        private string $keyTable = '/var/lib/monkeysmail/opendkim/keytable',
         private string $signingTable = '/var/lib/monkeysmail/opendkim/signingtable',
-        private ?string $pidFile     = '/run/opendkim/opendkim.pid',
+        private ?string $pidFile = '/run/opendkim/opendkim.pid',
         private ?string $sudoKillCmd = 'sudo /bin/kill -HUP',
-    ) {}
+    ) {
+    }
 
     /**
      * If $privateKeyPath is provided, ensure KeyTable/SigningTable contain it.
@@ -20,7 +21,7 @@ final class OpenDkimRegistrar
      */
     public function register(string $domain, string $selector, string $privateKeyPath = ''): void
     {
-        $domain   = strtolower(trim($domain));
+        $domain = strtolower(trim($domain));
         $selector = strtolower(trim($selector));
 
         // If caller didn't pass a path, try to discover one from KeyTable.
@@ -32,14 +33,16 @@ final class OpenDkimRegistrar
         }
 
         // Candidate paths (in order of preference)
-        $securePath  = sprintf('/etc/opendkim/keys/%s/%s.private', $domain, $selector);
-        $varLibPath  = sprintf('/var/lib/monkeysmail/dkim/%s.%s.key', $domain, $selector);
+        $securePath = sprintf('/etc/opendkim/keys/%s/%s.private', $domain, $selector);
+        $varLibPath = sprintf('/var/lib/monkeysmail/dkim/%s.%s.key', $domain, $selector);
 
         // Helper: check if a key file is "safe" for RequireSafeKeys yes
         $isSafeKey = static function (string $path): bool {
-            if (!is_file($path)) return false;
+            if (!is_file($path))
+                return false;
             $perms = fileperms($path) & 0o777;
-            if ($perms > 0o600) return false; // must be 0600 or more restrictive
+            if ($perms > 0o600)
+                return false; // must be 0600 or more restrictive
 
             // If POSIX is available, also verify owner is 'opendkim'
             if (function_exists('posix_getpwuid')) {
@@ -76,7 +79,10 @@ final class OpenDkimRegistrar
         if ($usePath === null) {
             throw new \RuntimeException(sprintf(
                 'No DKIM private key file found for %s selector %s (looked for %s, %s, and provided path).',
-                $domain, $selector, $securePath, $varLibPath
+                $domain,
+                $selector,
+                $securePath,
+                $varLibPath
             ));
         }
 
@@ -89,11 +95,17 @@ final class OpenDkimRegistrar
         // Compose lines (idempotent append)
         $ktLine = sprintf(
             '%s._domainkey.%s %s:%s:%s',
-            $selector, $domain, $domain, $selector, $usePath
+            $selector,
+            $domain,
+            $domain,
+            $selector,
+            $usePath
         );
         $stLine = sprintf(
             '*@%s %s._domainkey.%s',
-            $domain, $selector, $domain
+            $domain,
+            $selector,
+            $domain
         );
 
         $this->appendOnce($this->keyTable, $ktLine);
@@ -105,7 +117,7 @@ final class OpenDkimRegistrar
             '::1',
             'localhost',
             gethostname() ?: 'mta-1.monkeysmail.com',
-            getenv('PUBLIC_IP') ?: '34.30.122.164',
+            getenv('PUBLIC_IP') ?: '136.113.102.76',
         ]);
 
         $this->hupOpenDkim();
@@ -114,10 +126,13 @@ final class OpenDkimRegistrar
     private function ensureTrustedHosts(array $hosts): void
     {
         $dir = \dirname($this->trustedHosts);
-        if (!is_dir($dir)) { @mkdir($dir, 0775, true); }
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
 
         $fh = @fopen($this->trustedHosts, 'c+');
-        if (!$fh) return;
+        if (!$fh)
+            return;
         try {
             flock($fh, LOCK_EX);
             $current = stream_get_contents($fh) ?: '';
@@ -144,7 +159,7 @@ final class OpenDkimRegistrar
      */
     public function resolvePrivateKeyPath(string $domain, string $selector): ?string
     {
-        $domain   = strtolower(trim($domain));
+        $domain = strtolower(trim($domain));
         $selector = strtolower(trim($selector));
 
         if (!is_file($this->keyTable)) {
@@ -153,22 +168,26 @@ final class OpenDkimRegistrar
         $lines = @file($this->keyTable, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
         foreach ($lines as $raw) {
             $line = trim($raw);
-            if ($line === '' || $line[0] === '#') continue;
+            if ($line === '' || $line[0] === '#')
+                continue;
 
             // Expected format:
             // <sel>._domainkey.<domain> <domain>:<sel>:<path>
             $parts = preg_split('/\s+/', $line);
-            if (count($parts) < 2) continue;
+            if (count($parts) < 2)
+                continue;
 
             $lhs = strtolower($parts[0]);
             $rhs = $parts[1];
 
             $expectLhs = sprintf('%s._domainkey.%s', $selector, $domain);
-            if ($lhs !== $expectLhs) continue;
+            if ($lhs !== $expectLhs)
+                continue;
 
             // Parse RHS as "domain:selector:/path"
             $rhsParts = explode(':', $rhs, 3);
-            if (count($rhsParts) !== 3) continue;
+            if (count($rhsParts) !== 3)
+                continue;
 
             [$d2, $s2, $path] = $rhsParts;
             if (strtolower($d2) === $domain && strtolower($s2) === $selector && $path !== '') {
@@ -191,21 +210,25 @@ final class OpenDkimRegistrar
         $lines = @file($this->keyTable, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
         foreach ($lines as $raw) {
             $line = trim($raw);
-            if ($line === '' || $line[0] === '#') continue;
+            if ($line === '' || $line[0] === '#')
+                continue;
 
             $parts = preg_split('/\s+/', $line);
-            if (count($parts) < 2) continue;
+            if (count($parts) < 2)
+                continue;
 
             $lhs = strtolower($parts[0]); // sX._domainkey.domain
             $rhs = $parts[1];
 
             $suffix = '._domainkey.' . $domain;
-            if (!str_ends_with($lhs, $suffix)) continue;
+            if (!str_ends_with($lhs, $suffix))
+                continue;
 
             // Extract selector from lhs
             $sel = substr($lhs, 0, -strlen($suffix));
             $rhsParts = explode(':', $rhs, 3);
-            if (count($rhsParts) !== 3) continue;
+            if (count($rhsParts) !== 3)
+                continue;
 
             [$d2, $s2, $path] = $rhsParts;
             if (strtolower($d2) === $domain && $path !== '') {
@@ -251,9 +274,11 @@ final class OpenDkimRegistrar
 
     private function hupOpenDkim(): void
     {
-        if (!$this->pidFile || !is_file($this->pidFile)) return;
-        $pid = trim((string)@file_get_contents($this->pidFile));
-        if ($pid === '' || !ctype_digit($pid)) return;
+        if (!$this->pidFile || !is_file($this->pidFile))
+            return;
+        $pid = trim((string) @file_get_contents($this->pidFile));
+        if ($pid === '' || !ctype_digit($pid))
+            return;
 
         $cmd = sprintf('%s %s', $this->sudoKillCmd, escapeshellarg($pid));
         @exec($cmd, $_, $rc);
