@@ -56,7 +56,7 @@ final class DkimKeyService
     public function ensureKeyForDomain(
         string $domain,
         string $selector,
-        string $algorithm = 'rsa',
+        string $algorithm = 'ed25519',
     ): array {
         $domain = strtolower(trim($domain));
         $selector = strtolower(trim($selector));

@@ -58,7 +58,7 @@ final class DomainProvisioner
         // 2) DKIM: generate/ensure key (selector = 'monkey')
         $dk = $this->dkim->ensureKeyForDomain($name, self::DKIM_SELECTOR);
         $dkimTxtName = $dk['txt_name'];   // "monkey._domainkey.<domain>"
-        $dkimTxtValue = $dk['txt_value'];  // "v=DKIM1; k=rsa; p=..."
+        $dkimTxtValue = $dk['txt_value'];  // "v=DKIM1; k=ed25519|rsa; p=..."
 
         // (Optional) legacy configurator hook
         $opendkimError = null;

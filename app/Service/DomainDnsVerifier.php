@@ -44,10 +44,17 @@ final class DomainDnsVerifier
             $selector = trim((string) $activeDkim->getSelector());
             if ($selector !== '') {
                 $dkimName = sprintf('%s._domainkey.%s', $selector, $name);
-                $pem = (string) $activeDkim->getPublic_key_pem();
-                $p = $this->pemToDkimP($pem);
-                if ($p !== '')
-                    $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
+
+                // Prefer stored txt_value (contains correct k= tag for rsa or ed25519)
+                if (method_exists($activeDkim, 'getTxt_value') && $activeDkim->getTxt_value()) {
+                    $dkimValue = trim((string) $activeDkim->getTxt_value());
+                } else {
+                    // Legacy fallback: derive from PEM (assumes RSA)
+                    $pem = (string) $activeDkim->getPublic_key_pem();
+                    $p = $this->pemToDkimP($pem);
+                    if ($p !== '')
+                        $dkimValue = 'v=DKIM1; k=rsa; p=' . $p;
+                }
             }
         }
 

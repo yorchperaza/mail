@@ -341,12 +341,14 @@ final class DomainController
                 $value = null;
 
                 if (method_exists($k, 'getTxt_value') && $k->getTxt_value()) {
+                    // Use stored txt_value as-is (already has correct k= tag for rsa or ed25519)
                     $value = trim((string) $k->getTxt_value());
-                    // normalize to include v=DKIM1/k=rsa if missing
                     if (stripos($value, 'p=') !== false && stripos($value, 'v=dkim1') === false) {
+                        // Legacy data missing v=DKIM1 header — assume RSA for old keys
                         $value = 'v=DKIM1; k=rsa; ' . ltrim($value, '; ');
                     }
                 } else {
+                    // Legacy fallback: derive from PEM (old RSA keys only)
                     $value = $pemToDkimTxt((string) $k->getPublic_key_pem());
                 }
 
